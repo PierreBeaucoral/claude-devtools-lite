@@ -299,6 +299,11 @@ window.addEventListener("hashchange", () => {   // fragment can arrive after loa
     refreshUsage(); refreshViz();
   }
 });
+// self-heal: when another tab (opened via the app) stores the token in this
+// browser's localStorage, stale tabs pick it up instantly and reload
+window.addEventListener("storage", e => {
+  if(e.key === "cdl-token" && e.newValue) location.reload();
+});
 const TOKEN = () => localStorage.getItem("cdl-token") || "";
 const authHeaders = extra => Object.assign({"X-Devtools-Token": TOKEN()}, extra || {});
 const tokenParam = () => "token=" + encodeURIComponent(TOKEN());
@@ -1112,8 +1117,14 @@ setInterval(refreshUsage, 60000);
 setInterval(refreshViz, 5000);
 refreshUsage(); refreshViz();
 
-loadProjects().then(restoreFromHash).catch(e => $("#tree").innerHTML =
-  `<div class="placeholder">error: ${esc(e.message)}</div>`);
+loadProjects().then(restoreFromHash).catch(e => {
+  const isAuth = /token/i.test(e.message);
+  $("#tree").innerHTML = `<div class="placeholder" style="padding:30px 16px;text-align:left">
+    ${isAuth ? `🔒 <b>This tab has no access token</b> (it was opened before the server
+      issued one).<br><br>Double-click <b>Claude DevTools.app</b> — the tab it opens is
+      authenticated, and this tab will reconnect by itself if it's in the same browser.`
+      : "error: " + esc(e.message)}</div>`;
+});
 </script>
 </body>
 </html>
