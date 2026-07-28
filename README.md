@@ -7,13 +7,24 @@ Built for macOS with Python 3.9+ standard library only (one `server.py` + one `i
 
 ## Run
 
-**Double-click `Claude DevTools.app` on the Desktop.** It starts the server if it isn't
-already running (log: `~/Library/Logs/claude-devtools-lite.log`) and opens the dashboard
-in your default browser. It never spawns a duplicate — if the server is up, it just opens
-the page. Quit with the **⏻** button in the sidebar: it closes every embedded terminal
-**gracefully** (SIGHUP first, so Claude Code sessions run their Stop/SessionEnd hooks —
-e.g. dream memory consolidation — with a 25 s grace period before any force-kill), waits
-for them, then stops the server.
+**Double-click `Claude DevTools.app`** (Desktop, `/Applications`, or Spotlight). It's a
+**standalone native window** — a compiled WebKit wrapper (`native/main.swift`), not a
+browser tab. It starts the Python server if needed, authenticates via the cookie
+handoff (`/launch?k=<token>`), and opens the dashboard in its own window with a Dock
+icon, Cmd+Q, and Cmd+C/V.
+
+Quitting: **Cmd+Q** (or the **⏻** button) closes every embedded terminal **gracefully**
+— SIGHUP first, so Claude Code sessions run their Stop/SessionEnd hooks (e.g. dream
+memory consolidation), with a ~25 s grace before any force-kill. Cmd+Q also stops the
+server *if this app instance started it*; if the server was already running (e.g.
+started manually), the app leaves it alone. Rebuild after editing the Swift source:
+
+```bash
+cd ~/Desktop/claude-devtools-lite/native && swiftc -O main.swift -o ClaudeDevTools -framework Cocoa -framework WebKit
+```
+
+then copy `ClaudeDevTools` into `Claude DevTools.app/Contents/MacOS/`. You can still use
+any browser instead: run the server and open the `/launch?k=…` URL it prints.
 
 Terminal alternative:
 

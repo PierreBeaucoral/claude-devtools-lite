@@ -888,8 +888,16 @@ class Handler(BaseHTTPRequestHandler):
     def _err(self, code, msg):
         self._json({"error": msg}, code)
 
+    def _cookie_token(self):
+        for part in (self.headers.get("Cookie") or "").split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == "cdl":
+                return v
+        return ""
+
     def _authed(self, qs):
-        tok = self.headers.get("X-Devtools-Token") or qs.get("token", [""])[0]
+        tok = (self.headers.get("X-Devtools-Token") or qs.get("token", [""])[0]
+               or self._cookie_token())
         return bool(tok) and secrets.compare_digest(tok, SERVER_TOKEN or "")
 
     def do_GET(self):
@@ -900,6 +908,22 @@ class Handler(BaseHTTPRequestHandler):
 
             if p.startswith("/api/") and not self._authed(qs):
                 self._err(401, "missing or bad token — relaunch via Claude DevTools.app")
+                return
+
+            if p == "/launch":
+                # the app launcher's entry point: exchange the token (query)
+                # for a browser cookie, then land on the dashboard. A real
+                # navigation — immune to fragment-only tab-reuse races.
+                k = qs.get("k", [""])[0]
+                if not (k and secrets.compare_digest(k, SERVER_TOKEN or "")):
+                    self._err(403, "bad launch token")
+                    return
+                self.send_response(302)
+                self.send_header("Location", "/")
+                self.send_header("Set-Cookie",
+                                 f"cdl={SERVER_TOKEN}; Path=/; SameSite=Strict; "
+                                 f"Max-Age=31536000")
+                self.end_headers()
                 return
 
             if p in ("/", "/index.html"):

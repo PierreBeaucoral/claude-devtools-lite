@@ -304,7 +304,8 @@ window.addEventListener("hashchange", () => {   // fragment can arrive after loa
 window.addEventListener("storage", e => {
   if(e.key === "cdl-token" && e.newValue) location.reload();
 });
-const TOKEN = () => localStorage.getItem("cdl-token") || "";
+const cookieToken = () => (document.cookie.match(/(?:^|;\s*)cdl=([a-f0-9]+)/) || [])[1] || "";
+const TOKEN = () => localStorage.getItem("cdl-token") || cookieToken();
 const authHeaders = extra => Object.assign({"X-Devtools-Token": TOKEN()}, extra || {});
 const tokenParam = () => "token=" + encodeURIComponent(TOKEN());
 

@@ -250,6 +250,34 @@ def test_post_rejects_foreign_origin(http_server):
     assert code == 403
 
 
+def test_launch_exchanges_token_for_cookie(http_server):
+    req = urllib.request.Request(http_server + "/launch?k=" + "a" * 48)
+    # don't follow the redirect: inspect it
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *a, **k):
+            return None
+    opener = urllib.request.build_opener(NoRedirect)
+    try:
+        opener.open(req, timeout=5)
+        assert False, "expected 302"
+    except urllib.error.HTTPError as e:
+        assert e.code == 302
+        assert e.headers["Location"] == "/"
+        assert "cdl=" + "a" * 48 in e.headers["Set-Cookie"]
+        assert "SameSite=Strict" in e.headers["Set-Cookie"]
+    code, _ = fetch(http_server + "/launch?k=wrong")
+    assert code == 403
+
+
+def test_cookie_authenticates(http_server):
+    code, body = fetch(http_server + "/api/projects",
+                       headers={"Cookie": "cdl=" + "a" * 48})
+    assert code == 200 and b"-Users-x-proj" in body
+    code, _ = fetch(http_server + "/api/projects",
+                    headers={"Cookie": "cdl=wrong"})
+    assert code == 401
+
+
 def test_session_endpoint_roundtrip(http_server):
     code, body = fetch(http_server + "/api/session?project=-Users-x-proj&id=s1",
                        headers={"X-Devtools-Token": "a" * 48})
