@@ -18,19 +18,33 @@
   a { color: var(--accent); text-decoration: none; }
 
   #app { display:flex; height:100vh; }
-  #sidebar { width:300px; min-width:220px; border-right:1px solid var(--border);
+  #sidebar { width:300px; min-width:170px; border-right:1px solid var(--border);
              background:var(--panel); display:flex; flex-direction:column; }
 
-  /* RStudio-style 2x2 workspace */
-  #workspace { flex:1; min-width:0; display:grid; gap:1px; background:var(--border);
-               grid-template-columns: minmax(0,1fr) minmax(270px,330px);
-               grid-template-rows: minmax(0,1.35fr) minmax(0,1fr); }
-  #workspace.noright { grid-template-columns: minmax(0,1fr); }
-  #workspace.noright #cell-usage, #workspace.noright #cell-viz { display:none; }
+  /* RStudio-style 2x2 workspace with draggable splitters */
+  #workspace { flex:1; min-width:0; display:grid;
+               grid-template-columns: minmax(0,1fr) 5px var(--col2, 320px);
+               grid-template-rows: minmax(0,1fr) 5px var(--row2, 42%); }
+  #cell-main  { grid-area: 1 / 1 / 2 / 2; }
+  #vsplit     { grid-area: 1 / 2 / 4 / 3; cursor: col-resize; }
+  #cell-usage { grid-area: 1 / 3 / 2 / 4; }
+  #hsplit     { grid-area: 2 / 1 / 3 / 4; cursor: row-resize; }
+  #cell-term  { grid-area: 3 / 1 / 4 / 2; }
+  #cell-viz   { grid-area: 3 / 3 / 4 / 4; }
+  .split { background: var(--border); z-index: 5; transition: background .12s;
+           touch-action: none; }
+  .split:hover, .split.dragging { background: var(--accent); }
+  #sideHandle { width:5px; flex:none; background:var(--border); cursor:col-resize;
+                transition:background .12s; touch-action:none; }
+  #sideHandle:hover, #sideHandle.dragging { background:var(--accent); }
+  #workspace.noright { grid-template-columns: minmax(0,1fr) 0 0; }
+  #workspace.noright #cell-usage, #workspace.noright #cell-viz,
+  #workspace.noright #vsplit { display:none; }
   .cell { display:flex; flex-direction:column; min-width:0; min-height:0;
           background:var(--bg); overflow:hidden; }
   #workspace.maxed { display:flex; }
   #workspace.maxed .cell { display:none; }
+  #workspace.maxed .split { display:none; }
   #workspace.maxed .cell.maxed { display:flex; flex:1; }
   .qhead { padding:6px 10px; font-size:12px; font-weight:700; letter-spacing:.5px;
            color:var(--dim); border-bottom:1px solid var(--border); flex:none;
@@ -220,6 +234,7 @@
     </div>
     <div id="tree"><div class="placeholder">loading projects…</div></div>
   </div>
+  <div id="sideHandle" title="drag to resize the sidebar"></div>
   <div id="workspace">
     <div class="cell" id="cell-main">
       <div class="qhead">📄 SESSION
@@ -257,6 +272,8 @@
       </div>
     </div>
 
+    <div id="vsplit" class="split" title="drag to resize columns"></div>
+    <div id="hsplit" class="split" title="drag to resize rows"></div>
     <div class="cell" id="cell-viz">
       <div class="qhead" style="gap:4px">
         <span class="vtab active" data-view="viz">📊 Viz</span>
@@ -916,6 +933,59 @@ function toggleMax(id){
 document.querySelectorAll(".maxbtn").forEach(b => {
   b.onclick = e => { e.stopPropagation(); toggleMax(b.dataset.cell); };
 });
+
+/* ---------- RStudio-style drag-to-resize splitters ---------- */
+function makeSplitter(el, compute, apply, storeKey){
+  el.addEventListener("pointerdown", e => {
+    e.preventDefault();
+    try{ el.setPointerCapture(e.pointerId); }catch(_){}
+    el.classList.add("dragging");
+    // iframes swallow pointer events mid-drag — disable them while dragging
+    document.querySelectorAll("iframe").forEach(f => f.style.pointerEvents = "none");
+    let last = null;
+    const move = ev => { last = compute(ev); if(last !== null) apply(last); };
+    const up = ev => {
+      el.classList.remove("dragging");
+      try{ el.releasePointerCapture(e.pointerId); }catch(_){}
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", up);
+      document.querySelectorAll("iframe").forEach(f => f.style.pointerEvents = "");
+      if(last !== null) localStorage.setItem(storeKey, String(last));
+      fitActive();
+    };
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up);
+  });
+}
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const wsEl = $("#workspace");
+
+makeSplitter($("#vsplit"),
+  ev => { const r = wsEl.getBoundingClientRect();
+          return clamp(r.right - ev.clientX, 200, Math.max(220, r.width - 320)); },
+  v => { wsEl.style.setProperty("--col2", v + "px"); fitActive(); },
+  "cdl-sz-col2");
+
+makeSplitter($("#hsplit"),
+  ev => { const r = wsEl.getBoundingClientRect();
+          return clamp(r.bottom - ev.clientY, 120, Math.max(140, r.height - 160)); },
+  v => { wsEl.style.setProperty("--row2", v + "px"); fitActive(); },
+  "cdl-sz-row2");
+
+makeSplitter($("#sideHandle"),
+  ev => clamp(ev.clientX - $("#sidebar").getBoundingClientRect().left, 170, 520),
+  v => $("#sidebar").style.width = v + "px",
+  "cdl-sz-sidebar");
+
+// restore persisted sizes
+(function restoreSizes(){
+  const c2 = parseFloat(localStorage.getItem("cdl-sz-col2"));
+  if(c2) wsEl.style.setProperty("--col2", c2 + "px");
+  const r2 = parseFloat(localStorage.getItem("cdl-sz-row2"));
+  if(r2) wsEl.style.setProperty("--row2", r2 + "px");
+  const sb = parseFloat(localStorage.getItem("cdl-sz-sidebar"));
+  if(sb) $("#sidebar").style.width = sb + "px";
+})();
 
 /* ---------- right column: token usage ---------- */
 function fmtCountdown(secs){
