@@ -284,6 +284,25 @@
 const $ = s => document.querySelector(s);
 const state = { projects: [], openProject: null, sessions: {}, active: null };
 
+/* ---------- auth token (from launcher URL fragment, then localStorage) ---------- */
+function initToken(){
+  const m = location.hash.match(/[#&]t=([a-f0-9]{32,64})/);
+  if(!m) return false;
+  localStorage.setItem("cdl-token", m[1]);
+  history.replaceState(null, "", location.pathname + location.hash.replace(/[#&]?t=[a-f0-9]+/, "#").replace(/#+$/, ""));
+  return true;
+}
+initToken();
+window.addEventListener("hashchange", () => {   // fragment can arrive after load
+  if(initToken()){
+    loadProjects().then(restoreFromHash);
+    refreshUsage(); refreshViz();
+  }
+});
+const TOKEN = () => localStorage.getItem("cdl-token") || "";
+const authHeaders = extra => Object.assign({"X-Devtools-Token": TOKEN()}, extra || {});
+const tokenParam = () => "token=" + encodeURIComponent(TOKEN());
+
 const fmtBytes = n => n > 1e6 ? (n/1e6).toFixed(1)+" MB" : n > 1e3 ? (n/1e3).toFixed(0)+" kB" : n+" B";
 const fmtTok = n => n >= 1e6 ? (n/1e6).toFixed(2)+"M" : n >= 1e3 ? (n/1e3).toFixed(1)+"k" : String(n||0);
 const fmtDate = ts => { if(!ts) return ""; const d = new Date(typeof ts==="number"? ts*1000 : ts);
@@ -291,8 +310,17 @@ const fmtDate = ts => { if(!ts) return ""; const d = new Date(typeof ts==="numbe
          d.toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"}); };
 const esc = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 
-async function api(path){ const r = await fetch(path); const j = await r.json();
-  if(!r.ok) throw new Error(j.error||r.status); return j; }
+async function api(path){
+  const r = await fetch(path, {headers: authHeaders()});
+  const j = await r.json();
+  if(r.status === 401){
+    $("#main").innerHTML = `<div class="placeholder">🔒 ${esc(j.error)}<br><br>
+      Double-click <b>Claude DevTools.app</b> to reopen with a fresh token.</div>`;
+    throw new Error(j.error);
+  }
+  if(!r.ok) throw new Error(j.error||r.status);
+  return j;
+}
 
 /* ---------- tiny markdown (safe: everything escaped first) ---------- */
 function md(src){
@@ -371,18 +399,35 @@ async function toggleProject(slug){
     fsPath = p.path;
     if($("#filesview").style.display !== "none") loadFs(fsPath);
   }
-  renderTree();
+  renderTree(); updateHash();
   state.sessions[slug] = await api("/api/sessions?project="+encodeURIComponent(slug));
   renderTree();
 }
 
+/* ---------- deep links: #p=<slug>&s=<session> ---------- */
+function updateHash(){
+  const parts = [];
+  if(state.openProject) parts.push("p=" + encodeURIComponent(state.openProject));
+  if(state.active) parts.push("s=" + encodeURIComponent(state.active.split("/")[1]));
+  history.replaceState(null, "", location.pathname + (parts.length ? "#" + parts.join("&") : ""));
+}
+async function restoreFromHash(){
+  const h = location.hash;
+  const p = (h.match(/[#&]p=([^&]+)/) || [])[1];
+  const s = (h.match(/[#&]s=([^&]+)/) || [])[1];
+  if(!p) return;
+  const slug = decodeURIComponent(p);
+  await toggleProject(slug);
+  if(s) openSession(slug, decodeURIComponent(s));
+}
+
 /* ---------- session view ---------- */
-async function openSession(slug, id){
-  state.active = slug+"/"+id; renderTree();
+async function openSession(slug, id, findText){
+  state.active = slug+"/"+id; renderTree(); updateHash();
   $("#main").innerHTML = `<div class="placeholder">parsing session…</div>`;
   try{
     const s = await api(`/api/session?project=${encodeURIComponent(slug)}&id=${encodeURIComponent(id)}`);
-    renderSession(s, {slug, id});
+    renderSession(s, {slug, id, find: findText});
   }catch(e){ $("#main").innerHTML = `<div class="placeholder">error: ${esc(e.message)}</div>`; }
 }
 async function openSubagent(slug, session, agent){
@@ -486,6 +531,26 @@ function renderSession(s, ctx){
   ["tgThink","tgTools","tgSys"].forEach(id=>$("#"+id).onchange=applyToggles);
   renderChunk();
   main.scrollTop = 0;
+
+  // search deep-link: render up to the first matching entry, scroll, flash it
+  if(ctx.find){
+    const q = ctx.find.toLowerCase();
+    const idx = s.entries.findIndex(e =>
+      (e.text && e.text.toLowerCase().includes(q)) ||
+      (e.kind === "tool" && (JSON.stringify(e.input||{}) + (e.result||"")).toLowerCase().includes(q)));
+    if(idx >= 0){
+      while(rendered <= idx) renderChunk();
+      const el = tl.children[idx];
+      if(el){
+        el.classList.add("openx");
+        setTimeout(() => {
+          el.scrollIntoView({block: "center"});
+          el.style.outline = "2px solid var(--tool)";
+          setTimeout(() => el.style.outline = "", 2500);
+        }, 60);
+      }
+    }
+  }
 }
 
 function copyBtn(text){
@@ -660,7 +725,7 @@ $("#search").addEventListener("keydown", async ev=>{
         state.openProject = r.project;
         if(!state.sessions[r.project])
           state.sessions[r.project] = await api("/api/sessions?project="+encodeURIComponent(r.project));
-        openSession(r.project, r.session);
+        openSession(r.project, r.session, q);   // jump straight to the match
       };
       tl.appendChild(div);
     }
@@ -689,7 +754,7 @@ async function openTerm(kind, opts = {}){
   let info;
   try{
     const r = await fetch("/api/term/start", {method:"POST",
-      headers:{"Content-Type":"application/json"},
+      headers:authHeaders({"Content-Type":"application/json"}),
       body: JSON.stringify({kind, project: opts.project, session: opts.session, cwd: opts.cwd})});
     info = await r.json();
     if(!r.ok) throw new Error(info.error || r.status);
@@ -712,10 +777,10 @@ async function openTerm(kind, opts = {}){
   TM.terms.set(t.id, t);
 
   term.onData(d => fetch("/api/term/input", {method:"POST",
-    headers:{"Content-Type":"application/json"},
+    headers:authHeaders({"Content-Type":"application/json"}),
     body: JSON.stringify({id: t.id, data: strToB64(d)})}));
   term.onResize(({cols, rows}) => fetch("/api/term/resize", {method:"POST",
-    headers:{"Content-Type":"application/json"},
+    headers:authHeaders({"Content-Type":"application/json"}),
     body: JSON.stringify({id: t.id, cols, rows})}));
 
   activateTerm(t.id);
@@ -727,7 +792,8 @@ async function streamTerm(t){
   for(let attempt = 0; attempt < 3 && !t.dead; attempt++){
     try{
       const ac = new AbortController(); t.abort = ac;
-      const resp = await fetch(`/api/term/stream?id=${t.id}&from=${t.pos}`, {signal: ac.signal});
+      const resp = await fetch(`/api/term/stream?id=${t.id}&from=${t.pos}`,
+        {signal: ac.signal, headers: authHeaders()});
       if(!resp.ok) throw new Error("stream " + resp.status);
       const reader = resp.body.getReader();
       const dec = new TextDecoder();
@@ -777,7 +843,7 @@ async function closeTerm(id){
   const t = TM.terms.get(id); if(!t) return;
   t.dead = true;
   if(t.abort) t.abort.abort();
-  fetch("/api/term/kill", {method:"POST", headers:{"Content-Type":"application/json"},
+  fetch("/api/term/kill", {method:"POST", headers:authHeaders({"Content-Type":"application/json"}),
     body: JSON.stringify({id})});
   t.term.dispose(); t.container.remove();
   TM.terms.delete(id);
@@ -806,7 +872,7 @@ $("#btnQuit").onclick = async () => {
   document.body.innerHTML = `<div class="placeholder" style="padding-top:30vh">
     ⏻ Closing ${n||"no"} session(s) gracefully, then stopping the server…</div>`;
   try{ await fetch("/api/shutdown", {method:"POST",
-    headers:{"Content-Type":"application/json"}, body:"{}"}); }catch(e){}
+    headers:authHeaders({"Content-Type":"application/json"}), body:"{}"}); }catch(e){}
   document.body.innerHTML = `<div class="placeholder" style="padding-top:30vh">
     ⏻ Server stopped. Close this tab — double-click <b>Claude DevTools</b> to relaunch.</div>`;
 };
@@ -827,7 +893,7 @@ async function termInsert(text, cwd){
     t = TM.terms.get(TM.active);
     if(!t) return;
   }
-  fetch("/api/term/input", {method:"POST", headers:{"Content-Type":"application/json"},
+  fetch("/api/term/input", {method:"POST", headers:authHeaders({"Content-Type":"application/json"}),
     body: JSON.stringify({id: t.id, data: strToB64(text)})});
   t.term.focus();
 }
@@ -858,11 +924,23 @@ async function refreshUsage(){
     lastUsage = u;
     const body = $("#usagebody");
     const b = u.block;
+    // limit bar à la Claude-Code-Usage-Monitor: current block vs P90 of your
+    // own historical blocks (measured, not a guessed plan quota)
+    let limitPart = "";
+    if(b && u.baseline && u.baseline.p90){
+      const pct = b.output / u.baseline.p90 * 100;
+      const color = pct > 90 ? "var(--err)" : pct > 65 ? "var(--tool)" : "var(--ok)";
+      limitPart = `
+      <div class="urow" style="color:var(--dim)"><span>vs your P90 block (${fmtTok(u.baseline.p90)})</span>
+        <b style="color:${color}">${pct.toFixed(0)}%</b></div>
+      <div class="ubar" title="current block output vs the 90th percentile of your ${u.baseline.blocks} historical 5h blocks (best ever: ${fmtTok(u.baseline.max)})">
+        <div style="width:${Math.min(100,pct).toFixed(0)}%;background:${color}"></div></div>`;
+    }
     const blockPart = b ? `
       <div class="urow"><span>current 5h block</span><b>${fmtTok(b.output)}</b></div>
       <div class="urow" style="color:var(--dim)"><span>requests</span><b style="color:var(--dim)">${b.requests}</b></div>
       <div class="ubar" title="time elapsed in this 5h block">
-        <div style="width:${Math.min(100,((u.generated-b.start)/(b.end-b.start))*100).toFixed(0)}%"></div></div>`
+        <div style="width:${Math.min(100,((u.generated-b.start)/(b.end-b.start))*100).toFixed(0)}%"></div></div>${limitPart}`
       : `<div class="vizempty">no active 5h block — idle</div>`;
     const models = Object.entries(u.week_by_model||{}).sort((a,b2)=>b2[1]-a[1])
       .map(([m,v])=>`<div class="modelrow"><span>${esc(m.replace(/^claude-/,""))}</span><span>${fmtTok(v)}</span></div>`).join("");
@@ -916,7 +994,8 @@ function showViz(f){
   vizActive = f.name;
   const fr = $("#vizframe");
   fr.classList.toggle("darkbg", !/html|pdf/.test(f.kind));
-  fr.src = "/api/fs/file?path=" + encodeURIComponent(vizDir + "/" + f.name) + "&t=" + f.mtime;
+  fr.src = "/api/fs/file?path=" + encodeURIComponent(vizDir + "/" + f.name)
+         + "&t=" + f.mtime + "&" + tokenParam();
   [...document.querySelectorAll(".vizfile")].forEach(el =>
     el.classList.toggle("active", el.textContent.startsWith(f.name)));
 }
@@ -981,7 +1060,8 @@ async function loadFs(path){
       if(!e.viewable){ navigator.clipboard.writeText(full); return; }
       const fr = $("#fsframe");
       fr.classList.toggle("darkbg", !/\.(html?|pdf)$/i.test(e.name));
-      fr.src = "/api/fs/file?path=" + encodeURIComponent(full) + "&t=" + (e.mtime||0);
+      fr.src = "/api/fs/file?path=" + encodeURIComponent(full) + "&t=" + (e.mtime||0)
+             + "&" + tokenParam();
       fr.style.display = "block";
     };
     row.querySelector('[data-a="copy"]').onclick = ev => { ev.stopPropagation();
@@ -993,15 +1073,46 @@ async function loadFs(path){
   $("#fsframe").style.display = "none";
 }
 
+/* ---------- toasts for background project activity ---------- */
+function toast(msg, onclick){
+  let box = $("#toasts");
+  if(!box){
+    box = document.createElement("div"); box.id = "toasts";
+    box.style.cssText = "position:fixed;right:14px;bottom:14px;z-index:99;display:flex;flex-direction:column;gap:8px";
+    document.body.appendChild(box);
+  }
+  const t = document.createElement("div");
+  t.style.cssText = "background:var(--panel);border:1px solid var(--ok);border-radius:8px;"+
+    "padding:8px 14px;font-size:12.5px;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.5)";
+  t.textContent = msg;
+  t.onclick = () => { if(onclick) onclick(); t.remove(); };
+  box.appendChild(t);
+  setTimeout(() => t.remove(), 8000);
+}
+
 /* ---------- polling ---------- */
-setInterval(async () => {   // badges refresh
-  try{ state.projects = await api("/api/projects"); renderTree(); }catch(e){}
+let prevMtimes = null;
+setInterval(async () => {   // badges + activity toasts
+  try{
+    state.projects = await api("/api/projects");
+    if(prevMtimes){
+      for(const p of state.projects){
+        const was = prevMtimes[p.slug];
+        if(was && p.mtime > was + 1 && p.slug !== state.openProject){
+          const name = p.path.split("/").pop();
+          toast(`● new activity in ${name}`, () => toggleProject(p.slug));
+        }
+      }
+    }
+    prevMtimes = Object.fromEntries(state.projects.map(p => [p.slug, p.mtime]));
+    renderTree();
+  }catch(e){}
 }, 30000);
 setInterval(refreshUsage, 60000);
 setInterval(refreshViz, 5000);
 refreshUsage(); refreshViz();
 
-loadProjects().catch(e => $("#tree").innerHTML =
+loadProjects().then(restoreFromHash).catch(e => $("#tree").innerHTML =
   `<div class="placeholder">error: ${esc(e.message)}</div>`);
 </script>
 </body>

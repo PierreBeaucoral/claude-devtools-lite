@@ -34,6 +34,46 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 CLAUDE_ROOT = Path(os.environ.get("CLAUDE_ROOT", str(Path.home() / ".claude")))
 
+# --- auth token: protects every /api endpoint from other local users -------
+# Persisted (0600) so bookmarks keep working across restarts. The launcher
+# passes it to the browser via the URL fragment; the UI stores it and sends
+# X-Devtools-Token on every call.
+TOKEN_FILE = HERE / ".token"
+
+
+def load_token():
+    try:
+        tok = TOKEN_FILE.read_text().strip()
+        if re.fullmatch(r"[a-f0-9]{32,64}", tok):
+            return tok
+    except OSError:
+        pass
+    tok = secrets.token_hex(24)
+    TOKEN_FILE.write_text(tok)
+    os.chmod(TOKEN_FILE, 0o600)
+    return tok
+
+
+SERVER_TOKEN = None  # set in main()
+
+# --- small persistent state (usage baseline cache) -------------------------
+STATE_FILE = HERE / ".state.json"
+_state_lock = threading.Lock()
+
+
+def state_read():
+    try:
+        return json.loads(STATE_FILE.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def state_write(patch):
+    with _state_lock:
+        st = state_read()
+        st.update(patch)
+        STATE_FILE.write_text(json.dumps(st))
+
 MAX_RESULT_CHARS = 20_000     # per tool-result payload sent to the UI
 MAX_TEXT_CHARS = 120_000      # per text/thinking block sent to the UI
 SEARCH_MAX_RESULTS = 300
@@ -535,6 +575,47 @@ def file_usage_records(path):
     return recs
 
 
+def blocks_from_records(recs):
+    """Group sorted (epoch, out, model) records into 5h blocks; return
+    [(start, end, output_total), ...]."""
+    blocks = []
+    start = end = None
+    total = 0
+    for ep, out, _ in recs:
+        if start is None or ep >= end:
+            if start is not None:
+                blocks.append((start, end, total))
+            start = ep - (ep % 3600)
+            end = start + BLOCK_HOURS * 3600
+            total = 0
+        total += out
+    if start is not None:
+        blocks.append((start, end, total))
+    return blocks
+
+
+def compute_baseline(root):
+    """Scan ALL history once (background thread) for the Usage-Monitor-style
+    baseline: max and P90 of output tokens per 5h block. Cached in .state.json
+    keyed on the newest transcript mtime, and ratcheted up over time."""
+    recs = []
+    for f in projects_dir(root).rglob("*.jsonl"):
+        try:
+            recs.extend(file_usage_records(f))
+        except OSError:
+            continue
+    recs.sort(key=lambda r: r[0])
+    totals = sorted(b[2] for b in blocks_from_records(recs) if b[2] > 0)
+    if not totals:
+        return
+    p90 = totals[max(0, int(len(totals) * 0.9) - 1)]
+    prev = state_read()
+    state_write({"baseline_max": max(totals[-1], prev.get("baseline_max", 0)),
+                 "baseline_p90": max(p90, prev.get("baseline_p90", 0)),
+                 "baseline_blocks": len(totals),
+                 "baseline_at": time.time()})
+
+
 def usage_summary(root):
     now = time.time()
     cutoff = now - 8 * 86400
@@ -576,12 +657,15 @@ def usage_summary(root):
     for ep, out, _ in recs:
         if ep >= now - 86400:
             hourly[int((ep - (now - 86400)) // 3600)] += out
+    st = state_read()
     return {
         "block": block,
         "today": {"output": sum(r[1] for r in today), "requests": len(today)},
         "week": {"output": sum(r[1] for r in week), "requests": len(week)},
         "week_by_model": wmodel,
         "hourly": hourly,
+        "baseline": {"max": st.get("baseline_max"), "p90": st.get("baseline_p90"),
+                     "blocks": st.get("baseline_blocks")} if st.get("baseline_max") else None,
         "generated": now,
     }
 
@@ -804,11 +888,19 @@ class Handler(BaseHTTPRequestHandler):
     def _err(self, code, msg):
         self._json({"error": msg}, code)
 
+    def _authed(self, qs):
+        tok = self.headers.get("X-Devtools-Token") or qs.get("token", [""])[0]
+        return bool(tok) and secrets.compare_digest(tok, SERVER_TOKEN or "")
+
     def do_GET(self):
         try:
             u = urllib.parse.urlparse(self.path)
             qs = urllib.parse.parse_qs(u.query)
             p = u.path
+
+            if p.startswith("/api/") and not self._authed(qs):
+                self._err(401, "missing or bad token — relaunch via Claude DevTools.app")
+                return
 
             if p in ("/", "/index.html"):
                 body = (HERE / "index.html").read_bytes()
@@ -983,6 +1075,9 @@ class Handler(BaseHTTPRequestHandler):
                     self._err(403, "cross-origin request refused")
                     return
             u = urllib.parse.urlparse(self.path)
+            if not self._authed(urllib.parse.parse_qs(u.query)):
+                self._err(401, "missing or bad token — relaunch via Claude DevTools.app")
+                return
             n = int(self.headers.get("Content-Length") or 0)
             body = json.loads(self.rfile.read(n) or b"{}") if n else {}
             p = u.path
@@ -1097,15 +1192,18 @@ def main():
     ap.add_argument("--root", default=str(CLAUDE_ROOT))
     args = ap.parse_args()
 
-    global SERVER_PORT
+    global SERVER_PORT, SERVER_TOKEN
     SERVER_PORT = args.port
+    SERVER_TOKEN = load_token()
     Handler.root = Path(args.root).expanduser()
     if not projects_dir(Handler.root).is_dir():
         sys.exit(f"error: {Handler.root}/projects not found — is this a Claude Code machine?")
     VIZ_DIR.mkdir(exist_ok=True)
+    threading.Thread(target=compute_baseline, args=(Handler.root,), daemon=True).start()
 
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f"claude-devtools-lite → http://{args.host}:{args.port}  (root: {Handler.root})")
+    print(f"claude-devtools-lite → http://{args.host}:{args.port}/#t={SERVER_TOKEN}")
+    print(f"  (root: {Handler.root}; token file: {TOKEN_FILE})")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

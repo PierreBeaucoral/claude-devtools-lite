@@ -67,7 +67,11 @@ same interaction as RStudio's pane zoom. **◫** toggles the right column.
 - **Token-use panel** (upper right, toggle with ◫) — computed live from your local logs:
   current 5-hour block with reset countdown and progress bar, output tokens today and
   over 7 days, an output-per-hour sparkline for the last 24 h, and a by-model breakdown.
-  Plan limits aren't recorded in the logs, so for the official quota use `/status` in the CLI.
+  A **limit bar** shows the current block as a % of the **P90 of all your historical
+  5-hour blocks** (the [Claude-Code-Usage-Monitor](https://github.com/Maciek-roboblog/Claude-Code-Usage-Monitor)
+  approach — a background scan of your full history at startup, ratcheted in `.state.json`;
+  green < 65 %, orange < 90 %, red above). It's a measured baseline, not the official
+  quota — for that use `/status` in the CLI.
 - **Viz inbox** (lower right) — a watched folder (`viz/` next to `server.py`). Any
   `.html`, image, `.svg`, `.md`, `.pdf`, `.csv`… file written there appears in the panel
   within 5 s and the newest one auto-renders in a sandboxed iframe. Tell a Claude Code
@@ -90,9 +94,26 @@ same interaction as RStudio's pane zoom. **◫** toggles the right column.
     Claude Code session launched from here knows it's inside this UI and writes visual
     outputs to the viz inbox on its own.
 
+## Extras
+
+- **Deep links** — the URL hash tracks `#p=<project>&s=<session>`; reloads and bookmarks
+  restore your place. Search results open the session **scrolled to the matching entry**
+  (auto-expanded and briefly highlighted).
+- **Activity toasts** — while you work, a clickable toast appears when another project's
+  transcripts change (a background Claude session finished something).
+- **Tests** — `python3 -m pytest tests/ -q` (15 tests): usage dedup by requestId, tool
+  pairing, structuredPatch, sidechain handling, compaction detection, 5h-block grouping,
+  path-safety guards, and the HTTP auth/CSRF layer against a live ephemeral server.
+- **Git** — the folder is a repo; commit after changes.
+
 ## Safety / design notes
 
 - The server binds to `127.0.0.1` by default and **never writes** to `~/.claude`.
+- **Auth token**: every `/api` endpoint requires a token (401 otherwise). It's generated
+  once into `.token` (mode 0600) and passed to the browser via the URL fragment by the
+  app launcher, then kept in localStorage. This protects against *other local users* on
+  the machine; the CSRF guard below protects against hostile web pages. If a browser
+  ever shows the 401 message, relaunch via `Claude DevTools.app`.
 - The terminal endpoints can execute commands, so POSTs are CSRF-guarded: they require
   `Content-Type: application/json` (forcing a browser preflight) and reject foreign
   `Origin` headers. Do **not** expose this server beyond localhost (`--host 0.0.0.0`
