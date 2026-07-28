@@ -1,0 +1,7 @@
+viz/
+.token
+.state.json
+__pycache__/
+*.pyc
+*.log
+.pytest_cache/

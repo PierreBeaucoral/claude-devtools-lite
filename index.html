@@ -1,0 +1,1008 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>claude-devtools-lite</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/vendor/xterm.min.css">
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --panel2: #1c2129; --border: #2d333b;
+    --fg: #d6dde5; --dim: #8b949e; --accent: #58a6ff; --user: #3b82f6;
+    --think: #b18cff; --tool: #d29922; --ok: #3fb950; --err: #f85149;
+    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:14px/1.55 -apple-system, "Segoe UI", sans-serif; }
+  a { color: var(--accent); text-decoration: none; }
+
+  #app { display:flex; height:100vh; }
+  #sidebar { width:300px; min-width:220px; border-right:1px solid var(--border);
+             background:var(--panel); display:flex; flex-direction:column; }
+
+  /* RStudio-style 2x2 workspace */
+  #workspace { flex:1; min-width:0; display:grid; gap:1px; background:var(--border);
+               grid-template-columns: minmax(0,1fr) minmax(270px,330px);
+               grid-template-rows: minmax(0,1.35fr) minmax(0,1fr); }
+  #workspace.noright { grid-template-columns: minmax(0,1fr); }
+  #workspace.noright #cell-usage, #workspace.noright #cell-viz { display:none; }
+  .cell { display:flex; flex-direction:column; min-width:0; min-height:0;
+          background:var(--bg); overflow:hidden; }
+  #workspace.maxed { display:flex; }
+  #workspace.maxed .cell { display:none; }
+  #workspace.maxed .cell.maxed { display:flex; flex:1; }
+  .qhead { padding:6px 10px; font-size:12px; font-weight:700; letter-spacing:.5px;
+           color:var(--dim); border-bottom:1px solid var(--border); flex:none;
+           display:flex; align-items:center; gap:8px; background:var(--panel); }
+  .qbody { flex:1; overflow-y:auto; padding:10px 12px; font-size:12.5px; min-height:0; }
+  .maxbtn { flex:none; }
+  #main { flex:1; overflow-y:auto; min-height:0; padding:0 0 30px 0; }
+
+  #topbar { padding:10px 12px; border-bottom:1px solid var(--border); }
+  #topbar h1 { font-size:14px; margin:0 0 8px; letter-spacing:.4px; }
+  #topbar h1 span { color:var(--dim); font-weight:400; }
+  #search { width:100%; padding:6px 9px; background:var(--bg); color:var(--fg);
+            border:1px solid var(--border); border-radius:6px; font-size:13px; }
+  #search:focus { outline:none; border-color:var(--accent); }
+
+  #tree { overflow-y:auto; flex:1; padding:6px 0; }
+  .proj { padding:7px 12px; cursor:pointer; border-left:3px solid transparent; }
+  .proj:hover { background:var(--panel2); }
+  .proj.open { border-left-color:var(--accent); background:var(--panel2); }
+  .proj .name { font-weight:600; font-size:13px; overflow:hidden;
+                text-overflow:ellipsis; white-space:nowrap; }
+  .proj .sub { color:var(--dim); font-size:11.5px; }
+  .sess { padding:6px 12px 6px 24px; cursor:pointer; font-size:12.5px;
+          border-left:3px solid transparent; }
+  .sess:hover { background:var(--panel2); }
+  .sess.active { border-left-color:var(--tool); background:var(--panel2); }
+  .sess .t { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sess .m { color:var(--dim); font-size:11px; }
+  .memlink { padding:5px 12px 5px 24px; font-size:12px; color:var(--think); cursor:pointer; }
+  .memlink:hover { background:var(--panel2); }
+
+  /* main header */
+  #shead { position:sticky; top:0; z-index:5; background:rgba(13,17,23,.95);
+           backdrop-filter:blur(4px); border-bottom:1px solid var(--border);
+           padding:12px 20px; }
+  #shead h2 { margin:0 0 4px; font-size:16px; }
+  #shead .meta { color:var(--dim); font-size:12px; }
+  .stats { display:flex; gap:14px; flex-wrap:wrap; margin-top:8px; }
+  .stat { background:var(--panel); border:1px solid var(--border); border-radius:6px;
+          padding:4px 10px; font-size:12px; }
+  .stat b { color:var(--accent); font-family:var(--mono); }
+  .chips { margin-top:8px; display:flex; gap:6px; flex-wrap:wrap; }
+  .chip { font-size:11px; background:var(--panel); border:1px solid var(--border);
+          border-radius:10px; padding:1px 8px; color:var(--dim); }
+  .toggles { margin-top:8px; font-size:12px; color:var(--dim); display:flex; gap:14px; }
+  .toggles label { cursor:pointer; user-select:none; }
+
+  /* chart */
+  #chart { padding:10px 20px 0; }
+  #chart svg { width:100%; height:110px; display:block; }
+  .cbar { fill:#2f5c8f; } .cbar:hover { fill:var(--accent); }
+  .cbar.compact { fill:var(--err); }
+  #chartlabel { color:var(--dim); font-size:11px; padding:2px 20px 0; }
+
+  /* timeline */
+  #timeline { padding:14px 20px; max-width:1050px; }
+  .entry { margin:10px 0; border:1px solid var(--border); border-radius:8px;
+           background:var(--panel); overflow:hidden; }
+  .entry .head { display:flex; align-items:center; gap:8px; padding:6px 12px;
+                 font-size:12px; color:var(--dim); cursor:default; }
+  .entry .head .tag { font-weight:700; font-size:11px; letter-spacing:.5px; }
+  .entry .body { padding:2px 14px 10px; overflow-x:auto; }
+  .entry.user { border-left:3px solid var(--user); }
+  .entry.user .tag { color:var(--user); }
+  .entry.assistant { border-left:3px solid var(--ok); }
+  .entry.assistant .tag { color:var(--ok); }
+  .entry.thinking { border-left:3px solid var(--think); background:transparent; }
+  .entry.thinking .tag { color:var(--think); }
+  .entry.thinking .body { color:var(--dim); font-style:italic; }
+  .entry.tool { border-left:3px solid var(--tool); }
+  .entry.tool .tag { color:var(--tool); }
+  .entry.tool .head { cursor:pointer; }
+  .entry.tool.error { border-left-color:var(--err); }
+  .entry.command, .entry.system { border-left:3px solid var(--dim); opacity:.85; }
+  .entry.compact { border:1px dashed var(--err); color:var(--err); text-align:center;
+                   padding:6px; font-size:12px; background:transparent; }
+  .collapsible > .body { display:none; }
+  .collapsible.openx > .body { display:block; }
+  .caret { transition:transform .12s; display:inline-block; }
+  .openx .caret { transform:rotate(90deg); }
+
+  .toolsum { font-family:var(--mono); font-size:12px; color:var(--fg);
+             overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
+  pre { background:var(--bg); border:1px solid var(--border); border-radius:6px;
+        padding:9px 11px; font:12px/1.5 var(--mono); overflow-x:auto;
+        white-space:pre-wrap; word-break:break-word; margin:8px 0; }
+  code { font-family:var(--mono); font-size:.92em; background:var(--bg);
+         padding:1px 5px; border-radius:4px; }
+  pre code { padding:0; background:none; }
+  .md p { margin:6px 0; } .md h1,.md h2,.md h3 { font-size:1.05em; margin:10px 0 4px; }
+  .md ul,.md ol { margin:4px 0; padding-left:22px; }
+  .md table { border-collapse:collapse; } .md td,.md th { border:1px solid var(--border); padding:3px 8px; }
+
+  .diff { font:12px/1.5 var(--mono); background:var(--bg); border:1px solid var(--border);
+          border-radius:6px; margin:8px 0; overflow-x:auto; }
+  .diff .ln { white-space:pre; padding:0 10px; }
+  .diff .add { background:rgba(63,185,80,.14); color:#7ee787; }
+  .diff .del { background:rgba(248,81,73,.14); color:#ffa198; }
+  .diff .hunk { color:var(--accent); background:var(--panel2); padding:1px 10px; }
+
+  .copy { margin-left:auto; background:none; border:1px solid var(--border);
+          color:var(--dim); border-radius:5px; font-size:11px; padding:1px 8px; cursor:pointer; }
+  .copy:hover { color:var(--fg); border-color:var(--dim); }
+
+  .ts { font-family:var(--mono); font-size:11px; }
+  .placeholder { color:var(--dim); padding:60px 30px; text-align:center; }
+  .sresult { border:1px solid var(--border); border-radius:8px; background:var(--panel);
+             padding:8px 14px; margin:8px 0; cursor:pointer; }
+  .sresult:hover { border-color:var(--accent); }
+  .sresult .where { font-size:11.5px; color:var(--dim); margin-bottom:3px; }
+  mark { background:var(--tool); color:#000; border-radius:2px; padding:0 1px; }
+  .agentbox { display:inline-block; margin:4px 8px 4px 0; padding:4px 10px; font-size:12px;
+              border:1px solid var(--think); color:var(--think); border-radius:6px; cursor:pointer; }
+  .agentbox:hover { background:var(--panel2); }
+  .backlink { display:inline-block; margin:10px 20px 0; font-size:12.5px; cursor:pointer;
+              color:var(--accent); }
+  /* usage + viz cells */
+  .urow { display:flex; justify-content:space-between; padding:3px 0; }
+  .urow b { font-family:var(--mono); color:var(--accent); }
+  .ubar { height:6px; background:var(--panel2); border-radius:3px; margin:6px 0 10px;
+          overflow:hidden; }
+  .ubar > div { height:100%; background:var(--accent); }
+  #sparkline { width:100%; height:44px; margin-top:4px; }
+  .modelrow { font-size:11.5px; color:var(--dim); display:flex; justify-content:space-between; }
+  #vizframe { flex:1; min-height:0; border:none; width:100%; background:#fff; }
+  #vizframe.darkbg { background:transparent; }
+  .vizfile { padding:4px 8px; font-size:11.5px; cursor:pointer; border-radius:5px;
+             display:flex; justify-content:space-between; gap:6px; color:var(--dim); }
+  .vizfile:hover, .vizfile.active { background:var(--panel2); color:var(--fg); }
+  .vizempty { color:var(--dim); font-size:12px; padding:14px 4px; line-height:1.6; }
+  /* viz/files tabs + file explorer */
+  .vtab { padding:2px 9px; font-size:11.5px; font-weight:400; border:1px solid var(--border);
+          border-radius:6px; cursor:pointer; color:var(--dim); }
+  .vtab.active { color:var(--fg); border-color:var(--accent); }
+  #fscrumb { padding:6px 10px; font-size:11px; color:var(--dim); flex:none;
+             border-bottom:1px solid var(--border); display:flex; gap:6px;
+             align-items:center; flex-wrap:wrap; }
+  #fscrumb a { cursor:pointer; }
+  .fsrow { padding:3px 8px; font-size:12px; cursor:pointer; border-radius:5px;
+           display:flex; align-items:center; gap:7px; color:var(--fg); }
+  .fsrow:hover { background:var(--panel2); }
+  .fsrow .fname { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis;
+                  white-space:nowrap; }
+  .fsrow .fmeta { color:var(--dim); font-size:10.5px; flex:none; }
+  .fsrow .fact { visibility:hidden; border:1px solid var(--border); border-radius:4px;
+                 font-size:10px; padding:0 5px; color:var(--dim); flex:none; }
+  .fsrow:hover .fact { visibility:visible; }
+  .fsrow .fact:hover { color:var(--fg); border-color:var(--dim); }
+  #fsframe { flex:1; min-height:0; border:none; width:100%;
+             border-top:1px solid var(--border); background:#fff; display:none; }
+  #fsframe.darkbg { background:transparent; }
+  .dotnew { width:8px; height:8px; border-radius:50%; background:var(--ok); flex:none;
+            box-shadow:0 0 6px var(--ok); }
+  /* embedded terminal cell */
+  #cell-term { background:#0a0d12; }
+  #ttablist { display:flex; gap:4px; flex-wrap:wrap; min-width:0; overflow:hidden; }
+  .ttab { display:flex; align-items:center; gap:7px; padding:2px 9px; font-size:11.5px;
+          font-weight:400; letter-spacing:0;
+          border:1px solid var(--border); border-radius:6px; cursor:pointer; color:var(--dim); }
+  .ttab.active { color:var(--fg); border-color:var(--tool); }
+  .ttab.dead { opacity:.55; text-decoration:line-through; }
+  .ttab .x { color:var(--dim); font-size:13px; padding:0 2px; }
+  .ttab .x:hover { color:var(--err); }
+  #termbtns { margin-left:auto; display:flex; gap:6px; }
+  #termbody { flex:1; min-height:0; padding:4px 8px 8px; }
+  #termbody > div { height:100%; width:100%; }
+  .termbtn { cursor:pointer; }
+  .projrow { display:flex; align-items:center; gap:6px; }
+  .projrow .cli { visibility:hidden; border:1px solid var(--border); border-radius:5px;
+                  font-size:11px; padding:0 6px; color:var(--tool); flex:none; }
+  .proj:hover .cli { visibility:visible; }
+  .proj .grow { flex:1; min-width:0; }
+  @media (max-width: 900px){ #sidebar{ width:240px; min-width:200px; } }
+  @media (max-width: 560px){ #app{ flex-direction:column; } #sidebar{ width:100%; max-height:45vh; border-right:none; border-bottom:1px solid var(--border); } }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="sidebar">
+    <div id="topbar">
+      <h1>claude-devtools <span>lite</span>
+        <button class="copy termbtn" style="float:right" id="btnQuit" title="stop the devtools server">⏻</button>
+        <button class="copy termbtn" style="float:right;margin-right:6px" id="btnTerm" title="open a terminal">⌨ CLI</button>
+        <button class="copy termbtn" style="float:right;margin-right:6px" id="btnRight" title="toggle usage/viz panels">◫</button>
+      </h1>
+      <input id="search" placeholder="Search all sessions…  (Enter)" autocomplete="off">
+    </div>
+    <div id="tree"><div class="placeholder">loading projects…</div></div>
+  </div>
+  <div id="workspace">
+    <div class="cell" id="cell-main">
+      <div class="qhead">📄 SESSION
+        <span style="margin-left:auto"></span>
+        <button class="copy maxbtn" data-cell="cell-main" title="maximize / restore">⛶</button>
+      </div>
+      <div id="main"><div class="placeholder">
+        ← Pick a project and session.<br><br>
+        This dashboard reads <code>~/.claude</code> read-only:<br>
+        timelines, thinking, tool calls, diffs, token usage,<br>subagents, memory, and full-text search.
+      </div></div>
+    </div>
+
+    <div class="cell" id="cell-usage">
+      <div class="qhead">⚡ TOKEN USE
+        <span id="blockreset" style="margin-left:auto;font-weight:400"></span>
+        <button class="copy maxbtn" data-cell="cell-usage" title="maximize / restore">⛶</button>
+      </div>
+      <div class="qbody" id="usagebody"><div class="vizempty">computing…</div></div>
+    </div>
+
+    <div class="cell" id="cell-term">
+      <div class="qhead">⌨ TERMINAL
+        <span id="ttablist"></span>
+        <span style="margin-left:auto;display:flex;gap:6px">
+          <button class="copy termbtn" id="btnShell" title="plain shell in $HOME">+ shell</button>
+          <button class="copy termbtn" id="btnClaudeHome" title="claude in $HOME">+ claude</button>
+          <button class="copy maxbtn" data-cell="cell-term" title="maximize / restore">⛶</button>
+        </span>
+      </div>
+      <div id="termbody">
+        <div id="termempty" class="vizempty" style="padding:20px">
+          No terminal yet — <b>+ claude</b> or <b>+ shell</b> above, ⌨ on a project,
+          or “resume in CLI” on a session.</div>
+      </div>
+    </div>
+
+    <div class="cell" id="cell-viz">
+      <div class="qhead" style="gap:4px">
+        <span class="vtab active" data-view="viz">📊 Viz</span>
+        <span class="vtab" data-view="files">🗂 Files</span>
+        <button class="copy" id="vizPath" style="margin-left:auto" title="copy watched folder path">copy path</button>
+        <button class="copy maxbtn" data-cell="cell-viz" title="maximize / restore">⛶</button>
+      </div>
+      <div id="vizview" style="display:flex;flex-direction:column;flex:1;min-height:0">
+        <div class="qbody" id="vizlist" style="flex:none;max-height:110px"></div>
+        <iframe id="vizframe" sandbox="allow-scripts" title="viz preview"></iframe>
+      </div>
+      <div id="filesview" style="display:none;flex-direction:column;flex:1;min-height:0">
+        <div id="fscrumb"></div>
+        <div class="qbody" id="fslist" style="flex:1"></div>
+        <iframe id="fsframe" sandbox="allow-scripts" title="file preview"></iframe>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/vendor/xterm.min.js"></script>
+<script src="/vendor/addon-fit.min.js"></script>
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const state = { projects: [], openProject: null, sessions: {}, active: null };
+
+const fmtBytes = n => n > 1e6 ? (n/1e6).toFixed(1)+" MB" : n > 1e3 ? (n/1e3).toFixed(0)+" kB" : n+" B";
+const fmtTok = n => n >= 1e6 ? (n/1e6).toFixed(2)+"M" : n >= 1e3 ? (n/1e3).toFixed(1)+"k" : String(n||0);
+const fmtDate = ts => { if(!ts) return ""; const d = new Date(typeof ts==="number"? ts*1000 : ts);
+  return d.toLocaleDateString(undefined,{month:"short",day:"numeric"})+" "+
+         d.toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"}); };
+const esc = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+
+async function api(path){ const r = await fetch(path); const j = await r.json();
+  if(!r.ok) throw new Error(j.error||r.status); return j; }
+
+/* ---------- tiny markdown (safe: everything escaped first) ---------- */
+function md(src){
+  const fences = [];
+  src = src.replace(/```([^\n]*)\n([\s\S]*?)```/g, (_,lang,code)=>{
+    fences.push(`<pre><code>${esc(code)}</code></pre>`); return `\x00F${fences.length-1}\x00`; });
+  let h = esc(src)
+    .replace(/`([^`\n]+)`/g, "<code>$1</code>")
+    .replace(/^######? *(.+)$/gm, "<h3>$1</h3>")
+    .replace(/^#{1,4} *(.+)$/gm, "<h3>$1</h3>")
+    .replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>")
+    .replace(/(^|\s)\*([^*\n]+)\*(?=\s|[.,;:]|$)/g, "$1<i>$2</i>")
+    .replace(/\[([^\]\n]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>')
+    .replace(/^[-*] (.+)$/gm, "•&nbsp;$1")
+    .replace(/\n\n+/g, "</p><p>").replace(/\n/g, "<br>");
+  h = "<p>"+h+"</p>";
+  return h.replace(/\x00F(\d+)\x00/g, (_,i)=>fences[+i]);
+}
+
+/* ---------- sidebar ---------- */
+async function loadProjects(){
+  state.projects = await api("/api/projects");
+  renderTree();
+}
+function renderTree(){
+  const tree = $("#tree"); tree.innerHTML = "";
+  for(const p of state.projects){
+    const div = document.createElement("div");
+    div.className = "proj" + (state.openProject===p.slug ? " open":"");
+    const shortPath = p.path.split("/").slice(-2).join("/") || p.path;
+    div.innerHTML = `<div class="projrow"><div class="grow">
+        <div class="name" title="${esc(p.path)}">${esc(shortPath)}</div>
+        <div class="sub">${p.sessions} session${p.sessions===1?"":"s"} · ${fmtDate(p.mtime)}</div>
+      </div>${isNew(p) ? '<span class="dotnew" title="new activity since you last opened this project"></span>' : ''}<span class="cli" title="open claude CLI in ${esc(p.path)}">⌨</span></div>`;
+    div.onclick = () => toggleProject(p.slug);
+    div.querySelector(".cli").onclick = e => { e.stopPropagation();
+      openTerm("claude", {project: p.slug, label: "claude · " + shortPath.split("/").pop()}); };
+    tree.appendChild(div);
+    if(state.openProject===p.slug){
+      if(p.has_memory){
+        const m = document.createElement("div");
+        m.className = "memlink"; m.textContent = "🧠 project memory";
+        m.onclick = e => { e.stopPropagation(); showMemory(p.slug); };
+        tree.appendChild(m);
+      }
+      for(const s of (state.sessions[p.slug]||[])){
+        const el = document.createElement("div");
+        el.className = "sess" + (state.active===p.slug+"/"+s.id ? " active":"");
+        el.innerHTML = `<div class="t" title="${esc(s.title)}">${esc(s.title)}</div>
+          <div class="m">${fmtDate(s.mtime)} · ${fmtBytes(s.size)}${s.has_subagents?" · 🤖":""}</div>`;
+        el.onclick = e => { e.stopPropagation(); openSession(p.slug, s.id); };
+        tree.appendChild(el);
+      }
+    }
+  }
+}
+/* ---------- "new activity" badges (localStorage watermark per project) ---------- */
+function seenKey(slug){ return "cdl-seen:" + slug; }
+function isNew(p){
+  const seen = parseFloat(localStorage.getItem(seenKey(p.slug)) || "0");
+  if(!seen){ localStorage.setItem(seenKey(p.slug), String(p.mtime)); return false; }
+  return p.mtime > seen + 1;
+}
+function markSeen(slug){
+  const p = state.projects.find(x => x.slug === slug);
+  if(p) localStorage.setItem(seenKey(slug), String(p.mtime));
+}
+
+async function toggleProject(slug){
+  markSeen(slug);
+  if(state.openProject===slug){ state.openProject=null; renderTree(); return; }
+  state.openProject = slug;
+  // file explorer follows the selected project
+  const p = state.projects.find(x => x.slug === slug);
+  if(p && p.path.startsWith("/")){
+    fsPath = p.path;
+    if($("#filesview").style.display !== "none") loadFs(fsPath);
+  }
+  renderTree();
+  state.sessions[slug] = await api("/api/sessions?project="+encodeURIComponent(slug));
+  renderTree();
+}
+
+/* ---------- session view ---------- */
+async function openSession(slug, id){
+  state.active = slug+"/"+id; renderTree();
+  $("#main").innerHTML = `<div class="placeholder">parsing session…</div>`;
+  try{
+    const s = await api(`/api/session?project=${encodeURIComponent(slug)}&id=${encodeURIComponent(id)}`);
+    renderSession(s, {slug, id});
+  }catch(e){ $("#main").innerHTML = `<div class="placeholder">error: ${esc(e.message)}</div>`; }
+}
+async function openSubagent(slug, session, agent){
+  $("#main").innerHTML = `<div class="placeholder">parsing subagent…</div>`;
+  try{
+    const s = await api(`/api/subagent?project=${encodeURIComponent(slug)}&session=${encodeURIComponent(session)}&agent=${encodeURIComponent(agent)}`);
+    s.title = "Subagent " + agent.replace(/\.jsonl$/,"");
+    renderSession(s, {slug, id:session, isAgent:true, back:()=>openSession(slug,session)});
+  }catch(e){ $("#main").innerHTML = `<div class="placeholder">error: ${esc(e.message)}</div>`; }
+}
+
+function renderSession(s, ctx){
+  const main = $("#main"); main.innerHTML = "";
+  if(ctx.back){
+    const b = document.createElement("div"); b.className="backlink";
+    b.textContent = "← back to session"; b.onclick = ctx.back; main.appendChild(b);
+  }
+  const head = document.createElement("div"); head.id = "shead";
+  const t = s.totals || {};
+  head.innerHTML = `
+    <h2>${esc(s.title || s.id)}
+      ${!ctx.isAgent ? '<button class="copy termbtn" id="btnResume" style="font-size:12px;vertical-align:middle" title="claude --resume '+esc(s.id)+'">⌨ resume in CLI</button>' : ''}</h2>
+    <div class="meta">${esc(s.model||"")} · ${s.entries.length} timeline entries
+      ${s.sidechain_msgs? " · "+s.sidechain_msgs+" sidechain msgs":""}</div>
+    <div class="stats">
+      <div class="stat">requests <b>${t.requests||0}</b></div>
+      <div class="stat">output <b>${fmtTok(t.output_tokens)}</b></div>
+      <div class="stat">cache read <b>${fmtTok(t.cache_read)}</b></div>
+      <div class="stat">cache write <b>${fmtTok(t.cache_creation)}</b></div>
+      <div class="stat">peak context <b>${fmtTok(t.peak_context)}</b></div>
+    </div>
+    <div class="chips">${Object.entries(s.tool_counts||{}).sort((a,b)=>b[1]-a[1])
+      .map(([k,v])=>`<span class="chip">${esc(k)} ×${v}</span>`).join("")}</div>
+    <div class="toggles">
+      <label><input type="checkbox" id="tgThink" checked> thinking</label>
+      <label><input type="checkbox" id="tgTools" checked> tool calls</label>
+      <label><input type="checkbox" id="tgSys"> system / commands</label>
+    </div>`;
+  main.appendChild(head);
+  const rbtn = head.querySelector("#btnResume");
+  if(rbtn) rbtn.onclick = () => openTerm("resume",
+    {project: ctx.slug, session: s.id, label: "resume · " + s.id.slice(0,8)});
+
+  if((s.context_series||[]).length){
+    main.appendChild(renderChart(s.context_series));
+    const lbl = document.createElement("div"); lbl.id="chartlabel";
+    lbl.textContent = "Context window per request (input + cache read + cache write). Red bars = probable compaction.";
+    main.appendChild(lbl);
+  }
+
+  if((s.subagents||[]).length){
+    const box = document.createElement("div");
+    box.style.cssText = "padding:10px 20px 0";
+    box.innerHTML = `<span style="color:var(--dim);font-size:12px">subagents:</span> `;
+    for(const a of s.subagents){
+      const el = document.createElement("span");
+      el.className = "agentbox";
+      el.textContent = `🤖 ${a.file.replace(/^agent-|\.jsonl$/g,"")} (${fmtBytes(a.size)})`;
+      el.onclick = () => openSubagent(ctx.slug, ctx.id, a.file);
+      box.appendChild(el);
+    }
+    main.appendChild(box);
+  }
+
+  const tl = document.createElement("div"); tl.id = "timeline";
+  main.appendChild(tl);
+
+  // chunked rendering: big sessions (3000+ entries) would freeze the DOM
+  const CHUNK = 150;
+  let rendered = 0;
+  const moreBtn = document.createElement("button");
+  moreBtn.className = "copy";
+  moreBtn.style.cssText = "display:block;margin:14px auto;padding:6px 18px;font-size:13px";
+  const renderChunk = () => {
+    const frag = document.createDocumentFragment();
+    const end = Math.min(rendered + CHUNK, s.entries.length);
+    for(; rendered < end; rendered++) frag.appendChild(renderEntry(s.entries[rendered]));
+    tl.appendChild(frag);
+    moreBtn.textContent = `show more (${s.entries.length - rendered} remaining)`;
+    moreBtn.style.display = rendered >= s.entries.length ? "none" : "block";
+    applyToggles();
+  };
+  moreBtn.onclick = renderChunk;
+  main.appendChild(moreBtn);
+  // auto-load next chunk when the button scrolls into view
+  new IntersectionObserver(es => {
+    if(es[0].isIntersecting && rendered < s.entries.length) renderChunk();
+  }, {root: main, rootMargin: "600px"}).observe(moreBtn);
+  // fallback: near-bottom scroll also loads (IO can be unreliable in hidden panes)
+  main.onscroll = () => {
+    if(rendered < s.entries.length &&
+       main.scrollTop + main.clientHeight > main.scrollHeight - 900) renderChunk();
+  };
+
+  const applyToggles = () => {
+    tl.classList.toggle("hideThink", !$("#tgThink").checked);
+    tl.querySelectorAll(".entry.thinking").forEach(el=>el.style.display = $("#tgThink").checked?"":"none");
+    tl.querySelectorAll(".entry.tool").forEach(el=>el.style.display = $("#tgTools").checked?"":"none");
+    tl.querySelectorAll(".entry.command,.entry.system").forEach(el=>el.style.display = $("#tgSys").checked?"":"none");
+  };
+  ["tgThink","tgTools","tgSys"].forEach(id=>$("#"+id).onchange=applyToggles);
+  renderChunk();
+  main.scrollTop = 0;
+}
+
+function copyBtn(text){
+  const b = document.createElement("button");
+  b.className = "copy"; b.textContent = "copy";
+  b.onclick = ev => { ev.stopPropagation();
+    navigator.clipboard.writeText(text).then(()=>{ b.textContent="✓"; setTimeout(()=>b.textContent="copy",900); }); };
+  return b;
+}
+
+function toolSummary(e){
+  const i = e.input || {};
+  const first = i.command || i.file_path || i.pattern || i.query || i.url || i.prompt ||
+                i.description || i.skill || JSON.stringify(i);
+  return String(first||"").slice(0,160);
+}
+
+function renderEntry(e){
+  const div = document.createElement("div");
+  div.className = "entry " + e.kind;
+  const ts = e.ts ? `<span class="ts">${fmtDate(e.ts)}</span>` : "";
+
+  if(e.kind === "compact"){ div.textContent = "⇢ " + e.text; return div; }
+
+  if(e.kind === "tool"){
+    div.classList.add("collapsible");
+    if(e.is_error) div.classList.add("error");
+    const head = document.createElement("div"); head.className = "head";
+    head.innerHTML = `<span class="caret">▸</span><span class="tag">${esc(e.name)}</span>
+      <span class="toolsum">${esc(toolSummary(e))}</span>
+      ${e.is_error?'<span style="color:var(--err)">error</span>':""} ${ts}`;
+    head.appendChild(copyBtn(e.result || JSON.stringify(e.input,null,2)));
+    head.onclick = () => div.classList.toggle("openx");
+    div.appendChild(head);
+    const body = document.createElement("div"); body.className = "body";
+    const inp = document.createElement("pre");
+    inp.textContent = JSON.stringify(e.input, null, 2);
+    body.appendChild(inp);
+    if(e.patch) body.appendChild(renderPatch(e.patch, e.file_path));
+    else if(e.name==="Edit" && e.input && e.input.old_string !== undefined)
+      body.appendChild(renderEditFallback(e.input));
+    if(e.result){
+      const cap = document.createElement("div");
+      cap.style.cssText="font-size:11px;color:var(--dim);margin-top:6px"; cap.textContent="result";
+      body.appendChild(cap);
+      const pre = document.createElement("pre"); pre.textContent = e.result;
+      body.appendChild(pre);
+    }
+    if(e.agent_id){
+      const n = document.createElement("div");
+      n.style.cssText="font-size:12px;color:var(--think)";
+      n.textContent = "agent id: "+e.agent_id+" — see subagents above";
+      body.appendChild(n);
+    }
+    div.appendChild(body);
+    return div;
+  }
+
+  const label = {user:"USER", assistant:"CLAUDE", thinking:"THINKING",
+                 command:"COMMAND", system:"SYSTEM"}[e.kind] || e.kind.toUpperCase();
+  const head = document.createElement("div"); head.className = "head";
+  head.innerHTML = `<span class="tag">${label}</span>
+    ${e.system_reminder?'<span class="chip">system-reminder</span>':""} ${ts}`;
+  head.appendChild(copyBtn(e.text||""));
+  div.appendChild(head);
+  const body = document.createElement("div"); body.className = "body md";
+  if(e.kind === "thinking" || e.kind === "command" || e.kind === "system" || e.system_reminder){
+    const pre = document.createElement("pre");
+    pre.style.background = "transparent"; pre.style.border = "none"; pre.style.padding = "0";
+    pre.textContent = e.text; body.appendChild(pre);
+    if(e.kind === "thinking"){
+      div.classList.add("collapsible");
+      head.style.cursor = "pointer";
+      head.insertAdjacentHTML("afterbegin", '<span class="caret">▸</span>');
+      head.onclick = () => div.classList.toggle("openx");
+    }
+  } else {
+    body.innerHTML = md(e.text || "");
+  }
+  div.appendChild(body);
+  return div;
+}
+
+function renderPatch(hunks, filePath){
+  const box = document.createElement("div"); box.className = "diff";
+  if(filePath){
+    const h = document.createElement("div"); h.className = "hunk"; h.textContent = filePath;
+    box.appendChild(h);
+  }
+  for(const hk of hunks){
+    const hd = document.createElement("div"); hd.className = "ln hunk";
+    hd.textContent = `@@ -${hk.oldStart},${hk.oldLines} +${hk.newStart},${hk.newLines} @@`;
+    box.appendChild(hd);
+    for(const ln of hk.lines || []){
+      const d = document.createElement("div");
+      d.className = "ln " + (ln.startsWith("+") ? "add" : ln.startsWith("-") ? "del" : "");
+      d.textContent = ln;
+      box.appendChild(d);
+    }
+  }
+  return box;
+}
+function renderEditFallback(input){
+  const box = document.createElement("div"); box.className = "diff";
+  for(const l of String(input.old_string||"").split("\n")){
+    const d = document.createElement("div"); d.className="ln del"; d.textContent="-"+l; box.appendChild(d); }
+  for(const l of String(input.new_string||"").split("\n")){
+    const d = document.createElement("div"); d.className="ln add"; d.textContent="+"+l; box.appendChild(d); }
+  return box;
+}
+
+function renderChart(series){
+  const wrap = document.createElement("div"); wrap.id = "chart";
+  const W = 1000, H = 110, max = Math.max(...series.map(p=>p.context), 1);
+  const bw = Math.max(1.5, Math.min(14, W/series.length - 1));
+  const step = W / series.length;
+  let bars = "";
+  series.forEach((p,i)=>{
+    const h = Math.max(2, p.context/max * (H-18));
+    bars += `<rect class="cbar${p.compaction?" compact":""}" x="${(i*step).toFixed(1)}" y="${(H-h).toFixed(1)}"
+      width="${bw}" height="${h.toFixed(1)}"><title>req ${i+1} — ${fmtTok(p.context)} ctx (${fmtTok(p.cache_read)} cached, ${fmtTok(p.cache_creation)} new cache, out ${fmtTok(p.output)})${p.compaction?" — COMPACTION":""}</title></rect>`;
+  });
+  wrap.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+    <text x="4" y="12" fill="#8b949e" font-size="11">peak ${fmtTok(max)} tokens</text>${bars}</svg>`;
+  return wrap;
+}
+
+/* ---------- memory ---------- */
+async function showMemory(slug){
+  state.active = null; renderTree();
+  $("#main").innerHTML = `<div class="placeholder">loading memory…</div>`;
+  const m = await api("/api/memory?project="+encodeURIComponent(slug));
+  const main = $("#main"); main.innerHTML = "";
+  const head = document.createElement("div"); head.id = "shead";
+  head.innerHTML = `<h2>🧠 Project memory</h2><div class="meta">${m.files.length} file(s)</div>`;
+  main.appendChild(head);
+  const tl = document.createElement("div"); tl.id = "timeline";
+  for(const f of m.files){
+    const div = document.createElement("div"); div.className = "entry assistant collapsible" +
+      (f.name==="MEMORY.md" ? " openx" : "");
+    const h = document.createElement("div"); h.className = "head"; h.style.cursor="pointer";
+    h.innerHTML = `<span class="caret">▸</span><span class="tag">${esc(f.name)}</span>`;
+    h.appendChild(copyBtn(f.content));
+    h.onclick = () => div.classList.toggle("openx");
+    const b = document.createElement("div"); b.className = "body md";
+    b.innerHTML = md(f.content);
+    div.append(h,b); tl.appendChild(div);
+  }
+  main.appendChild(tl);
+}
+
+/* ---------- search ---------- */
+$("#search").addEventListener("keydown", async ev=>{
+  if(ev.key !== "Enter") return;
+  const q = ev.target.value.trim();
+  if(q.length < 2) return;
+  state.active = null; renderTree();
+  $("#main").innerHTML = `<div class="placeholder">searching all sessions…</div>`;
+  try{
+    const res = await api("/api/search?q="+encodeURIComponent(q));
+    const main = $("#main"); main.innerHTML = "";
+    const head = document.createElement("div"); head.id = "shead";
+    head.innerHTML = `<h2>🔍 “${esc(q)}”</h2><div class="meta">${res.length} match(es)${res.length>=300?" (capped)":""}</div>`;
+    main.appendChild(head);
+    const tl = document.createElement("div"); tl.id = "timeline";
+    const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"),"gi");
+    for(const r of res){
+      const div = document.createElement("div"); div.className = "sresult";
+      div.innerHTML = `<div class="where">${esc(r.project)} / ${r.session.slice(0,8)} · ${r.type} · ${fmtDate(r.ts)}</div>
+        <div>${esc(r.snippet).replace(rx, m=>`<mark>${m}</mark>`)}</div>`;
+      div.onclick = async () => {
+        state.openProject = r.project;
+        if(!state.sessions[r.project])
+          state.sessions[r.project] = await api("/api/sessions?project="+encodeURIComponent(r.project));
+        openSession(r.project, r.session);
+      };
+      tl.appendChild(div);
+    }
+    main.appendChild(tl);
+  }catch(e){ $("#main").innerHTML = `<div class="placeholder">error: ${esc(e.message)}</div>`; }
+});
+
+/* ---------- embedded terminal (xterm.js + PTY over SSE) ---------- */
+const TM = { terms: new Map(), active: null };
+
+function showTermCell(){ $("#termempty").style.display = "none"; fitActive(); }
+
+function b64ToBytes(b64){
+  const bin = atob(b64); const a = new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) a[i] = bin.charCodeAt(i);
+  return a;
+}
+function strToB64(s){
+  const bytes = new TextEncoder().encode(s);
+  let bin = ""; bytes.forEach(b => bin += String.fromCharCode(b));
+  return btoa(bin);
+}
+
+async function openTerm(kind, opts = {}){
+  showTermCell();
+  let info;
+  try{
+    const r = await fetch("/api/term/start", {method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({kind, project: opts.project, session: opts.session, cwd: opts.cwd})});
+    info = await r.json();
+    if(!r.ok) throw new Error(info.error || r.status);
+  }catch(e){ alert("terminal failed: " + e.message); return; }
+
+  const container = document.createElement("div");
+  $("#termbody").appendChild(container);
+  const term = new Terminal({
+    fontSize: 13, fontFamily: "ui-monospace, Menlo, monospace",
+    cursorBlink: true, allowProposedApi: true, scrollback: 5000,
+    theme: { background: "#0a0d12", foreground: "#d6dde5", cursor: "#58a6ff",
+             selectionBackground: "#2d4a6d" }
+  });
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(container);
+
+  const t = { id: info.id, label: opts.label || info.label, term, fit, container,
+              dead: false, pos: 0, abort: null };
+  TM.terms.set(t.id, t);
+
+  term.onData(d => fetch("/api/term/input", {method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({id: t.id, data: strToB64(d)})}));
+  term.onResize(({cols, rows}) => fetch("/api/term/resize", {method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({id: t.id, cols, rows})}));
+
+  activateTerm(t.id);
+  streamTerm(t);
+  renderTabs();
+}
+
+async function streamTerm(t){
+  for(let attempt = 0; attempt < 3 && !t.dead; attempt++){
+    try{
+      const ac = new AbortController(); t.abort = ac;
+      const resp = await fetch(`/api/term/stream?id=${t.id}&from=${t.pos}`, {signal: ac.signal});
+      if(!resp.ok) throw new Error("stream " + resp.status);
+      const reader = resp.body.getReader();
+      const dec = new TextDecoder();
+      let acc = "";
+      for(;;){
+        const {done, value} = await reader.read();
+        if(done) break;
+        acc += dec.decode(value, {stream: true});
+        let i;
+        while((i = acc.indexOf("\n\n")) >= 0){
+          const frame = acc.slice(0, i); acc = acc.slice(i + 2);
+          if(frame.startsWith("event: exit")){
+            t.dead = true;
+            t.term.write("\r\n\x1b[31m[process exited]\x1b[0m\r\n");
+            renderTabs();
+            return;
+          }
+          if(frame.startsWith("data: ")){
+            const bytes = b64ToBytes(frame.slice(6).trim());
+            t.pos += bytes.length;
+            t.term.write(bytes);
+          }
+        }
+      }
+      attempt = 0; // clean server close; retry from offset
+    }catch(e){
+      if(t.dead || (t.abort && t.abort.signal.aborted)) return;
+      await new Promise(r => setTimeout(r, 800));
+    }
+  }
+  if(!t.dead){ t.term.write("\r\n\x1b[31m[disconnected]\x1b[0m\r\n"); }
+}
+
+function activateTerm(id){
+  TM.active = id;
+  for(const [tid, t] of TM.terms)
+    t.container.style.display = tid === id ? "block" : "none";
+  renderTabs(); fitActive();
+  const t = TM.terms.get(id); if(t) t.term.focus();
+}
+function fitActive(){
+  const t = TM.terms.get(TM.active);
+  if(t && t.container.offsetParent !== null)
+    requestAnimationFrame(() => { try{ t.fit.fit(); }catch(e){} });
+}
+async function closeTerm(id){
+  const t = TM.terms.get(id); if(!t) return;
+  t.dead = true;
+  if(t.abort) t.abort.abort();
+  fetch("/api/term/kill", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({id})});
+  t.term.dispose(); t.container.remove();
+  TM.terms.delete(id);
+  if(TM.active === id) TM.active = TM.terms.keys().next().value || null;
+  if(TM.active) activateTerm(TM.active);
+  else $("#termempty").style.display = "block";
+  renderTabs();
+}
+function renderTabs(){
+  const box = $("#ttablist"); box.innerHTML = "";
+  for(const [id, t] of TM.terms){
+    const el = document.createElement("span");
+    el.className = "ttab" + (id===TM.active?" active":"") + (t.dead?" dead":"");
+    el.innerHTML = `<span>${esc(t.label)}</span><span class="x" title="close">✕</span>`;
+    el.onclick = () => activateTerm(id);
+    el.querySelector(".x").onclick = e => { e.stopPropagation(); closeTerm(id); };
+    box.appendChild(el);
+  }
+}
+
+$("#btnQuit").onclick = async () => {
+  const n = TM.terms.size;
+  if(!confirm("Quit Claude DevTools?" + (n ?
+      `\n\n${n} terminal session(s) will be closed gracefully — Claude Code gets to run its SessionEnd hooks (this can take a few seconds).` : "")))
+    return;
+  document.body.innerHTML = `<div class="placeholder" style="padding-top:30vh">
+    ⏻ Closing ${n||"no"} session(s) gracefully, then stopping the server…</div>`;
+  try{ await fetch("/api/shutdown", {method:"POST",
+    headers:{"Content-Type":"application/json"}, body:"{}"}); }catch(e){}
+  document.body.innerHTML = `<div class="placeholder" style="padding-top:30vh">
+    ⏻ Server stopped. Close this tab — double-click <b>Claude DevTools</b> to relaunch.</div>`;
+};
+$("#btnTerm").onclick = () => {
+  if(TM.terms.size){ activateTerm(TM.active || TM.terms.keys().next().value); }
+  else openTerm("claude", {label: "claude · ~"});
+};
+$("#btnShell").onclick = () => openTerm("shell", {label: "shell · ~"});
+$("#btnClaudeHome").onclick = () => openTerm("claude", {label: "claude · ~"});
+window.addEventListener("resize", fitActive);
+
+/* send text into the active terminal (opens a shell first if none) */
+async function termInsert(text, cwd){
+  let t = TM.terms.get(TM.active);
+  if(!t || t.dead){
+    await openTerm("shell", {cwd, label: "shell · " + (cwd||"~").split("/").pop()});
+    await new Promise(r => setTimeout(r, 700));
+    t = TM.terms.get(TM.active);
+    if(!t) return;
+  }
+  fetch("/api/term/input", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({id: t.id, data: strToB64(text)})});
+  t.term.focus();
+}
+
+/* ---------- RStudio-style maximize per pane ---------- */
+let maxedCell = null;
+function toggleMax(id){
+  maxedCell = (maxedCell === id) ? null : id;
+  const ws = $("#workspace");
+  ws.classList.toggle("maxed", !!maxedCell);
+  ws.querySelectorAll(".cell").forEach(c => c.classList.toggle("maxed", c.id === maxedCell));
+  fitActive();
+}
+document.querySelectorAll(".maxbtn").forEach(b => {
+  b.onclick = e => { e.stopPropagation(); toggleMax(b.dataset.cell); };
+});
+
+/* ---------- right column: token usage ---------- */
+function fmtCountdown(secs){
+  if(secs <= 0) return "resets now";
+  const h = Math.floor(secs/3600), m = Math.floor((secs%3600)/60);
+  return `resets in ${h}h${String(m).padStart(2,"0")}`;
+}
+let lastUsage = null;
+async function refreshUsage(){
+  try{
+    const u = await api("/api/usage");
+    lastUsage = u;
+    const body = $("#usagebody");
+    const b = u.block;
+    const blockPart = b ? `
+      <div class="urow"><span>current 5h block</span><b>${fmtTok(b.output)}</b></div>
+      <div class="urow" style="color:var(--dim)"><span>requests</span><b style="color:var(--dim)">${b.requests}</b></div>
+      <div class="ubar" title="time elapsed in this 5h block">
+        <div style="width:${Math.min(100,((u.generated-b.start)/(b.end-b.start))*100).toFixed(0)}%"></div></div>`
+      : `<div class="vizempty">no active 5h block — idle</div>`;
+    const models = Object.entries(u.week_by_model||{}).sort((a,b2)=>b2[1]-a[1])
+      .map(([m,v])=>`<div class="modelrow"><span>${esc(m.replace(/^claude-/,""))}</span><span>${fmtTok(v)}</span></div>`).join("");
+    const max = Math.max(...u.hourly, 1);
+    const W=300, H=44, bw = W/24;
+    const bars = u.hourly.map((v,i)=>
+      `<rect x="${(i*bw+1).toFixed(1)}" y="${(H - v/max*(H-4)).toFixed(1)}" width="${(bw-2).toFixed(1)}" height="${(v/max*(H-4)).toFixed(1)}" fill="#2f5c8f"><title>${fmtTok(v)} output tokens</title></rect>`).join("");
+    body.innerHTML = blockPart + `
+      <div class="urow"><span>today (output)</span><b>${fmtTok(u.today.output)}</b></div>
+      <div class="urow"><span>last 7 days</span><b>${fmtTok(u.week.output)}</b></div>
+      <div style="margin-top:8px;color:var(--dim);font-size:11px">last 24h (output/hour)</div>
+      <svg id="sparkline" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${bars}</svg>
+      <div style="margin-top:8px;color:var(--dim);font-size:11px">by model, 7 days</div>${models}
+      <div style="margin-top:10px;color:var(--dim);font-size:10.5px">Computed from local transcripts (output tokens, deduped by request). Plan limits aren't in the logs — use <code>/status</code> in the CLI for the official quota.</div>`;
+    $("#blockreset").textContent = b ? fmtCountdown(b.end - u.generated) : "";
+  }catch(e){ $("#usagebody").innerHTML = `<div class="vizempty">usage error: ${esc(e.message)}</div>`; }
+}
+
+/* ---------- viz inbox ---------- */
+let vizDir = "", vizActive = null, vizNewest = 0;
+function vizOverride(){ return localStorage.getItem("cdl-vizdir") || ""; }
+async function refreshViz(){
+  try{
+    const ov = vizOverride();
+    const v = await api("/api/viz" + (ov ? "?dir=" + encodeURIComponent(ov) : ""));
+    vizDir = v.dir;
+    const list = $("#vizlist"); list.innerHTML = "";
+    if(!v.files.length){
+      list.innerHTML = `<div class="vizempty">Empty. Ask a Claude Code session to write an
+        <b>.html</b>, image, or <b>.md</b> file into<br><code style="font-size:10.5px">${esc(v.dir)}</code><br>and it appears here automatically.</div>`;
+      $("#vizframe").removeAttribute("src");
+      vizActive = null; vizNewest = 0;
+      return;
+    }
+    for(const f of v.files.slice(0, 8)){
+      const el = document.createElement("div");
+      el.className = "vizfile" + (f.name === vizActive ? " active" : "");
+      el.innerHTML = `<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.name)}</span>
+        <span style="flex:none">${fmtDate(f.mtime)}</span>`;
+      el.onclick = () => showViz(f);
+      list.appendChild(el);
+    }
+    const newest = v.files[0];
+    if(newest.mtime > vizNewest){         // auto-show new arrivals
+      vizNewest = newest.mtime;
+      showViz(newest);
+    }
+  }catch(e){ /* server briefly down; retry next tick */ }
+}
+function showViz(f){
+  vizActive = f.name;
+  const fr = $("#vizframe");
+  fr.classList.toggle("darkbg", !/html|pdf/.test(f.kind));
+  fr.src = "/api/fs/file?path=" + encodeURIComponent(vizDir + "/" + f.name) + "&t=" + f.mtime;
+  [...document.querySelectorAll(".vizfile")].forEach(el =>
+    el.classList.toggle("active", el.textContent.startsWith(f.name)));
+}
+$("#vizPath").onclick = () => navigator.clipboard.writeText(vizDir)
+  .then(() => { $("#vizPath").textContent = "✓"; setTimeout(()=>$("#vizPath").textContent="copy path", 900); });
+
+$("#btnRight").onclick = () => { $("#workspace").classList.toggle("noright"); fitActive(); };
+if(window.innerWidth < 900) $("#workspace").classList.add("noright");
+
+/* ---------- file explorer (Files tab, RStudio-style) ---------- */
+let fsPath = null;        // current explorer dir; follows the selected project
+let fsHome = "";
+function vizTab(view){
+  document.querySelectorAll(".vtab").forEach(v =>
+    v.classList.toggle("active", v.dataset.view === view));
+  $("#vizview").style.display = view === "viz" ? "flex" : "none";
+  $("#filesview").style.display = view === "files" ? "flex" : "none";
+  if(view === "files") loadFs(fsPath);
+}
+document.querySelectorAll(".vtab").forEach(v => v.onclick = () => vizTab(v.dataset.view));
+
+async function loadFs(path){
+  let d;
+  try{ d = await api("/api/fs" + (path ? "?path=" + encodeURIComponent(path) : "")); }
+  catch(e){ $("#fslist").innerHTML = `<div class="vizempty">${esc(e.message)}</div>`; return; }
+  fsPath = d.path; fsHome = d.home;
+  const crumb = $("#fscrumb"); crumb.innerHTML = "";
+  const short = d.path === d.home ? "~" : "~" + d.path.slice(d.home.length);
+  crumb.innerHTML = `
+    ${d.parent ? '<a id="fsup" title="up one level">⬑ up</a> · ' : ''}
+    <span style="font-family:var(--mono);overflow:hidden;text-overflow:ellipsis">${esc(short)}</span>
+    <span style="margin-left:auto;display:flex;gap:5px">
+      <button class="copy" id="fsshell" title="open a shell in this folder">⌨ shell here</button>
+      <button class="copy" id="fswatch" title="viz panel watches this folder">👁 watch</button>
+      <button class="copy" id="fscopy" title="copy folder path">copy</button>
+    </span>`;
+  if(d.parent) crumb.querySelector("#fsup").onclick = () => loadFs(d.parent);
+  crumb.querySelector("#fscopy").onclick = () => navigator.clipboard.writeText(d.path);
+  crumb.querySelector("#fsshell").onclick = () =>
+    openTerm("shell", {cwd: d.path, label: "shell · " + d.path.split("/").pop()});
+  const watching = vizOverride() === d.path;
+  const wbtn = crumb.querySelector("#fswatch");
+  if(watching){ wbtn.textContent = "👁 watching ✓"; wbtn.style.color = "var(--ok)"; }
+  wbtn.onclick = () => {
+    if(vizOverride() === d.path) localStorage.removeItem("cdl-vizdir");
+    else localStorage.setItem("cdl-vizdir", d.path);
+    vizNewest = 0; refreshViz(); loadFs(d.path);
+  };
+
+  const list = $("#fslist"); list.innerHTML = "";
+  if(!d.entries.length) list.innerHTML = `<div class="vizempty">(empty folder)</div>`;
+  for(const e of d.entries){
+    const full = d.path + "/" + e.name;
+    const row = document.createElement("div"); row.className = "fsrow";
+    row.innerHTML = `<span>${e.dir ? "📁" : "📄"}</span>
+      <span class="fname" title="${esc(full)}">${esc(e.name)}</span>
+      <span class="fact" data-a="copy" title="copy full path">copy</span>
+      <span class="fact" data-a="cli" title="paste path into the terminal">→ CLI</span>
+      ${e.dir ? "" : `<span class="fmeta">${fmtBytes(e.size)}</span>`}`;
+    row.onclick = () => {
+      if(e.dir){ loadFs(full); return; }
+      if(!e.viewable){ navigator.clipboard.writeText(full); return; }
+      const fr = $("#fsframe");
+      fr.classList.toggle("darkbg", !/\.(html?|pdf)$/i.test(e.name));
+      fr.src = "/api/fs/file?path=" + encodeURIComponent(full) + "&t=" + (e.mtime||0);
+      fr.style.display = "block";
+    };
+    row.querySelector('[data-a="copy"]').onclick = ev => { ev.stopPropagation();
+      navigator.clipboard.writeText(full); };
+    row.querySelector('[data-a="cli"]').onclick = ev => { ev.stopPropagation();
+      termInsert(JSON.stringify(full).slice(1,-1) + " ", d.path); };
+    list.appendChild(row);
+  }
+  $("#fsframe").style.display = "none";
+}
+
+/* ---------- polling ---------- */
+setInterval(async () => {   // badges refresh
+  try{ state.projects = await api("/api/projects"); renderTree(); }catch(e){}
+}, 30000);
+setInterval(refreshUsage, 60000);
+setInterval(refreshViz, 5000);
+refreshUsage(); refreshViz();
+
+loadProjects().catch(e => $("#tree").innerHTML =
+  `<div class="placeholder">error: ${esc(e.message)}</div>`);
+</script>
+</body>
+</html>
