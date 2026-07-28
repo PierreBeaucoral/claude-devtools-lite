@@ -962,6 +962,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(usage_summary(self.root))
                 return
 
+            if p == "/api/state":
+                self._json({"layout": state_read().get("layout")})
+                return
+
             if p == "/api/viz":
                 files, d = viz_list(qs.get("dir", [None])[0])
                 self._json({"dir": str(d), "default_dir": str(VIZ_DIR), "files": files})
@@ -1105,6 +1109,16 @@ class Handler(BaseHTTPRequestHandler):
             n = int(self.headers.get("Content-Length") or 0)
             body = json.loads(self.rfile.read(n) or b"{}") if n else {}
             p = u.path
+
+            if p == "/api/state":
+                layout = body.get("layout")
+                if isinstance(layout, dict):
+                    clean = {k: float(v) for k, v in layout.items()
+                             if k in ("col2", "rowL", "rowR", "sidebar")
+                             and isinstance(v, (int, float))}
+                    state_write({"layout": clean})
+                self._json({"ok": True})
+                return
 
             if p == "/api/shutdown":
                 # close every terminal session gracefully IN PARALLEL so

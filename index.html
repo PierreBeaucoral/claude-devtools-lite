@@ -13,6 +13,7 @@
     --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
   }
   * { box-sizing: border-box; }
+  html, body { height:100%; overflow:hidden; }
   body { margin:0; background:var(--bg); color:var(--fg);
          font:14px/1.55 -apple-system, "Segoe UI", sans-serif; }
   a { color: var(--accent); text-decoration: none; }
@@ -21,31 +22,33 @@
   #sidebar { width:300px; min-width:170px; border-right:1px solid var(--border);
              background:var(--panel); display:flex; flex-direction:column; }
 
-  /* RStudio-style 2x2 workspace with draggable splitters */
-  #workspace { flex:1; min-width:0; display:grid;
-               grid-template-columns: minmax(0,1fr) 5px var(--col2, 320px);
-               grid-template-rows: minmax(0,1fr) 5px var(--row2, 42%); }
-  #cell-main  { grid-area: 1 / 1 / 2 / 2; }
-  #vsplit     { grid-area: 1 / 2 / 4 / 3; cursor: col-resize; }
-  #cell-usage { grid-area: 1 / 3 / 2 / 4; }
-  #hsplit     { grid-area: 2 / 1 / 3 / 4; cursor: row-resize; }
-  #cell-term  { grid-area: 3 / 1 / 4 / 2; }
-  #cell-viz   { grid-area: 3 / 3 / 4 / 4; }
+  /* RStudio-style workspace: two independent columns, each with its own
+     row splitter — resizing lower-right never moves lower-left. */
+  #workspace { flex:1; min-width:0; display:flex; overflow:hidden; }
+  .col { display:flex; flex-direction:column; min-width:0; min-height:0;
+         overflow:hidden; }
+  #colL { flex:1; }
+  #colR { width: var(--col2, 320px); flex:none; }
+  #cell-main, #cell-usage { flex:1; min-height:0; }
+  #cell-term { height: var(--rowL, 40%); flex:none; }
+  #cell-viz  { height: var(--rowR, 45%); flex:none; }
   .split { background: var(--border); z-index: 5; transition: background .12s;
-           touch-action: none; }
+           touch-action: none; flex:none; }
   .split:hover, .split.dragging { background: var(--accent); }
+  .hsplit { height:5px; cursor: row-resize; }
+  #vsplit { width:5px; cursor: col-resize; }
   #sideHandle { width:5px; flex:none; background:var(--border); cursor:col-resize;
                 transition:background .12s; touch-action:none; }
   #sideHandle:hover, #sideHandle.dragging { background:var(--accent); }
-  #workspace.noright { grid-template-columns: minmax(0,1fr) 0 0; }
-  #workspace.noright #cell-usage, #workspace.noright #cell-viz,
-  #workspace.noright #vsplit { display:none; }
+  #workspace.noright #colR, #workspace.noright #vsplit { display:none; }
   .cell { display:flex; flex-direction:column; min-width:0; min-height:0;
           background:var(--bg); overflow:hidden; }
-  #workspace.maxed { display:flex; }
-  #workspace.maxed .cell { display:none; }
-  #workspace.maxed .split { display:none; }
-  #workspace.maxed .cell.maxed { display:flex; flex:1; }
+  /* maximize: show only the maxed cell, full workspace */
+  #workspace.maxed #vsplit { display:none; }
+  #workspace.maxed .col:not(:has(.cell.maxed)) { display:none; }
+  #workspace.maxed .col:has(.cell.maxed) { flex:1; width:auto !important; }
+  #workspace.maxed .col:has(.cell.maxed) > *:not(.maxed) { display:none; }
+  #workspace.maxed .cell.maxed { flex:1; height:auto !important; }
   .qhead { padding:6px 10px; font-size:12px; font-weight:700; letter-spacing:.5px;
            color:var(--dim); border-bottom:1px solid var(--border); flex:none;
            display:flex; align-items:center; gap:8px; background:var(--panel); }
@@ -236,6 +239,7 @@
   </div>
   <div id="sideHandle" title="drag to resize the sidebar"></div>
   <div id="workspace">
+   <div class="col" id="colL">
     <div class="cell" id="cell-main">
       <div class="qhead">📄 SESSION
         <span style="margin-left:auto"></span>
@@ -248,14 +252,7 @@
       </div></div>
     </div>
 
-    <div class="cell" id="cell-usage">
-      <div class="qhead">⚡ TOKEN USE
-        <span id="blockreset" style="margin-left:auto;font-weight:400"></span>
-        <button class="copy maxbtn" data-cell="cell-usage" title="maximize / restore">⛶</button>
-      </div>
-      <div class="qbody" id="usagebody"><div class="vizempty">computing…</div></div>
-    </div>
-
+    <div id="hsplitL" class="split hsplit" title="drag to resize rows"></div>
     <div class="cell" id="cell-term">
       <div class="qhead">⌨ TERMINAL
         <span id="ttablist"></span>
@@ -272,8 +269,17 @@
       </div>
     </div>
 
-    <div id="vsplit" class="split" title="drag to resize columns"></div>
-    <div id="hsplit" class="split" title="drag to resize rows"></div>
+   </div>
+   <div id="vsplit" class="split" title="drag to resize columns"></div>
+   <div class="col" id="colR">
+    <div class="cell" id="cell-usage">
+      <div class="qhead">⚡ TOKEN USE
+        <span id="blockreset" style="margin-left:auto;font-weight:400"></span>
+        <button class="copy maxbtn" data-cell="cell-usage" title="maximize / restore">⛶</button>
+      </div>
+      <div class="qbody" id="usagebody"><div class="vizempty">computing…</div></div>
+    </div>
+    <div id="hsplitR" class="split hsplit" title="drag to resize rows"></div>
     <div class="cell" id="cell-viz">
       <div class="qhead" style="gap:4px">
         <span class="vtab active" data-view="viz">📊 Viz</span>
@@ -291,6 +297,7 @@
         <iframe id="fsframe" sandbox="allow-scripts" title="file preview"></iframe>
       </div>
     </div>
+   </div>
   </div>
 </div>
 
@@ -935,7 +942,7 @@ document.querySelectorAll(".maxbtn").forEach(b => {
 });
 
 /* ---------- RStudio-style drag-to-resize splitters ---------- */
-function makeSplitter(el, compute, apply, storeKey){
+function makeSplitter(el, compute, apply, onDone){
   el.addEventListener("pointerdown", e => {
     e.preventDefault();
     try{ el.setPointerCapture(e.pointerId); }catch(_){}
@@ -950,7 +957,7 @@ function makeSplitter(el, compute, apply, storeKey){
       el.removeEventListener("pointermove", move);
       el.removeEventListener("pointerup", up);
       document.querySelectorAll("iframe").forEach(f => f.style.pointerEvents = "");
-      if(last !== null) localStorage.setItem(storeKey, String(last));
+      if(last !== null && onDone) onDone();
       fitActive();
     };
     el.addEventListener("pointermove", move);
@@ -959,33 +966,57 @@ function makeSplitter(el, compute, apply, storeKey){
 }
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const wsEl = $("#workspace");
+const SZ = { col2: null, rowL: null, rowR: null, sidebar: null };
+
+// clamp against the CURRENT viewport, so panes always end at the screen edge
+// (a size saved on a bigger window can never push content off-screen)
+function applySizes(){
+  const w = wsEl.getBoundingClientRect();
+  if(SZ.sidebar) $("#sidebar").style.width = clamp(SZ.sidebar, 170, 520) + "px";
+  if(SZ.col2) wsEl.style.setProperty("--col2",
+      clamp(SZ.col2, 200, Math.max(220, w.width - 320)) + "px");
+  if(SZ.rowL) wsEl.style.setProperty("--rowL",
+      clamp(SZ.rowL, 120, Math.max(140, w.height - 160)) + "px");
+  if(SZ.rowR) wsEl.style.setProperty("--rowR",
+      clamp(SZ.rowR, 120, Math.max(140, w.height - 160)) + "px");
+  fitActive();
+}
+let sizeSaveTimer = null;
+function saveSizes(){                       // localStorage + server (.state.json)
+  localStorage.setItem("cdl-layout", JSON.stringify(SZ));
+  clearTimeout(sizeSaveTimer);
+  sizeSaveTimer = setTimeout(() => fetch("/api/state", {method: "POST",
+    headers: authHeaders({"Content-Type": "application/json"}),
+    body: JSON.stringify({layout: SZ})}), 400);
+}
 
 makeSplitter($("#vsplit"),
-  ev => { const r = wsEl.getBoundingClientRect();
-          return clamp(r.right - ev.clientX, 200, Math.max(220, r.width - 320)); },
-  v => { wsEl.style.setProperty("--col2", v + "px"); fitActive(); },
-  "cdl-sz-col2");
-
-makeSplitter($("#hsplit"),
-  ev => { const r = wsEl.getBoundingClientRect();
-          return clamp(r.bottom - ev.clientY, 120, Math.max(140, r.height - 160)); },
-  v => { wsEl.style.setProperty("--row2", v + "px"); fitActive(); },
-  "cdl-sz-row2");
-
+  ev => wsEl.getBoundingClientRect().right - ev.clientX,
+  v => { SZ.col2 = v; applySizes(); }, saveSizes);
+makeSplitter($("#hsplitL"),
+  ev => $("#colL").getBoundingClientRect().bottom - ev.clientY,
+  v => { SZ.rowL = v; applySizes(); }, saveSizes);
+makeSplitter($("#hsplitR"),
+  ev => $("#colR").getBoundingClientRect().bottom - ev.clientY,
+  v => { SZ.rowR = v; applySizes(); }, saveSizes);
 makeSplitter($("#sideHandle"),
-  ev => clamp(ev.clientX - $("#sidebar").getBoundingClientRect().left, 170, 520),
-  v => $("#sidebar").style.width = v + "px",
-  "cdl-sz-sidebar");
+  ev => ev.clientX - $("#sidebar").getBoundingClientRect().left,
+  v => { SZ.sidebar = v; applySizes(); }, saveSizes);
 
-// restore persisted sizes
-(function restoreSizes(){
-  const c2 = parseFloat(localStorage.getItem("cdl-sz-col2"));
-  if(c2) wsEl.style.setProperty("--col2", c2 + "px");
-  const r2 = parseFloat(localStorage.getItem("cdl-sz-row2"));
-  if(r2) wsEl.style.setProperty("--row2", r2 + "px");
-  const sb = parseFloat(localStorage.getItem("cdl-sz-sidebar"));
-  if(sb) $("#sidebar").style.width = sb + "px";
+// restore: localStorage first (instant), then the server copy (survives any
+// browser/app data loss and is shared across browsers)
+(async function restoreSizes(){
+  try{
+    const st = JSON.parse(localStorage.getItem("cdl-layout") || "null");
+    if(st) Object.assign(SZ, st);
+  }catch(_){}
+  applySizes();
+  try{
+    const r = await api("/api/state");
+    if(r.layout){ Object.assign(SZ, r.layout); applySizes(); }
+  }catch(_){}
 })();
+window.addEventListener("resize", applySizes);
 
 /* ---------- right column: token usage ---------- */
 function fmtCountdown(secs){
