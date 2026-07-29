@@ -20,7 +20,6 @@ import secrets
 import select
 import shutil
 import signal
-import subprocess
 import struct
 import sys
 import threading
@@ -780,79 +779,6 @@ def is_sensitive(path):
     return any(s in name for s in SENSITIVE_SUBSTRINGS)
 
 
-# ---------------------------------------------------------------- graph fit
-# graphify's graph.html docks a fixed 280px sidebar (search + node info +
-# community legend) next to a flex:1 canvas. That is fine full-screen, but the
-# viz pane here is ~320px wide by default, so the sidebar swallows the panel
-# and the graph itself becomes a sliver. We inject a responsive override on the
-# way out: below ~900px the sidebar becomes an off-canvas drawer behind a ☰
-# button and the canvas gets the whole pane. Injected at serve time rather than
-# patched into the file so it survives `graphify` regenerating/upgrading.
-#
-# The stylesheet must land in <head>: vis-network sizes its camera to the
-# container it is built in, so the layout has to be wide *before* the inline
-# init script runs, or the graph opens absurdly zoomed in.
-GRAPH_FIT_CSS = b"""
-<style id="cdl-graph-fit">
-  #cdl-drawer-btn { display: none; position: fixed; top: 8px; right: 8px;
-                    z-index: 30; align-items: center; justify-content: center;
-                    width: 30px; height: 30px; padding: 0;
-                    border: 1px solid #3a3a5e; border-radius: 7px;
-                    background: rgba(26,26,46,.92); color: #e0e0e0;
-                    font-size: 14px; line-height: 1; cursor: pointer;
-                    transition: right .18s ease; }
-  #cdl-drawer-btn:hover { border-color: #4E79A7; }
-  @media (max-width: 900px) {
-    #sidebar { position: fixed; top: 0; right: 0; bottom: 0;
-               width: min(280px, 84vw); z-index: 20;
-               transform: translateX(101%); transition: transform .18s ease;
-               box-shadow: -10px 0 26px rgba(0,0,0,.6); }
-    body.cdl-drawer #sidebar { transform: translateX(0); }
-    #graph { width: 100%; }
-    #cdl-drawer-btn { display: flex; }
-    body.cdl-drawer #cdl-drawer-btn { right: calc(min(280px, 84vw) + 8px); }
-  }
-</style>
-"""
-
-GRAPH_FIT_JS = b"""
-<script>
-(function () {
-  var b = document.createElement('button');
-  b.id = 'cdl-drawer-btn';
-  b.type = 'button';
-  b.textContent = '\\u2630';
-  b.title = 'show / hide search, node info and legend';
-  b.addEventListener('click', function () {
-    var open = document.body.classList.toggle('cdl-drawer');
-    b.textContent = open ? '\\u2715' : '\\u2630';
-    // the canvas width changes under vis-network, which only re-measures on
-    // a window resize; fire one once the drawer transition has finished
-    setTimeout(function () {
-      window.dispatchEvent(new Event('resize'));
-    }, 220);
-  });
-  document.body.appendChild(b);
-})();
-</script>
-"""
-
-
-def fit_graph_html(body):
-    """Make a graphify graph.html usable inside a narrow preview pane."""
-    if b'id="sidebar"' not in body or b'id="graph"' not in body:
-        return body
-    if b"Search nodes" not in body or b"cdl-graph-fit" in body:
-        return body
-    if b"</head>" in body:
-        body = body.replace(b"</head>", GRAPH_FIT_CSS + b"</head>", 1)
-    else:
-        body = GRAPH_FIT_CSS + body
-    if b"</body>" in body:
-        return body.replace(b"</body>", GRAPH_FIT_JS + b"</body>", 1)
-    return body + GRAPH_FIT_JS
-
-
 def viz_list(dir_override=None):
     d = safe_home_path(dir_override) if dir_override else VIZ_DIR
     if not d.is_dir():
@@ -1100,110 +1026,24 @@ def default_shell():
     return os.environ.get("SHELL", "/bin/bash")
 
 
-_env_cache = {}
-
-# Where `claude` commonly lives, for hosts whose login shell we can't query
-CLAUDE_CANDIDATES = (
-    "~/.claude/local/claude", "~/.local/bin/claude", "~/bin/claude",
-    "/opt/homebrew/bin/claude", "/usr/local/bin/claude",
-    "~/.npm-global/bin/claude", "~/.volta/bin/claude",
-    "~/AppData/Roaming/npm/claude.cmd", "~/AppData/Local/claude/claude.exe",
-)
-
-
-def login_path():
-    """PATH as the user's *login shell* sees it.
-
-    An app started from Finder/LaunchServices (or a .desktop entry) inherits a
-    minimal PATH — typically /usr/bin:/bin:/usr/sbin:/sbin — which hides
-    ~/.local/bin, Homebrew, nvm, volta … i.e. exactly where `claude` lives.
-    Ask the shell once, cache it, and always append the usual suspects.
-    """
-    if "path" in _env_cache:
-        return _env_cache["path"]
-    parts = []
-    if os.name != "nt":
-        shell = default_shell()
-        for flags in (["-lic"], ["-lc"]):     # -i picks up PATH set in .zshrc
-            try:
-                r = subprocess.run([shell, *flags, 'printf %s "$PATH"'],
-                                   capture_output=True, text=True, timeout=8)
-                lines = [ln.strip() for ln in (r.stdout or "").splitlines()
-                         if "/" in ln]
-                if lines:
-                    parts = lines[-1].split(os.pathsep)
-                    break
-            except (OSError, subprocess.SubprocessError):
-                continue
-    parts += (os.environ.get("PATH") or "").split(os.pathsep)
-    parts += [str(Path(p).expanduser().parent) for p in CLAUDE_CANDIDATES]
-    parts += ["/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin"]
-    seen, ordered = set(), []
-    for p in parts:
-        if p and p not in seen and os.path.isdir(p):
-            seen.add(p)
-            ordered.append(p)
-    _env_cache["path"] = os.pathsep.join(ordered)
-    return _env_cache["path"]
-
-
-def find_claude():
-    """Locate the Claude Code CLI regardless of how this server was started."""
-    if "claude" in _env_cache:
-        return _env_cache["claude"]
-    found = None
-    override = os.environ.get("CLAUDE_BIN")
-    if override and os.path.exists(os.path.expanduser(override)):
-        found = os.path.expanduser(override)
-    if not found:
-        found = shutil.which("claude", path=login_path())
-    if not found:
-        for c in CLAUDE_CANDIDATES:
-            p = Path(c).expanduser()
-            if p.exists():
-                found = str(p)
-                break
-    if not found and os.name != "nt":       # last resort: ask the shell itself
-        try:
-            r = subprocess.run([default_shell(), "-lic", "command -v claude"],
-                               capture_output=True, text=True, timeout=8)
-            for ln in (r.stdout or "").splitlines():
-                ln = ln.strip()
-                if ln.startswith("/") and os.path.exists(ln):
-                    found = ln
-                    break
-        except (OSError, subprocess.SubprocessError):
-            pass
-    _env_cache["claude"] = found
-    return found
-
-
 def start_term(kind, cwd, session_id=None, prompt=None):
     if not HAS_TERMINAL:
         raise NotImplementedError(
             "no pseudo-terminal available: " + (winconpty.unsupported_reason()
                                                 or "unknown reason"))
     cwd = cwd if cwd and os.path.isdir(cwd) else str(Path.home())
-    if kind == "shell":
-        argv = [default_shell()] + ([] if os.name == "nt" else ["-l"])
+    shell = default_shell()
+    claude = shutil.which("claude")
+    if kind == "shell" or (kind in ("claude", "resume") and not claude):
+        argv = [shell, "-l"]
+    elif kind == "resume" and session_id:
+        argv = [claude, "--resume", session_id]
     else:
-        claude = find_claude()
-        if not claude:
-            # never silently open a plain shell instead — say what's wrong
-            raise FileNotFoundError(
-                "Claude Code CLI not found. Install it, or set CLAUDE_BIN to "
-                "its full path and restart the dashboard. Looked on the login "
-                "shell PATH and in " + ", ".join(CLAUDE_CANDIDATES[:4]) + " …")
-        if kind == "resume" and session_id:
-            argv = [claude, "--resume", session_id]
-        else:
-            argv = [claude]
-            if prompt:                  # e.g. "/graphify" from the viz pane
-                argv.append(str(prompt)[:2000])
-    # give the child the login PATH (an app-launched server has a minimal one)
-    # and let Claude Code know it runs inside this dashboard
-    env = {"PATH": login_path(),
-           "CLAUDE_DEVTOOLS_UI": "1",
+        argv = [claude]
+        if prompt:                      # e.g. "/graphify" from the viz pane
+            argv.append(str(prompt)[:2000])
+    # let Claude Code (and anything else) know it runs inside this dashboard
+    env = {"CLAUDE_DEVTOOLS_UI": "1",
            "CLAUDE_DEVTOOLS_VIZ_DIR": str(VIZ_DIR),
            "CLAUDE_DEVTOOLS_URL": f"http://127.0.0.1:{SERVER_PORT}"}
     impl = PosixTerm if HAS_PTY else WindowsTerm
@@ -1359,8 +1199,6 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 ctype = VIZ_TYPES.get(ext, "text/plain")
                 body = f.read_bytes()
-                if ext in (".html", ".htm"):
-                    body = fit_graph_html(body)
                 self.send_response(200)
                 self.send_header("Content-Type", ctype + "; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
@@ -1385,8 +1223,6 @@ class Handler(BaseHTTPRequestHandler):
                     self._err(404, "not found")
                     return
                 body = f.read_bytes()
-                if f.suffix.lower() in (".html", ".htm"):
-                    body = fit_graph_html(body)
                 self.send_response(200)
                 self.send_header("Content-Type",
                                  VIZ_TYPES[f.suffix.lower()] + "; charset=utf-8")
@@ -1563,8 +1399,6 @@ class Handler(BaseHTTPRequestHandler):
             self._err(404, "not found")
         except NotImplementedError as e:
             self._err(501, str(e))
-        except FileNotFoundError as e:
-            self._err(424, str(e))
         except RuntimeError as e:
             self._err(429, str(e))
         except BrokenPipeError:

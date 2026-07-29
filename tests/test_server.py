@@ -7,6 +7,7 @@ auth/CSRF layer against a live server on an ephemeral port.
 """
 import importlib.util
 import json
+import os
 import sys
 import threading
 import time
@@ -346,6 +347,68 @@ def test_token_and_state_live_outside_repo():
     assert repo not in srv.TOKEN_FILE.parents, "token must not sit in the git repo"
     assert repo not in srv.STATE_FILE.parents, "state must not sit in the git repo"
     assert "claude-devtools" in str(srv.APP_DIR)
+
+
+# ---------------------------------------------------------------- CLI discovery
+
+def test_login_path_includes_user_bin_dirs(monkeypatch):
+    """An app launched from Finder/.desktop inherits a minimal PATH; the login
+    PATH must still surface the usual install dirs."""
+    srv._env_cache.clear()
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    p = srv.login_path().split(os.pathsep)
+    assert "/usr/bin" in p
+    for d in p:
+        assert os.path.isdir(d)          # no phantom entries
+    assert len(p) == len(set(p))         # deduplicated
+    srv._env_cache.clear()
+
+
+def test_find_claude_prefers_explicit_override(monkeypatch, tmp_path):
+    fake = tmp_path / "claude"
+    fake.write_text("#!/bin/sh\n")
+    fake.chmod(0o755)
+    srv._env_cache.clear()
+    monkeypatch.setenv("CLAUDE_BIN", str(fake))
+    assert srv.find_claude() == str(fake)
+    srv._env_cache.clear()
+
+
+def test_claude_kind_never_falls_back_to_a_shell(monkeypatch):
+    """Regression: `+ claude` used to open a plain shell when the binary was
+    off-PATH, instead of reporting that it wasn't found."""
+    srv._env_cache["claude"] = None
+    srv._env_cache["path"] = "/usr/bin:/bin"
+    try:
+        with pytest.raises(FileNotFoundError) as e:
+            srv.start_term("claude", None)
+        assert "CLAUDE_BIN" in str(e.value)
+    finally:
+        srv._env_cache.clear()
+
+
+def test_terminal_env_carries_login_path(monkeypatch):
+    srv._env_cache["claude"] = "/nonexistent/claude"
+    srv._env_cache["path"] = "/usr/bin:/bin"
+    try:
+        captured = {}
+
+        class FakeTerm:
+            def __init__(self, argv, cwd, extra_env=None):
+                captured["argv"] = argv
+                captured["env"] = extra_env
+                self.id, self.alive = "x", True
+
+        monkeypatch.setattr(srv, "PosixTerm", FakeTerm)
+        monkeypatch.setattr(srv, "WindowsTerm", FakeTerm)
+        srv.TERMS.clear()
+        srv.start_term("claude", None)
+        assert captured["argv"][0] == "/nonexistent/claude"
+        assert captured["env"]["PATH"] == "/usr/bin:/bin"
+        assert captured["env"]["CLAUDE_DEVTOOLS_UI"] == "1"
+    finally:
+        srv.TERMS.clear()
+        srv._env_cache.clear()
 
 
 # ---------------------------------------------------------------- windows backend

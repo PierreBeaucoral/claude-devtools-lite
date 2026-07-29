@@ -199,6 +199,11 @@
   #fsframe { flex:1; min-height:0; border:none; width:100%;
              border-top:1px solid var(--border); background:#fff; display:none; }
   #fsframe.darkbg { background:transparent; }
+  /* PDFs get their own <embed>: Chrome renders them with a plugin document,
+     which a sandboxed iframe blocks (it just shows a blank page). */
+  .pdfview { flex:1; min-height:0; width:100%; border:none; display:none;
+             background:#fff; }
+  #fspdf { border-top:1px solid var(--border); }
   .dotnew { width:8px; height:8px; border-radius:50%; background:var(--ok); flex:none;
             box-shadow:0 0 6px var(--ok); }
   /* embedded terminal cell */
@@ -290,11 +295,13 @@
       <div id="vizview" style="display:flex;flex-direction:column;flex:1;min-height:0">
         <div class="qbody" id="vizlist" style="flex:none;max-height:110px"></div>
         <iframe id="vizframe" sandbox="allow-scripts" title="viz preview"></iframe>
+        <embed id="vizpdf" class="pdfview" type="application/pdf" title="pdf preview">
       </div>
       <div id="filesview" style="display:none;flex-direction:column;flex:1;min-height:0">
         <div id="fscrumb"></div>
         <div class="qbody" id="fslist" style="flex:1"></div>
         <iframe id="fsframe" sandbox="allow-scripts" title="file preview"></iframe>
+        <embed id="fspdf" class="pdfview" type="application/pdf" title="pdf preview">
       </div>
     </div>
    </div>
@@ -1100,16 +1107,38 @@ async function refreshUsage(){
   }catch(e){ $("#usagebody").innerHTML = `<div class="vizempty">usage error: ${esc(e.message)}</div>`; }
 }
 
+/* ---------- preview routing (iframe for html/images, <embed> for pdf) ------
+   A sandboxed iframe cannot show a PDF — Chrome's viewer is a plugin document
+   and the sandbox blocks it — so PDFs go to a sibling <embed> instead, which
+   gives the native viewer with page nav, zoom, search, print and download.
+   Only one of the two is ever visible. */
+function setPreview(frameSel, pdfSel, url, isPdf, dark){
+  const fr = $(frameSel), pd = $(pdfSel);
+  if(isPdf){
+    fr.removeAttribute("src"); fr.style.display = "none";
+    pd.src = url; pd.style.display = "block";
+  } else {
+    pd.removeAttribute("src"); pd.style.display = "none";
+    fr.classList.toggle("darkbg", !!dark);
+    fr.src = url; fr.style.display = "block";
+  }
+}
+function clearPreview(frameSel, pdfSel){
+  $(frameSel).removeAttribute("src"); $(frameSel).style.display = "none";
+  $(pdfSel).removeAttribute("src");   $(pdfSel).style.display = "none";
+}
+const isPdfName = n => /\.pdf(\?|$)/i.test(n || "");
+
 /* ---------- viz inbox ---------- */
 let vizDir = "", vizActive = null, vizNewest = 0, vizPinned = null, vizGraphOffer = null;
 function vizOverride(){ return localStorage.getItem("cdl-vizdir") || ""; }
 function showPinned(){
   if(!vizPinned) return;
   vizActive = "::pinned";
-  const fr = $("#vizframe");
-  fr.classList.remove("darkbg");
   ensureCookie();
-  fr.src = "/api/fs/file?path=" + encodeURIComponent(vizPinned.path);
+  setPreview("#vizframe", "#vizpdf",
+             "/api/fs/file?path=" + encodeURIComponent(vizPinned.path),
+             isPdfName(vizPinned.path), false);
   [...document.querySelectorAll(".vizfile")].forEach(el =>
     el.classList.toggle("active", el.textContent.startsWith(vizPinned.label)));
 }
@@ -1140,7 +1169,7 @@ async function refreshViz(){
       if(!vizPinned && !vizGraphOffer){
         list.innerHTML = `<div class="vizempty">Empty. Ask a Claude Code session to write an
           <b>.html</b>, image, or <b>.md</b> file into<br><code style="font-size:10.5px">${esc(v.dir)}</code><br>and it appears here automatically.</div>`;
-        $("#vizframe").removeAttribute("src");
+        clearPreview("#vizframe", "#vizpdf");
         vizActive = null; vizNewest = 0;
       }
       return;
@@ -1162,11 +1191,11 @@ async function refreshViz(){
 }
 function showViz(f){
   vizActive = f.name;
-  const fr = $("#vizframe");
-  fr.classList.toggle("darkbg", !/html|pdf/.test(f.kind));
   ensureCookie();
-  fr.src = "/api/fs/file?path=" + encodeURIComponent(vizDir + "/" + f.name)
-         + "&t=" + f.mtime;
+  setPreview("#vizframe", "#vizpdf",
+             "/api/fs/file?path=" + encodeURIComponent(vizDir + "/" + f.name)
+               + "&t=" + f.mtime,
+             f.kind === "application/pdf", !/html|pdf/.test(f.kind));
   [...document.querySelectorAll(".vizfile")].forEach(el =>
     el.classList.toggle("active", el.textContent.startsWith(f.name)));
 }
@@ -1229,11 +1258,11 @@ async function loadFs(path){
     row.onclick = () => {
       if(e.dir){ loadFs(full); return; }
       if(!e.viewable){ navigator.clipboard.writeText(full); return; }
-      const fr = $("#fsframe");
-      fr.classList.toggle("darkbg", !/\.(html?|pdf)$/i.test(e.name));
       ensureCookie();
-      fr.src = "/api/fs/file?path=" + encodeURIComponent(full) + "&t=" + (e.mtime||0);
-      fr.style.display = "block";
+      setPreview("#fsframe", "#fspdf",
+                 "/api/fs/file?path=" + encodeURIComponent(full)
+                   + "&t=" + (e.mtime||0),
+                 isPdfName(e.name), !/\.(html?|pdf)$/i.test(e.name));
     };
     row.querySelector('[data-a="copy"]').onclick = ev => { ev.stopPropagation();
       navigator.clipboard.writeText(full); };
@@ -1241,7 +1270,7 @@ async function loadFs(path){
       termInsert(JSON.stringify(full).slice(1,-1) + " ", d.path); };
     list.appendChild(row);
   }
-  $("#fsframe").style.display = "none";
+  clearPreview("#fsframe", "#fspdf");
 }
 
 /* ---------- toasts for background project activity ---------- */
