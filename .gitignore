@@ -1,7 +1,20 @@
+# runtime / private
 viz/
 .token
 .state.json
+
+# backups (your file-safety convention: cp file.py file.py.bak)
+*.bak
+*.bak-*
+*.backup
+*.orig
+*.old
+*~
+
+# python
 __pycache__/
 *.pyc
-*.log
 .pytest_cache/
+
+# logs
+*.log
