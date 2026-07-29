@@ -5,9 +5,9 @@
   dashboard authenticated via the /launch cookie handoff. Prefers an app-mode
   Edge/Chrome window so it looks like a standalone app.
 
-  NOTE: the embedded terminal pane is unavailable on Windows — it needs a POSIX
-  pseudo-terminal. Every other pane (sessions, token use, viz, files) works.
-  Run `claude` in Windows Terminal alongside it.
+  The embedded terminal works on Windows 10 1809+ via ConPTY (no extra
+  packages). Verify on this machine with:
+      python tools\selftest_windows.py
 #>
 param([int]$Port = 3456)
 

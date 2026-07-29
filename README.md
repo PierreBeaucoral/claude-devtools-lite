@@ -48,13 +48,23 @@ Creates Desktop and Start-menu shortcuts; or double-click
 `launchers\windows\Claude DevTools.cmd`. Token/state live in
 `%APPDATA%\claude-devtools\`.
 
-**One limitation:** the embedded terminal pane is unavailable on Windows. It
-needs a POSIX pseudo-terminal, and Windows' ConPTY equivalent would require a
-third-party package (`pywinpty`), which would break the zero-dependency
-guarantee. The server detects this, reports it in the terminal pane, and hides
-the terminal buttons — every other pane (sessions, token use, viz, files
-explorer, search, memory) works normally. Run `claude` in Windows Terminal
-alongside the dashboard.
+**The embedded terminal works on Windows too**, via ConPTY (the native
+pseudo-console API, Windows 10 1809 / build 17763 and newer) driven through
+`ctypes` — still no third-party packages. Claude Code's TUI renders normally,
+and quitting closes the pseudo-console, which delivers `CTRL_CLOSE_EVENT` so
+session cleanup can run (Windows' analogue of the SIGHUP path used on
+macOS/Linux).
+
+Verify the terminal on your own machine before trusting it:
+
+```
+python tools\selftest_windows.py
+```
+
+It spawns a real pseudo-console, runs a command, reads the output, resizes, and
+exits — printing PASS/FAIL per step. On an older Windows build the server
+detects the missing API, explains it in the terminal pane, and every other pane
+keeps working.
 
 ### Any platform, from a terminal
 

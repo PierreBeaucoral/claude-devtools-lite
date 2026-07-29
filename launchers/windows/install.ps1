@@ -23,5 +23,5 @@ foreach ($t in $targets) {
     Write-Host "Created $t"
 }
 Write-Host ""
-Write-Host "Done. Note: the embedded terminal pane is macOS/Linux only —"
-Write-Host "run 'claude' in Windows Terminal alongside the dashboard."
+Write-Host "Done. The embedded terminal uses ConPTY (Windows 10 1809+)."
+Write-Host "Verify it here with:  python tools\selftest_windows.py"

@@ -1041,10 +1041,9 @@ makeSplitter($("#sideHandle"),
   try{
     const r = await api("/api/state");
     if(r.layout){ Object.assign(SZ, r.layout); applySizes(); }
-    if(r.has_terminal === false){        // Windows: no POSIX pty
-      $("#termempty").innerHTML = `⚠️ The embedded terminal needs a POSIX
-        pseudo-terminal, which Windows doesn't provide.<br>
-        Run <b>claude</b> in Windows Terminal instead — every other pane
+    if(r.has_terminal === false){   // e.g. Windows older than 10 1809
+      $("#termempty").innerHTML = `⚠️ Terminal unavailable — ${esc(r.terminal_blocked||"")}.
+        <br>Run <b>claude</b> in your own terminal instead; every other pane
         (sessions, tokens, viz, files) works normally.`;
       ["btnShell","btnClaudeHome","btnTerm"].forEach(id => {
         const b = $("#" + id); if(b) b.style.display = "none"; });

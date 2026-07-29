@@ -40,6 +40,12 @@ except ImportError:                                   # Windows
     fcntl = pty = termios = None
     HAS_PTY = False
 
+# Windows: ConPTY gives the same capability through kernel32 (ctypes only)
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import winconpty  # noqa: E402
+
+HAS_TERMINAL = HAS_PTY or winconpty.unsupported_reason() is None
+
 HERE = Path(__file__).resolve().parent
 CLAUDE_ROOT = Path(os.environ.get("CLAUDE_ROOT", str(Path.home() / ".claude")))
 
@@ -820,42 +826,55 @@ def fs_listing(raw_path):
 # over Server-Sent Events; input comes back via POST. Localhost only.
 
 class Term:
+    """Terminal session: shared scrollback + streaming; the transport
+    (POSIX pty or Windows ConPTY) is supplied by a subclass."""
+
     def __init__(self, argv, cwd, cols=100, rows=30, extra_env=None):
         self.id = secrets.token_hex(8)
         self.label = Path(argv[0]).name + " · " + (Path(cwd).name or "/")
         self.argv, self.cwd = argv, cwd
-        self.buf = bytearray()          # scrollback so late/re-attaching clients catch up
+        self.buf = bytearray()      # scrollback so re-attaching clients catch up
         self.cond = threading.Condition()
         self.alive = True
-        pid, fd = pty.fork()
-        if pid == 0:  # child
-            try:
-                os.chdir(cwd)
-            except OSError:
-                pass
-            os.environ["TERM"] = "xterm-256color"
-            os.environ["COLORTERM"] = "truecolor"
-            for k, v in (extra_env or {}).items():
-                os.environ[k] = v
-            try:
-                os.execvp(argv[0], argv)
-            except OSError as e:
-                os.write(2, f"exec failed: {e}\r\n".encode())
-                os._exit(127)
-        self.pid, self.fd = pid, fd
-        self.resize(cols, rows)
+        env = {"TERM": "xterm-256color", "COLORTERM": "truecolor"}
+        env.update(extra_env or {})
+        self._spawn(argv, cwd, env, cols, rows)
         threading.Thread(target=self._pump, daemon=True).start()
 
+    # -- transport hooks -------------------------------------------------
+    def _spawn(self, argv, cwd, env, cols, rows):
+        raise NotImplementedError
+
+    def _read(self):
+        """Blocking read; b'' means the terminal closed."""
+        raise NotImplementedError
+
+    def _write(self, data):
+        raise NotImplementedError
+
+    def _set_size(self, cols, rows):
+        raise NotImplementedError
+
+    def _hangup(self):
+        """Ask the child to exit cleanly so its shutdown hooks run."""
+        raise NotImplementedError
+
+    def _terminate(self):
+        raise NotImplementedError
+
+    def _cleanup(self):
+        pass
+
+    # -- shared ----------------------------------------------------------
     def _pump(self):
         while True:
             try:
-                r, _, _ = select.select([self.fd], [], [], 1.0)
-                if not r:
-                    continue
-                data = os.read(self.fd, 65536)
-                if not data:
-                    break
+                data = self._read()
             except OSError:
+                break
+            if data is None:            # idle tick
+                continue
+            if not data:
                 break
             with self.cond:
                 self.buf.extend(data)
@@ -865,23 +884,74 @@ class Term:
         with self.cond:
             self.alive = False
             self.cond.notify_all()
-        try:
-            os.waitpid(self.pid, 0)
-        except ChildProcessError:
-            pass
 
     def write(self, data: bytes):
         try:
-            os.write(self.fd, data)
+            self._write(data)
         except OSError:
             pass
 
     def resize(self, cols, rows):
         try:
-            fcntl.ioctl(self.fd, termios.TIOCSWINSZ,
-                        struct.pack("HHHH", max(2, rows), max(2, cols), 0, 0))
-        except OSError:
+            self._set_size(max(2, int(cols)), max(2, int(rows)))
+        except (OSError, ValueError):
             pass
+
+    def close_gracefully(self, grace=25.0):
+        """Hang up first — Claude Code treats it as the terminal closing and
+        runs its Stop/SessionEnd hooks — escalating only if it outlives the
+        grace period. Blocks until the child is gone."""
+        try:
+            if self.alive:
+                self._hangup()
+                deadline = time.time() + grace
+                while self.alive and time.time() < deadline:
+                    time.sleep(0.15)
+            if self.alive:
+                self._terminate()
+                deadline = time.time() + 3.0
+                while self.alive and time.time() < deadline:
+                    time.sleep(0.15)
+        finally:
+            self._cleanup()
+
+    def kill(self):
+        """Non-blocking graceful close (used by the per-tab close button)."""
+        threading.Thread(target=self.close_gracefully, daemon=True).start()
+
+
+class PosixTerm(Term):
+    """macOS / Linux: fork a real pty."""
+
+    def _spawn(self, argv, cwd, env, cols, rows):
+        pid, fd = pty.fork()
+        if pid == 0:  # child
+            try:
+                os.chdir(cwd)
+            except OSError:
+                pass
+            for k, v in env.items():
+                os.environ[k] = v
+            try:
+                os.execvp(argv[0], argv)
+            except OSError as e:
+                os.write(2, f"exec failed: {e}\r\n".encode())
+                os._exit(127)
+        self.pid, self.fd = pid, fd
+        self._set_size(cols, rows)
+
+    def _read(self):
+        r, _, _ = select.select([self.fd], [], [], 1.0)
+        if not r:
+            return None                     # idle tick
+        return os.read(self.fd, 65536)
+
+    def _write(self, data):
+        os.write(self.fd, data)
+
+    def _set_size(self, cols, rows):
+        fcntl.ioctl(self.fd, termios.TIOCSWINSZ,
+                    struct.pack("HHHH", rows, cols, 0, 0))
 
     def _signal(self, sig):
         try:
@@ -894,26 +964,56 @@ class Term:
             except (OSError, ProcessLookupError):
                 return False
 
-    def close_gracefully(self, grace=25.0):
-        """SIGHUP first — a Claude Code session treats it like the terminal
-        closing and runs its Stop/SessionEnd hooks — escalating to SIGTERM
-        then SIGKILL only if the process is still alive. Blocks until dead."""
-        hangup = getattr(signal, "SIGHUP", signal.SIGTERM)
-        kill = getattr(signal, "SIGKILL", signal.SIGTERM)
-        for sig, wait in ((hangup, grace), (signal.SIGTERM, 3.0), (kill, 1.0)):
-            if not self.alive or not self._signal(sig):
-                break
-            deadline = time.time() + wait
-            while self.alive and time.time() < deadline:
-                time.sleep(0.15)
+    def _hangup(self):
+        self._signal(getattr(signal, "SIGHUP", signal.SIGTERM))
+
+    def _terminate(self):
+        self._signal(signal.SIGTERM)
+        time.sleep(0.3)
+        if self.alive:
+            self._signal(getattr(signal, "SIGKILL", signal.SIGTERM))
+
+    def _cleanup(self):
         try:
             os.close(self.fd)
         except OSError:
             pass
+        try:
+            os.waitpid(self.pid, os.WNOHANG)
+        except (ChildProcessError, OSError):
+            pass
 
-    def kill(self):
-        """Non-blocking graceful close (used by the per-tab close button)."""
-        threading.Thread(target=self.close_gracefully, daemon=True).start()
+
+class WindowsTerm(Term):
+    """Windows 10 1809+: attach the child to a ConPTY pseudo-console."""
+
+    def _spawn(self, argv, cwd, env, cols, rows):
+        self.proc = winconpty.ConPtyProcess(argv, cwd, env, cols, rows)
+        self.pid = self.proc.pid
+
+    def _read(self):
+        data = self.proc.read()
+        if not data and not self.proc.alive():
+            return b""
+        return data or None
+
+    def _write(self, data):
+        self.proc.write(data)
+
+    def _set_size(self, cols, rows):
+        self.proc.set_size(cols, rows)
+
+    def _hangup(self):
+        # CTRL_CLOSE_EVENT via closing the pseudo-console: the child gets a
+        # chance to run cleanup handlers, like SIGHUP on POSIX
+        self.proc.request_close()
+
+    def _terminate(self):
+        self.proc.terminate()
+
+    def _cleanup(self):
+        self.proc.request_close()
+        self.proc.close_handles()
 
 
 TERMS = {}
@@ -927,11 +1027,10 @@ def default_shell():
 
 
 def start_term(kind, cwd, session_id=None, prompt=None):
-    if not HAS_PTY:
+    if not HAS_TERMINAL:
         raise NotImplementedError(
-            "the embedded terminal needs a POSIX pseudo-terminal, which "
-            "Windows doesn't provide — run `claude` in Windows Terminal "
-            "instead; every other pane works normally")
+            "no pseudo-terminal available: " + (winconpty.unsupported_reason()
+                                                or "unknown reason"))
     cwd = cwd if cwd and os.path.isdir(cwd) else str(Path.home())
     shell = default_shell()
     claude = shutil.which("claude")
@@ -947,7 +1046,8 @@ def start_term(kind, cwd, session_id=None, prompt=None):
     env = {"CLAUDE_DEVTOOLS_UI": "1",
            "CLAUDE_DEVTOOLS_VIZ_DIR": str(VIZ_DIR),
            "CLAUDE_DEVTOOLS_URL": f"http://127.0.0.1:{SERVER_PORT}"}
-    t = Term(argv, cwd, extra_env=env)
+    impl = PosixTerm if HAS_PTY else WindowsTerm
+    t = impl(argv, cwd, extra_env=env)
     with TERMS_LOCK:
         # keep at most 6 terminals; reap dead ones
         for tid in [tid for tid, tt in TERMS.items() if not tt.alive]:
@@ -1069,7 +1169,9 @@ class Handler(BaseHTTPRequestHandler):
 
             if p == "/api/state":
                 self._json({"layout": state_read().get("layout"),
-                            "has_terminal": HAS_PTY,
+                            "has_terminal": HAS_TERMINAL,
+                            "terminal_blocked": (None if HAS_TERMINAL
+                                                 else winconpty.unsupported_reason()),
                             "platform": sys.platform})
                 return
 

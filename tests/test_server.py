@@ -7,6 +7,7 @@ auth/CSRF layer against a live server on an ephemeral port.
 """
 import importlib.util
 import json
+import sys
 import threading
 import time
 import urllib.error
@@ -345,6 +346,48 @@ def test_token_and_state_live_outside_repo():
     assert repo not in srv.TOKEN_FILE.parents, "token must not sit in the git repo"
     assert repo not in srv.STATE_FILE.parents, "state must not sit in the git repo"
     assert "claude-devtools" in str(srv.APP_DIR)
+
+
+# ---------------------------------------------------------------- windows backend
+
+def test_conpty_command_line_quoting():
+    import winconpty
+    assert winconpty.build_command_line(["claude"]) == "claude"
+    line = winconpty.build_command_line(["C:\\Program Files\\claude.exe", "/graphify"])
+    assert '"C:\\Program Files\\claude.exe"' in line and "/graphify" in line
+    # an argument with quotes must stay one argument
+    assert winconpty.build_command_line(["x", 'a "b" c']).count('"') >= 2
+
+
+def test_conpty_environment_block():
+    import winconpty
+    blk = winconpty.build_environment_block({"A": "1", "B": "two",
+                                             "BAD=KEY": "x", "": "y"})
+    text = blk.decode("utf-16-le")
+    assert text.endswith("\0\0")
+    entries = [e for e in text.rstrip("\0").split("\0") if e]
+    assert entries == ["A=1", "B=two"]        # malformed keys dropped, sorted
+
+
+def test_conpty_reports_unavailable_off_windows():
+    import winconpty
+    if sys.platform == "win32":               # pragma: no cover
+        pytest.skip("this assertion is for non-Windows hosts")
+    assert winconpty.AVAILABLE is False
+    assert winconpty.unsupported_reason() == "not running on Windows"
+    with pytest.raises(NotImplementedError):
+        winconpty.ConPtyProcess(["cmd.exe"], None)
+
+
+def test_terminal_backend_selection():
+    # POSIX hosts must keep using the pty implementation
+    if srv.HAS_PTY:
+        assert issubclass(srv.PosixTerm, srv.Term)
+        assert srv.HAS_TERMINAL is True
+    assert issubclass(srv.WindowsTerm, srv.Term)
+    for hook in ("_spawn", "_read", "_write", "_set_size", "_hangup",
+                 "_terminate"):
+        assert hasattr(srv.PosixTerm, hook) and hasattr(srv.WindowsTerm, hook)
 
 
 def test_session_endpoint_roundtrip(http_server):
