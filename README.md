@@ -1,42 +1,111 @@
 # claude-devtools-lite
 
-A personal, zero-dependency equivalent of [claude-devtools](https://github.com/matt1398/claude-devtools):
-a local web dashboard that inspects your Claude Code sessions by reading `~/.claude/` — **read-only, offline, no API keys, nothing installed**.
+A local dashboard for inspecting **Claude Code** sessions — timelines, thinking blocks,
+tool calls, diffs, token usage, subagents, and memory — with an **embedded terminal**,
+a **file explorer**, and a **visual output pane**, laid out like RStudio.
 
-Built for macOS with Python 3.9+ standard library only (one `server.py` + one `index.html`).
+It reads `~/.claude` **read-only** and runs entirely on your machine.
+**No dependencies, no build step, no API keys, no telemetry** — one Python file, one HTML
+file, and the Python standard library. Works on **macOS, Linux, and Windows**.
 
-## Run
-
-**Double-click `Claude DevTools.app`** (Desktop, `/Applications`, or Spotlight). It's a
-**standalone native window** — a compiled WebKit wrapper (`native/main.swift`), not a
-browser tab. It starts the Python server if needed, authenticates via the cookie
-handoff (`/launch?k=<token>`), and opens the dashboard in its own window with a Dock
-icon, Cmd+Q, and Cmd+C/V.
-
-Quitting: **Cmd+Q** (or the **⏻** button) closes every embedded terminal **gracefully**
-— SIGHUP first, so Claude Code sessions run their Stop/SessionEnd hooks (e.g. dream
-memory consolidation), with a ~25 s grace before any force-kill. Cmd+Q also stops the
-server *if this app instance started it*; if the server was already running (e.g.
-started manually), the app leaves it alone. Rebuild after editing the Swift source:
-
-```bash
-cd ~/Desktop/claude-devtools-lite/native && swiftc -O main.swift -o ClaudeDevTools -framework Cocoa -framework WebKit
+```
+┌────────────┬───────────────────────────┬──────────────────┐
+│            │  SESSION                  │  TOKEN USE       │
+│  projects  │  prompts, thinking,       │  5h block, P90   │
+│  sessions  │  tool calls, diffs        │  limit, sparkline│
+│  search    ├───────────────────────────┼──────────────────┤
+│  memory    │  TERMINAL                 │  VIZ / FILES     │
+│            │  real claude CLI / shell  │  charts, graphs, │
+│            │  tabs, resume a session   │  file explorer   │
+└────────────┴───────────────────────────┴──────────────────┘
 ```
 
-then copy `ClaudeDevTools` into `Claude DevTools.app/Contents/MacOS/`. You can still use
-any browser instead: run the server and open the `/launch?k=…` URL it prints.
+Every pane can be **maximized (⛶)** or **resized by dragging** the splitters; the layout
+is saved between sessions.
+
+## Why
+
+Claude Code writes a rich JSONL transcript for every session, but the CLI shows you a
+condensed view of it. This reconstructs what actually happened: which files were read,
+what each tool returned, what the model was thinking, how the context window filled up
+and compacted, how many tokens each session burned — and lets you jump straight back
+into any session in an embedded terminal.
+
+## Features
+
+**Session inspection**
+- Every project and session under `~/.claude/projects/`, with real working-directory
+  paths (decoded from the transcripts, not the lossy folder slugs)
+- Full timeline: user prompts, assistant messages (rendered markdown), collapsible
+  **thinking** blocks, and every **tool call** paired with its result
+- **Real diffs** for `Edit`/`Write` calls, rendered from the recorded patch hunks
+- **Context-window chart**: one bar per API request, with automatic **compaction
+  detection** (red bars where the context dropped sharply)
+- Token totals per session, deduplicated by request ID, plus a tool-call histogram
+- **Subagent transcripts** open in the same viewer
+- **Full-text search** across every session; results jump to the matching entry
+- Project **memory** files rendered in place
+- Big transcripts (20 MB+, thousands of entries) load lazily and stay responsive
+
+**Token usage**
+- Current 5-hour block with reset countdown, output tokens today and over 7 days,
+  an hourly sparkline, and a by-model breakdown
+- A limit bar showing the current block against the **P90 of your own historical
+  blocks** (the [Claude-Code-Usage-Monitor](https://github.com/Maciek-roboblog/Claude-Code-Usage-Monitor)
+  approach). Your plan's real quota is not recorded locally — this is a measured
+  baseline, not an official limit. Use `/status` in the CLI for the authoritative number.
+
+**Embedded terminal**
+- Real PTY streamed to [xterm.js](https://xtermjs.org/): full TUI, colors, resizing
+- Launch `claude` in any project's directory, or **resume any session** you're viewing
+  (`claude --resume <id>`) with one click
+- Up to 6 tabs. Quitting closes sessions **gracefully** (SIGHUP on POSIX,
+  `CTRL_CLOSE_EVENT` on Windows) so Claude Code's `SessionEnd` hooks run before exit
+- Terminals export `CLAUDE_DEVTOOLS_UI=1`, `CLAUDE_DEVTOOLS_VIZ_DIR`, and
+  `CLAUDE_DEVTOOLS_URL`, so a session can tell it's running inside the dashboard
+
+**Viz inbox and file explorer**
+- A watched folder: any `.html`, `.png`, `.svg`, `.md`, `.pdf`, `.csv` written there
+  appears within 5 seconds and renders automatically. Tell a running Claude session
+  *"write the chart to $CLAUDE_DEVTOOLS_VIZ_DIR"* and watch it appear.
+- Projects with a [graphify](https://github.com/anthropics/skills) knowledge graph
+  (`graphify-out/graph.html`) display it automatically; projects without one get a
+  button that launches the skill
+- A Files pane that follows the selected project, previews files, copies paths, opens a
+  shell in any folder, or points the viz watcher at it
+
+## Install and run
+
+Requires **Python 3.9+** and an existing Claude Code installation (`~/.claude`).
+
+```bash
+git clone https://github.com/PierreBeaucoral/claude-devtools-lite.git
+cd claude-devtools-lite
+python3 server.py
+```
+
+Open the URL it prints (it includes a one-time token). That's the whole setup — but each
+platform also has a double-click launcher:
+
+### macOS
+
+```bash
+bash packaging/macos/build-app.sh
+```
+
+Builds `Claude DevTools.app` — a native window (WebKit wrapper, ~90 KB, no Electron)
+with a Dock icon and ⌘Q. Drag it to `/Applications`. It starts the server if needed and
+never spawns a duplicate.
 
 ### Linux
 
 ```bash
-launchers/linux/install.sh     # adds "Claude DevTools" to your app menu (no sudo)
+launchers/linux/install.sh
 ```
 
-Or run `launchers/linux/claude-devtools.sh` directly. It starts the server,
-opens an app-mode browser window (Chrome/Chromium/Brave/Edge) or your default
-browser, and authenticates via the cookie handoff. **Full feature parity with
-macOS**, embedded terminal included — Linux has POSIX pseudo-terminals.
-Token/state live in `~/.config/claude-devtools/`.
+Adds "Claude DevTools" to your application menu (per-user, no `sudo`). Opens an app-mode
+browser window (Chrome/Chromium/Brave/Edge) or your default browser. Full feature parity
+with macOS.
 
 ### Windows
 
@@ -44,162 +113,98 @@ Token/state live in `~/.config/claude-devtools/`.
 powershell -ExecutionPolicy Bypass -File launchers\windows\install.ps1
 ```
 
-Creates Desktop and Start-menu shortcuts; or double-click
-`launchers\windows\Claude DevTools.cmd`. Token/state live in
-`%APPDATA%\claude-devtools\`.
+Creates Desktop and Start-menu shortcuts, or double-click
+`launchers\windows\Claude DevTools.cmd`.
 
-**The embedded terminal works on Windows too**, via ConPTY (the native
-pseudo-console API, Windows 10 1809 / build 17763 and newer) driven through
-`ctypes` — still no third-party packages. Claude Code's TUI renders normally,
-and quitting closes the pseudo-console, which delivers `CTRL_CLOSE_EVENT` so
-session cleanup can run (Windows' analogue of the SIGHUP path used on
-macOS/Linux).
-
-Verify the terminal on your own machine before trusting it:
+The embedded terminal works on **Windows 10 1809+** through ConPTY, driven via `ctypes`
+— still no third-party packages. Verify it on your machine:
 
 ```
 python tools\selftest_windows.py
 ```
 
-It spawns a real pseudo-console, runs a command, reads the output, resizes, and
-exits — printing PASS/FAIL per step. On an older Windows build the server
-detects the missing API, explains it in the terminal pane, and every other pane
-keeps working.
+On older Windows builds the server detects the missing API, explains it in the terminal
+pane, and everything else keeps working.
 
-### Any platform, from a terminal
+## Usage
 
-```bash
-python3 server.py
+| Action | How |
+|---|---|
+| Browse a project | Click it in the sidebar; sessions expand underneath |
+| Inspect a session | Click a session — timeline, chart, and token totals load |
+| Hide noise | Toggle **thinking** / **tool calls** / **system** above the timeline |
+| Search everything | Type in the search box, press Enter, click a result to jump to it |
+| Open the CLI in a project | Hover a project → **⌨** |
+| Resume a session | Open it → **⌨ resume in CLI** |
+| Show a figure from a session | Have it write into `$CLAUDE_DEVTOOLS_VIZ_DIR` |
+| Maximize a pane | **⛶** in its header (click again to restore) |
+| Resize panes | Drag the splitters; sizes persist |
+| Quit | **⏻** in the sidebar (or ⌘Q in the macOS app) |
+
+Green dots mark projects whose transcripts changed since you last opened them, and a
+toast appears when a background session finishes something.
+
+### Making Claude aware of the dashboard
+
+Add this to your `~/.claude/CLAUDE.md` so sessions launched from the terminal pane push
+their visual output to the viz inbox on their own:
+
+```markdown
+## claude-devtools-lite UI awareness
+
+When `CLAUDE_DEVTOOLS_UI=1` is set, this session runs inside the claude-devtools-lite
+dashboard. To show the user a visual output (figure, chart, HTML report), also write a
+self-contained file into `$CLAUDE_DEVTOOLS_VIZ_DIR` — it renders automatically in the
+Viz pane. Prefer inline-only `.html`, `.png`, or `.svg`, with descriptive filenames.
 ```
 
-Then open <http://127.0.0.1:3456>. Options: `--port`, `--host`, `--root` (defaults to
-`~/.claude`, or set `CLAUDE_ROOT`). The app bundle hardcodes the `server.py` path — if
-you move the folder, update `Claude DevTools.app/Contents/MacOS/launcher`.
+## Security
 
-Handy alias for `~/.zshrc`:
+The dashboard can spawn shells, so it is built to be safe on a shared machine:
+
+- Binds to **127.0.0.1** only, and **never writes** to `~/.claude`
+- Every `/api` route requires a **token** (generated once, stored `0600` in your OS's
+  app-data directory, outside this repo). The launchers hand it to the browser via a
+  same-site cookie — it never appears in a URL, and the request log redacts it
+- **CSRF guard** (JSON content type + origin allowlist) and a **Host allowlist**
+  (DNS-rebinding protection)
+- File browsing is confined to `$HOME`, blocks path traversal and symlink escapes, and
+  **refuses credential-shaped files** (`.env*`, `*secret*`, `*token*`, `id_rsa`,
+  `*.pem`, `.netrc`, `hosts.yml`, …)
+- HTML previews render in a **sandboxed iframe** with an opaque origin, so a previewed
+  file cannot reach the dashboard's API or your token
+
+**Do not run this with `--host 0.0.0.0`.** That would offer a shell to your network; the
+server prints a warning if you try.
+
+## Development
 
 ```bash
-alias devtools='python3 ~/Desktop/claude-devtools-lite/server.py'
+python3 -m pytest tests/ -q      # 27 tests
 ```
 
-From a Claude Code session in `~/Desktop`, the browser pane can also start it via the
-`devtools` entry in `Desktop/.claude/launch.json`.
-
-## Layout (RStudio-style)
-
-Four panes in a 2×2 workspace, plus the project sidebar. Every pane header has a
-**⛶** button that maximizes it to the full window (click again to restore) —
-same interaction as RStudio's pane zoom. **◫** toggles the right column.
-
-| | left | right |
-|---|---|---|
-| **top** | Session viewer | Token use |
-| **bottom** | Terminal console | Viz / Files |
-
-## What it shows
-
-- **Project & session browser** — every project under `~/.claude/projects/`, with real
-  paths (decoded from the session records, not the lossy slug), session titles, dates, sizes.
-- **Full timeline per session** — user prompts, assistant replies (markdown), collapsible
-  **thinking** blocks, and every **tool call** with its input and paired result
-  (Bash stdout/stderr, file reads, WebFetch/WebSearch results, …).
-- **Real diffs** — `Edit`/`Write` calls render their `structuredPatch` hunks with +/− highlighting.
-- **Context-window chart** — one bar per API request (input + cache read + cache write),
-  with automatic **compaction detection** (red bars on >35 % context drops). Hover for details.
-- **Token totals** — requests, output tokens, cache read/write, peak context, per session.
-- **Tool histogram** — which tools were called and how often.
-- **Subagent transcripts** — agent files under `<session>/subagents/` open in the same viewer.
-- **Project memory** — `memory/MEMORY.md` and all memory files, rendered.
-- **Full-text search** — across every session of every project; results click through to the session.
-- **Copy buttons** on every block; toggles to hide thinking / tools / system noise.
-- Big sessions (20 MB+, 3000+ entries) load lazily in chunks of 150 entries.
-- **New-activity badges** — a green dot on any project whose transcripts changed since
-  you last opened it (watermark kept in the browser's localStorage; refreshes every 30 s).
-- **Token-use panel** (upper right, toggle with ◫) — computed live from your local logs:
-  current 5-hour block with reset countdown and progress bar, output tokens today and
-  over 7 days, an output-per-hour sparkline for the last 24 h, and a by-model breakdown.
-  A **limit bar** shows the current block as a % of the **P90 of all your historical
-  5-hour blocks** (the [Claude-Code-Usage-Monitor](https://github.com/Maciek-roboblog/Claude-Code-Usage-Monitor)
-  approach — a background scan of your full history at startup, ratcheted in `.state.json`;
-  green < 65 %, orange < 90 %, red above). It's a measured baseline, not the official
-  quota — for that use `/status` in the CLI.
-- **Viz inbox** (lower right) — a watched folder (`viz/` next to `server.py`). Any
-  `.html`, image, `.svg`, `.md`, `.pdf`, `.csv`… file written there appears in the panel
-  within 5 s and the newest one auto-renders in a sandboxed iframe. Tell a Claude Code
-  session *"write the chart to ~/Desktop/claude-devtools-lite/viz/"* and it shows up
-  while the session is still running.
-- **Graphify integration** — if the selected project has `graphify-out/graph.html`
-  (a [/graphify](../.claude/skills/graphify) knowledge graph), it's pinned and displayed
-  in the viz pane automatically when you click the project. Projects without one show a
-  **"build one (/graphify)"** button that opens `claude` in the project folder with the
-  `/graphify` prompt pre-filled.
-- **Files explorer** (Files tab of the lower-right pane, like RStudio's Files pane) —
-  browses your home directory; **follows the selected project** (clicking a project in
-  the sidebar jumps the explorer to that project's real working directory). Per row:
-  **copy** (full path to clipboard) and **→ CLI** (pastes the path into the active
-  terminal, opening a shell in that folder if none is running). The breadcrumb offers
-  **⌨ shell here** and **👁 watch** (points the Viz panel at the current folder;
-  click again to return to the default inbox). Restricted to `$HOME`.
-- **Embedded terminal** — a real PTY streamed to xterm.js in the console pane:
-  - **⌨ CLI** button (top of sidebar) → `claude` in `$HOME`; `+ shell` → your login shell
-  - hover a project → **⌨** → `claude` launched in that project's working directory
-  - open a session → **⌨ resume in CLI** → `claude --resume <session-id>` in the right cwd
-  - up to 6 tabs, full TUI support (colors, cursor, alternate screen)
-  - every terminal exports `CLAUDE_DEVTOOLS_UI=1`, `CLAUDE_DEVTOOLS_VIZ_DIR`, and
-    `CLAUDE_DEVTOOLS_URL`, and `~/.claude/CLAUDE.md` has a matching section — so any
-    Claude Code session launched from here knows it's inside this UI and writes visual
-    outputs to the viz inbox on its own.
-
-## Extras
-
-- **Deep links** — the URL hash tracks `#p=<project>&s=<session>`; reloads and bookmarks
-  restore your place. Search results open the session **scrolled to the matching entry**
-  (auto-expanded and briefly highlighted).
-- **Activity toasts** — while you work, a clickable toast appears when another project's
-  transcripts change (a background Claude session finished something).
-- **Tests** — `python3 -m pytest tests/ -q` (15 tests): usage dedup by requestId, tool
-  pairing, structuredPatch, sidechain handling, compaction detection, 5h-block grouping,
-  path-safety guards, and the HTTP auth/CSRF layer against a live ephemeral server.
-- **Git** — the folder is a repo; commit after changes.
-
-## Safety / design notes
-
-- The server binds to `127.0.0.1` by default and **never writes** to `~/.claude`.
-- **Auth token**: every `/api` endpoint requires a token (401 otherwise). It's generated
-  once into `.token` (mode 0600) and passed to the browser via the URL fragment by the
-  app launcher, then kept in localStorage. This protects against *other local users* on
-  the machine; the CSRF guard below protects against hostile web pages. If a browser
-  ever shows the 401 message, relaunch via `Claude DevTools.app`.
-- The terminal endpoints can execute commands, so POSTs are CSRF-guarded: they require
-  `Content-Type: application/json` (forcing a browser preflight) and reject foreign
-  `Origin` headers. Do **not** expose this server beyond localhost (`--host 0.0.0.0`
-  would hand a shell to your network).
-- Terminal output is buffered server-side (512 kB scrollback per terminal) so
-  reconnecting clients resume from an offset without duplication.
-- Viz-inbox HTML renders in a sandboxed iframe (`allow-scripts` only, no same-origin)
-  with a CSP that blocks outbound network requests — an untrusted file can draw, but
-  it cannot touch the dashboard's APIs or phone home.
-- Session-list metadata is cached in memory keyed on file mtime+size; files over ~768 kB
-  are scanned head+tail only for listing (full parse happens when you open the session).
-- Tool results are truncated at 20 k chars and text blocks at 120 k chars before being
-  sent to the browser; truncation is labeled inline.
-- Assistant usage is deduplicated by `requestId` (one API response is logged once per
-  content block), so token totals are not double-counted.
-
-## Files
+They cover the transcript-parsing invariants (usage dedup by request ID, tool pairing,
+patch rendering, sidechains, compaction detection), 5-hour block grouping, path-safety
+guards, the secret deny-list, the HTTP auth/CSRF/Host layer, and the Windows backend
+helpers.
 
 | File | Role |
-|------|------|
-| `server.py` | HTTP server + JSONL parsing (projects, sessions, subagents, memory, search APIs) + PTY terminal backend |
-| `index.html` | Single-page UI (vanilla JS, dark theme) |
-| `vendor/` | xterm.js 5.5.0 + fit addon, vendored locally (fetched once from jsdelivr; works offline) |
+|---|---|
+| `server.py` | HTTP server, JSONL parsing, usage aggregation, PTY terminals |
+| `winconpty.py` | Windows ConPTY transport (ctypes, no dependencies) |
+| `index.html` | Single-page UI (vanilla JS, no framework) |
+| `native/main.swift` | macOS standalone window (WebKit) |
+| `launchers/`, `packaging/` | Per-platform launchers and app builders |
+| `vendor/` | xterm.js 5.5.0 + fit addon (MIT), vendored for offline use |
 
-## Differences vs. the original claude-devtools
+## Prior art
 
-Kept: session explorer, timeline reconstruction, thinking/tool inspection, diffs,
-context/compaction visualization, subagent trees, memory viewer, search, copy/paste focus.
+Inspired by [claude-devtools](https://github.com/matt1398/claude-devtools) (Electron, far
+more featureful) and [Claude-Code-Usage-Monitor](https://github.com/Maciek-roboblog/Claude-Code-Usage-Monitor)
+(the P90 usage-baseline idea). This one is deliberately tiny: two main files, standard
+library only, hackable in an afternoon.
 
-Dropped (deliberately, for a personal tool): Electron packaging, SSH remote sessions,
-system notifications/regex triggers, multi-pane drag-and-drop tabs, per-category token
-attribution of the system prompt (the raw logs don't label CLAUDE.md vs. skills tokens;
-approximating it would violate "correctness first").
+## License
+
+MIT — see [LICENSE](LICENSE). Bundles [xterm.js](https://github.com/xtermjs/xterm.js)
+(MIT). Not affiliated with Anthropic.
