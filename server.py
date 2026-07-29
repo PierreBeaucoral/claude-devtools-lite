@@ -13,10 +13,8 @@ Usage:
 """
 import argparse
 import base64
-import fcntl
 import json
 import os
-import pty
 import re
 import secrets
 import select
@@ -24,12 +22,23 @@ import shutil
 import signal
 import struct
 import sys
-import termios
 import threading
 import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+# POSIX pseudo-terminals power the embedded terminal. macOS/Linux have them;
+# Windows does not (ConPTY needs a third-party package), so there the
+# dashboard runs fully except for the terminal pane, which reports why.
+try:
+    import fcntl
+    import pty
+    import termios
+    HAS_PTY = True
+except ImportError:                                   # Windows
+    fcntl = pty = termios = None
+    HAS_PTY = False
 
 HERE = Path(__file__).resolve().parent
 CLAUDE_ROOT = Path(os.environ.get("CLAUDE_ROOT", str(Path.home() / ".claude")))
@@ -39,6 +48,9 @@ CLAUDE_ROOT = Path(os.environ.get("CLAUDE_ROOT", str(Path.home() / ".claude")))
 # repo, and one `git add -f` would publish the token permanently.
 if sys.platform == "darwin":
     APP_DIR = Path.home() / "Library" / "Application Support" / "claude-devtools"
+elif os.name == "nt":
+    APP_DIR = Path(os.environ.get("APPDATA",
+                                  Path.home() / "AppData" / "Roaming")) / "claude-devtools"
 else:
     APP_DIR = Path(os.environ.get("XDG_CONFIG_HOME",
                                   Path.home() / ".config")) / "claude-devtools"
@@ -875,7 +887,7 @@ class Term:
         try:
             os.killpg(self.pid, sig)        # child is its own session leader
             return True
-        except (OSError, ProcessLookupError):
+        except (AttributeError, OSError, ProcessLookupError):
             try:
                 os.kill(self.pid, sig)
                 return True
@@ -886,8 +898,9 @@ class Term:
         """SIGHUP first — a Claude Code session treats it like the terminal
         closing and runs its Stop/SessionEnd hooks — escalating to SIGTERM
         then SIGKILL only if the process is still alive. Blocks until dead."""
-        for sig, wait in ((signal.SIGHUP, grace), (signal.SIGTERM, 3.0),
-                          (signal.SIGKILL, 1.0)):
+        hangup = getattr(signal, "SIGHUP", signal.SIGTERM)
+        kill = getattr(signal, "SIGKILL", signal.SIGTERM)
+        for sig, wait in ((hangup, grace), (signal.SIGTERM, 3.0), (kill, 1.0)):
             if not self.alive or not self._signal(sig):
                 break
             deadline = time.time() + wait
@@ -907,9 +920,20 @@ TERMS = {}
 TERMS_LOCK = threading.Lock()
 
 
+def default_shell():
+    if os.name == "nt":
+        return os.environ.get("COMSPEC") or "powershell.exe"
+    return os.environ.get("SHELL", "/bin/bash")
+
+
 def start_term(kind, cwd, session_id=None, prompt=None):
+    if not HAS_PTY:
+        raise NotImplementedError(
+            "the embedded terminal needs a POSIX pseudo-terminal, which "
+            "Windows doesn't provide — run `claude` in Windows Terminal "
+            "instead; every other pane works normally")
     cwd = cwd if cwd and os.path.isdir(cwd) else str(Path.home())
-    shell = os.environ.get("SHELL", "/bin/zsh")
+    shell = default_shell()
     claude = shutil.which("claude")
     if kind == "shell" or (kind in ("claude", "resume") and not claude):
         argv = [shell, "-l"]
@@ -1044,7 +1068,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
             if p == "/api/state":
-                self._json({"layout": state_read().get("layout")})
+                self._json({"layout": state_read().get("layout"),
+                            "has_terminal": HAS_PTY,
+                            "platform": sys.platform})
                 return
 
             if p == "/api/viz":
@@ -1269,6 +1295,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
             self._err(404, "not found")
+        except NotImplementedError as e:
+            self._err(501, str(e))
         except RuntimeError as e:
             self._err(429, str(e))
         except BrokenPipeError:

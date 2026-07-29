@@ -26,10 +26,40 @@ cd ~/Desktop/claude-devtools-lite/native && swiftc -O main.swift -o ClaudeDevToo
 then copy `ClaudeDevTools` into `Claude DevTools.app/Contents/MacOS/`. You can still use
 any browser instead: run the server and open the `/launch?k=…` URL it prints.
 
-Terminal alternative:
+### Linux
 
 ```bash
-python3 ~/Desktop/claude-devtools-lite/server.py
+launchers/linux/install.sh     # adds "Claude DevTools" to your app menu (no sudo)
+```
+
+Or run `launchers/linux/claude-devtools.sh` directly. It starts the server,
+opens an app-mode browser window (Chrome/Chromium/Brave/Edge) or your default
+browser, and authenticates via the cookie handoff. **Full feature parity with
+macOS**, embedded terminal included — Linux has POSIX pseudo-terminals.
+Token/state live in `~/.config/claude-devtools/`.
+
+### Windows
+
+```powershell
+powershell -ExecutionPolicy Bypass -File launchers\windows\install.ps1
+```
+
+Creates Desktop and Start-menu shortcuts; or double-click
+`launchers\windows\Claude DevTools.cmd`. Token/state live in
+`%APPDATA%\claude-devtools\`.
+
+**One limitation:** the embedded terminal pane is unavailable on Windows. It
+needs a POSIX pseudo-terminal, and Windows' ConPTY equivalent would require a
+third-party package (`pywinpty`), which would break the zero-dependency
+guarantee. The server detects this, reports it in the terminal pane, and hides
+the terminal buttons — every other pane (sessions, token use, viz, files
+explorer, search, memory) works normally. Run `claude` in Windows Terminal
+alongside the dashboard.
+
+### Any platform, from a terminal
+
+```bash
+python3 server.py
 ```
 
 Then open <http://127.0.0.1:3456>. Options: `--port`, `--host`, `--root` (defaults to
