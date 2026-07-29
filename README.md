@@ -88,6 +88,11 @@ same interaction as RStudio's pane zoom. **◫** toggles the right column.
   within 5 s and the newest one auto-renders in a sandboxed iframe. Tell a Claude Code
   session *"write the chart to ~/Desktop/claude-devtools-lite/viz/"* and it shows up
   while the session is still running.
+- **Graphify integration** — if the selected project has `graphify-out/graph.html`
+  (a [/graphify](../.claude/skills/graphify) knowledge graph), it's pinned and displayed
+  in the viz pane automatically when you click the project. Projects without one show a
+  **"build one (/graphify)"** button that opens `claude` in the project folder with the
+  `/graphify` prompt pre-filled.
 - **Files explorer** (Files tab of the lower-right pane, like RStudio's Files pane) —
   browses your home directory; **follows the selected project** (clicking a project in
   the sidebar jumps the explorer to that project's real working directory). Per row:
