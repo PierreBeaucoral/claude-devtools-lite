@@ -1271,7 +1271,7 @@ def start_term(kind, cwd, session_id=None, prompt=None):
 # ---------------------------------------------------------------- HTTP
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "claude-devtools-lite/1.0"
+    server_version = "claude-devtools-lite/0.5.0"
     root = CLAUDE_ROOT  # overridden in main()
 
     def log_message(self, fmt, *args):
