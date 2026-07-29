@@ -910,6 +910,7 @@ class Term:
         self.buf = bytearray()      # scrollback so re-attaching clients catch up
         self.cond = threading.Condition()
         self.alive = True
+        self.cols, self.rows = cols, rows
         # `env` is the COMPLETE child environment (already scrubbed of the
         # parent session's markers); extra_env only adds on top of it
         full = dict(env if env is not None else os.environ)
@@ -971,7 +972,9 @@ class Term:
 
     def resize(self, cols, rows):
         try:
-            self._set_size(max(2, int(cols)), max(2, int(rows)))
+            cols, rows = max(2, int(cols)), max(2, int(rows))
+            self._set_size(cols, rows)
+            self.cols, self.rows = cols, rows      # what the child believes
         except (OSError, ValueError):
             pass
 
@@ -1096,6 +1099,15 @@ class WindowsTerm(Term):
 
 TERMS = {}
 TERMS_LOCK = threading.Lock()
+
+
+def clamp_dim(v, fallback):
+    """Terminal dimensions are packed into unsigned shorts by TIOCSWINSZ."""
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        return fallback
+    return max(2, min(2000, n))
 
 
 def default_shell():
@@ -1226,7 +1238,7 @@ def find_claude():
     return found
 
 
-def start_term(kind, cwd, session_id=None, prompt=None):
+def start_term(kind, cwd, session_id=None, prompt=None, cols=100, rows=30):
     if not HAS_TERMINAL:
         raise NotImplementedError(
             "no pseudo-terminal available: " + (winconpty.unsupported_reason()
@@ -1257,7 +1269,10 @@ def start_term(kind, cwd, session_id=None, prompt=None):
         "CLAUDE_DEVTOOLS_VIZ_DIR": str(VIZ_DIR),
         "CLAUDE_DEVTOOLS_URL": f"http://127.0.0.1:{SERVER_PORT}"})
     impl = PosixTerm if HAS_PTY else WindowsTerm
-    t = impl(argv, cwd, env=env)
+    # spawn at the client's real viewport size: a child that starts at the
+    # wrong width emits wrapped output that stays wrong after the SIGWINCH
+    t = impl(argv, cwd, cols=clamp_dim(cols, 100), rows=clamp_dim(rows, 30),
+             env=env)
     with TERMS_LOCK:
         # keep at most 6 terminals; reap dead ones
         for tid in [tid for tid, tt in TERMS.items() if not tt.alive]:
@@ -1582,7 +1597,9 @@ class Handler(BaseHTTPRequestHandler):
                 prompt = body.get("prompt")
                 if prompt is not None and not isinstance(prompt, str):
                     prompt = None
-                t = start_term(kind, cwd, sid, prompt=prompt)
+                t = start_term(kind, cwd, sid, prompt=prompt,
+                               cols=body.get("cols", 100),
+                               rows=body.get("rows", 30))
                 self._json({"id": t.id, "label": t.label, "cwd": t.cwd,
                             "argv": t.argv})
                 return
@@ -1600,8 +1617,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": True})
                 return
             if p == "/api/term/resize":
-                t.resize(int(body.get("cols", 100)), int(body.get("rows", 30)))
-                self._json({"ok": True})
+                t.resize(clamp_dim(body.get("cols"), 100),
+                         clamp_dim(body.get("rows"), 30))
+                self._json({"ok": True, "cols": t.cols, "rows": t.rows})
                 return
             if p == "/api/term/kill":
                 t.kill()

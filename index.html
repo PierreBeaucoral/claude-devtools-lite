@@ -823,22 +823,39 @@ function strToB64(s){
   return btoa(bin);
 }
 
+/* Keep the PTY's size exactly in step with what xterm displays.
+   Resize requests are coalesced and sent ONE AT A TIME: they are independent
+   HTTP POSTs, so firing several during a drag could deliver an older (smaller)
+   size last, leaving the child drawing at the wrong width — which is what made
+   TUI output drift into the prompt area. */
+function syncSize(t, force){
+  const cols = t.term.cols, rows = t.term.rows;
+  if(!cols || !rows) return;
+  if(!force && t.sentCols === cols && t.sentRows === rows) return;
+  t.pendingSize = {cols, rows};
+  if(t.sizeInFlight) return;                 // the running loop will pick it up
+  t.sizeInFlight = true;
+  (async () => {
+    try{
+      while(t.pendingSize && !t.dead){
+        const s = t.pendingSize; t.pendingSize = null;
+        const r = await fetch("/api/term/resize", {method:"POST",
+          headers: authHeaders({"Content-Type":"application/json"}),
+          body: JSON.stringify({id: t.id, cols: s.cols, rows: s.rows})});
+        if(r.ok){ t.sentCols = s.cols; t.sentRows = s.rows; }
+      }
+    }catch(e){ /* terminal closed mid-resize */ }
+    finally{ t.sizeInFlight = false; }
+  })();
+}
+
 async function openTerm(kind, opts = {}){
   showTermCell();
-  let info;
-  try{
-    const r = await fetch("/api/term/start", {method:"POST",
-      headers:authHeaders({"Content-Type":"application/json"}),
-      body: JSON.stringify({kind, project: opts.project, session: opts.session,
-                            cwd: opts.cwd, prompt: opts.prompt})});
-    info = await r.json();
-    if(!r.ok) throw new Error(info.error || r.status);
-  }catch(e){
-    $("#termempty").innerHTML = `⚠️ ${esc(e.message)}`;
-    $("#termempty").style.display = "block";
-    return;
-  }
 
+  // Build and measure the viewport BEFORE spawning, so the PTY is created at
+  // the right size. Spawning first meant the child rendered its first frames
+  // at a default 100x30 and only then got a SIGWINCH — the already-emitted
+  // lines kept the old wrapping.
   const container = document.createElement("div");
   $("#termbody").appendChild(container);
   const term = new Terminal({
@@ -849,18 +866,44 @@ async function openTerm(kind, opts = {}){
   });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
-  term.open(container);
+  const t = { id: null, label: opts.label, term, fit, container,
+              dead: false, pos: 0, abort: null,
+              sentCols: null, sentRows: null, pendingSize: null,
+              sizeInFlight: false };
 
-  const t = { id: info.id, label: opts.label || info.label, term, fit, container,
-              dead: false, pos: 0, abort: null };
+  // show it now so it can be measured, then hide the others
+  for(const [, other] of TM.terms) other.container.style.display = "none";
+  container.style.display = "block";
+  term.open(container);
+  try{ fit.fit(); }catch(e){}
+  await new Promise(r => requestAnimationFrame(r));
+  try{ fit.fit(); }catch(e){}               // second pass: fonts/layout settled
+
+  let info;
+  try{
+    const r = await fetch("/api/term/start", {method:"POST",
+      headers:authHeaders({"Content-Type":"application/json"}),
+      body: JSON.stringify({kind, project: opts.project, session: opts.session,
+                            cwd: opts.cwd, prompt: opts.prompt,
+                            cols: term.cols, rows: term.rows})});
+    info = await r.json();
+    if(!r.ok) throw new Error(info.error || r.status);
+  }catch(e){
+    term.dispose(); container.remove();
+    $("#termempty").innerHTML = `⚠️ ${esc(e.message)}`;
+    $("#termempty").style.display = "block";
+    return;
+  }
+
+  t.id = info.id;
+  t.label = opts.label || info.label;
+  t.sentCols = term.cols; t.sentRows = term.rows;   // the size it was born with
   TM.terms.set(t.id, t);
 
   term.onData(d => fetch("/api/term/input", {method:"POST",
     headers:authHeaders({"Content-Type":"application/json"}),
     body: JSON.stringify({id: t.id, data: strToB64(d)})}));
-  term.onResize(({cols, rows}) => fetch("/api/term/resize", {method:"POST",
-    headers:authHeaders({"Content-Type":"application/json"}),
-    body: JSON.stringify({id: t.id, cols, rows})}));
+  term.onResize(() => syncSize(t));
 
   activateTerm(t.id);
   streamTerm(t);
@@ -910,13 +953,20 @@ function activateTerm(id){
   TM.active = id;
   for(const [tid, t] of TM.terms)
     t.container.style.display = tid === id ? "block" : "none";
-  renderTabs(); fitActive();
+  renderTabs();
+  fitActive(true);           // force a size sync: this tab may be stale
   const t = TM.terms.get(id); if(t) t.term.focus();
 }
-function fitActive(){
+function fitActive(force){
   const t = TM.terms.get(TM.active);
   if(t && t.container.offsetParent !== null)
-    requestAnimationFrame(() => { try{ t.fit.fit(); }catch(e){} });
+    requestAnimationFrame(() => {
+      try{ t.fit.fit(); }catch(e){}
+      // don't rely on xterm's onResize event: it only fires when ITS own
+      // dimensions change, which can leave the PTY stale (e.g. after a tab
+      // switch). Compare against what we actually sent.
+      syncSize(t, force);
+    });
 }
 async function closeTerm(id){
   const t = TM.terms.get(id); if(!t) return;
