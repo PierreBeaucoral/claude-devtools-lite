@@ -204,6 +204,11 @@ more featureful) and [Claude-Code-Usage-Monitor](https://github.com/Maciek-robob
 (the P90 usage-baseline idea). This one is deliberately tiny: two main files, standard
 library only, hackable in an afternoon.
 
+## Support
+
+If this tool saves you time, you can [buy me a coffee via PayPal](https://www.paypal.me/pb63000).
+Entirely optional — bug reports and pull requests are just as welcome.
+
 ## License
 
 MIT — see [LICENSE](LICENSE). Bundles [xterm.js](https://github.com/xtermjs/xterm.js)
