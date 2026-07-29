@@ -429,6 +429,21 @@ async function toggleProject(slug){
     fsPath = p.path;
     if($("#filesview").style.display !== "none") loadFs(fsPath);
   }
+  // projects with a graphify knowledge graph show it in the viz pane by
+  // default; those without get a button to build one
+  if(p && p.graph){
+    vizPinned = {path: p.graph,
+                 label: "🕸 " + (p.path.split("/").pop() || "project") + " · knowledge graph"};
+    vizGraphOffer = null;
+    vizTab("viz");
+    showPinned();
+    refreshViz();
+  } else {
+    vizPinned = null;
+    vizGraphOffer = (p && p.path.startsWith("/"))
+      ? {cwd: p.path, name: p.path.split("/").pop() || "project"} : null;
+    refreshViz();
+  }
   renderTree(); updateHash();
   state.sessions[slug] = await api("/api/sessions?project="+encodeURIComponent(slug));
   renderTree();
@@ -785,7 +800,8 @@ async function openTerm(kind, opts = {}){
   try{
     const r = await fetch("/api/term/start", {method:"POST",
       headers:authHeaders({"Content-Type":"application/json"}),
-      body: JSON.stringify({kind, project: opts.project, session: opts.session, cwd: opts.cwd})});
+      body: JSON.stringify({kind, project: opts.project, session: opts.session,
+                            cwd: opts.cwd, prompt: opts.prompt})});
     info = await r.json();
     if(!r.ok) throw new Error(info.error || r.status);
   }catch(e){ alert("terminal failed: " + e.message); return; }
@@ -1067,19 +1083,47 @@ async function refreshUsage(){
 }
 
 /* ---------- viz inbox ---------- */
-let vizDir = "", vizActive = null, vizNewest = 0;
+let vizDir = "", vizActive = null, vizNewest = 0, vizPinned = null, vizGraphOffer = null;
 function vizOverride(){ return localStorage.getItem("cdl-vizdir") || ""; }
+function showPinned(){
+  if(!vizPinned) return;
+  vizActive = "::pinned";
+  const fr = $("#vizframe");
+  fr.classList.remove("darkbg");
+  fr.src = "/api/fs/file?path=" + encodeURIComponent(vizPinned.path) + "&" + tokenParam();
+  [...document.querySelectorAll(".vizfile")].forEach(el =>
+    el.classList.toggle("active", el.textContent.startsWith(vizPinned.label)));
+}
 async function refreshViz(){
   try{
     const ov = vizOverride();
     const v = await api("/api/viz" + (ov ? "?dir=" + encodeURIComponent(ov) : ""));
     vizDir = v.dir;
     const list = $("#vizlist"); list.innerHTML = "";
+    if(vizPinned){
+      const el = document.createElement("div");
+      el.className = "vizfile" + (vizActive === "::pinned" ? " active" : "");
+      el.style.color = "var(--think)";
+      el.innerHTML = `<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(vizPinned.label)}</span>`;
+      el.onclick = () => showPinned();
+      list.appendChild(el);
+    } else if(vizGraphOffer){
+      const el = document.createElement("div");
+      el.className = "vizfile";
+      el.title = "opens claude in " + vizGraphOffer.cwd + " and runs the /graphify skill";
+      el.innerHTML = `<span style="color:var(--think)">🕸 no knowledge graph yet —
+        <u>build one for ${esc(vizGraphOffer.name)}</u> (/graphify)</span>`;
+      el.onclick = () => openTerm("claude", {cwd: vizGraphOffer.cwd,
+        label: "graphify · " + vizGraphOffer.name, prompt: "/graphify"});
+      list.appendChild(el);
+    }
     if(!v.files.length){
-      list.innerHTML = `<div class="vizempty">Empty. Ask a Claude Code session to write an
-        <b>.html</b>, image, or <b>.md</b> file into<br><code style="font-size:10.5px">${esc(v.dir)}</code><br>and it appears here automatically.</div>`;
-      $("#vizframe").removeAttribute("src");
-      vizActive = null; vizNewest = 0;
+      if(!vizPinned && !vizGraphOffer){
+        list.innerHTML = `<div class="vizempty">Empty. Ask a Claude Code session to write an
+          <b>.html</b>, image, or <b>.md</b> file into<br><code style="font-size:10.5px">${esc(v.dir)}</code><br>and it appears here automatically.</div>`;
+        $("#vizframe").removeAttribute("src");
+        vizActive = null; vizNewest = 0;
+      }
       return;
     }
     for(const f of v.files.slice(0, 8)){

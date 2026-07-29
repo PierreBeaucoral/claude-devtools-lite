@@ -250,12 +250,21 @@ def list_projects(root):
                     break
             if cwd:
                 break
+        graph = None
+        if cwd:
+            g = Path(cwd) / "graphify-out" / "graph.html"
+            try:
+                if g.is_file():
+                    graph = str(g)
+            except OSError:
+                pass
         out.append({
             "slug": d.name,
             "path": cwd or d.name.replace("-", "/"),
             "sessions": len(sessions),
             "mtime": newest,
             "has_memory": (d / "memory" / "MEMORY.md").is_file(),
+            "graph": graph,
         })
     out.sort(key=lambda p: p["mtime"], reverse=True)
     return out
@@ -842,7 +851,7 @@ TERMS = {}
 TERMS_LOCK = threading.Lock()
 
 
-def start_term(kind, cwd, session_id=None):
+def start_term(kind, cwd, session_id=None, prompt=None):
     cwd = cwd if cwd and os.path.isdir(cwd) else str(Path.home())
     shell = os.environ.get("SHELL", "/bin/zsh")
     claude = shutil.which("claude")
@@ -852,6 +861,8 @@ def start_term(kind, cwd, session_id=None):
         argv = [claude, "--resume", session_id]
     else:
         argv = [claude]
+        if prompt:                      # e.g. "/graphify" from the viz pane
+            argv.append(str(prompt)[:2000])
     # let Claude Code (and anything else) know it runs inside this dashboard
     env = {"CLAUDE_DEVTOOLS_UI": "1",
            "CLAUDE_DEVTOOLS_VIZ_DIR": str(VIZ_DIR),
@@ -992,9 +1003,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(body)))
                 self.send_header("Cache-Control", "no-store")
                 if ext in (".html", ".htm"):
+                    # previews render in a sandboxed iframe (opaque origin: no
+                    # access to this server's API or cookies). Allow https so
+                    # CDN-based pages (e.g. graphify's vis-network) render.
                     self.send_header("Content-Security-Policy",
-                                     "default-src 'unsafe-inline' data: blob:; "
-                                     "script-src 'unsafe-inline'; img-src data: blob:")
+                                     "default-src 'unsafe-inline' data: blob: https:")
                 self.end_headers()
                 self.wfile.write(body)
                 return
@@ -1148,7 +1161,10 @@ class Handler(BaseHTTPRequestHandler):
                 if sid and not re.fullmatch(r"[A-Za-z0-9_-]+", sid):
                     self._err(400, "bad session id")
                     return
-                t = start_term(kind, cwd, sid)
+                prompt = body.get("prompt")
+                if prompt is not None and not isinstance(prompt, str):
+                    prompt = None
+                t = start_term(kind, cwd, sid, prompt=prompt)
                 self._json({"id": t.id, "label": t.label, "cwd": t.cwd,
                             "argv": t.argv})
                 return
