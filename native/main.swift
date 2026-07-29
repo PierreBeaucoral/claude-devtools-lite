@@ -51,9 +51,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate {
             startedServer = true
             for _ in 0..<40 { if serverUp() { break }; usleep(250_000) }
         }
-        token = (try? String(contentsOf: dir.appendingPathComponent(".token"),
-                             encoding: .utf8))?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        // token lives outside the source folder (never in the git repo);
+        // fall back to the legacy in-repo path for older installs
+        let appSupport = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/claude-devtools/token")
+        token = ((try? String(contentsOf: appSupport, encoding: .utf8))
+                 ?? (try? String(contentsOf: dir.appendingPathComponent(".token"),
+                                 encoding: .utf8)) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
 
         let cfg = WKWebViewConfiguration()
         cfg.preferences.setValue(true, forKey: "developerExtrasEnabled")

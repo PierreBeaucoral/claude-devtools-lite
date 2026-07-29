@@ -331,7 +331,14 @@ window.addEventListener("storage", e => {
 const cookieToken = () => (document.cookie.match(/(?:^|;\s*)cdl=([a-f0-9]+)/) || [])[1] || "";
 const TOKEN = () => localStorage.getItem("cdl-token") || cookieToken();
 const authHeaders = extra => Object.assign({"X-Devtools-Token": TOKEN()}, extra || {});
-const tokenParam = () => "token=" + encodeURIComponent(TOKEN());
+// iframes can't send headers, so they authenticate with the same-site cookie —
+// never a token in the URL (URLs land in logs, history, and Referer headers).
+function ensureCookie(){
+  const t = TOKEN();
+  if(t && cookieToken() !== t)
+    document.cookie = "cdl=" + t + "; Path=/; SameSite=Strict; Max-Age=31536000";
+}
+ensureCookie();
 
 const fmtBytes = n => n > 1e6 ? (n/1e6).toFixed(1)+" MB" : n > 1e3 ? (n/1e3).toFixed(0)+" kB" : n+" B";
 const fmtTok = n => n >= 1e6 ? (n/1e6).toFixed(2)+"M" : n >= 1e3 ? (n/1e3).toFixed(1)+"k" : String(n||0);
@@ -1090,7 +1097,8 @@ function showPinned(){
   vizActive = "::pinned";
   const fr = $("#vizframe");
   fr.classList.remove("darkbg");
-  fr.src = "/api/fs/file?path=" + encodeURIComponent(vizPinned.path) + "&" + tokenParam();
+  ensureCookie();
+  fr.src = "/api/fs/file?path=" + encodeURIComponent(vizPinned.path);
   [...document.querySelectorAll(".vizfile")].forEach(el =>
     el.classList.toggle("active", el.textContent.startsWith(vizPinned.label)));
 }
@@ -1145,8 +1153,9 @@ function showViz(f){
   vizActive = f.name;
   const fr = $("#vizframe");
   fr.classList.toggle("darkbg", !/html|pdf/.test(f.kind));
+  ensureCookie();
   fr.src = "/api/fs/file?path=" + encodeURIComponent(vizDir + "/" + f.name)
-         + "&t=" + f.mtime + "&" + tokenParam();
+         + "&t=" + f.mtime;
   [...document.querySelectorAll(".vizfile")].forEach(el =>
     el.classList.toggle("active", el.textContent.startsWith(f.name)));
 }
@@ -1211,8 +1220,8 @@ async function loadFs(path){
       if(!e.viewable){ navigator.clipboard.writeText(full); return; }
       const fr = $("#fsframe");
       fr.classList.toggle("darkbg", !/\.(html?|pdf)$/i.test(e.name));
-      fr.src = "/api/fs/file?path=" + encodeURIComponent(full) + "&t=" + (e.mtime||0)
-             + "&" + tokenParam();
+      ensureCookie();
+      fr.src = "/api/fs/file?path=" + encodeURIComponent(full) + "&t=" + (e.mtime||0);
       fr.style.display = "block";
     };
     row.querySelector('[data-a="copy"]').onclick = ev => { ev.stopPropagation();

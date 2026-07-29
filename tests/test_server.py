@@ -278,6 +278,75 @@ def test_cookie_authenticates(http_server):
     assert code == 401
 
 
+def test_sensitive_filenames_blocked():
+    for name in (".env", ".env.local", "credentials", "aws-credentials.json",
+                 "hosts.yml", "id_rsa", "server.pem", "my_secret.yaml",
+                 ".netrc", "API_TOKEN.txt", "key.p12"):
+        assert srv.is_sensitive(name), name
+    for name in ("notes.md", "analysis.R", "graph.html", "settings.json",
+                 "data.csv", "main.tex"):
+        assert not srv.is_sensitive(name), name
+
+
+def test_sensitive_file_refused_over_http(http_server, tmp_path):
+    home = Path.home()
+    f = home / ".cdl-test-credentials.json"
+    f.write_text('{"api_key":"do-not-serve"}')
+    try:
+        code, body = fetch(http_server + "/api/fs/file?path=" +
+                           urllib.parse.quote(str(f)),
+                           headers={"X-Devtools-Token": "a" * 48})
+        assert code == 403 and b"secrets" in body
+        assert b"do-not-serve" not in body
+    finally:
+        f.unlink()
+
+
+def test_sensitive_marked_unviewable_in_listing():
+    home = Path.home()
+    d = home / ".cdl-test-listing"
+    d.mkdir(exist_ok=True)
+    try:
+        (d / "secret_keys.json").write_text("{}")
+        (d / "report.md").write_text("hi")
+        entries = {e["name"]: e for e in srv.fs_listing(str(d))["entries"]}
+        assert entries["secret_keys.json"]["viewable"] is False
+        assert entries["secret_keys.json"]["sensitive"] is True
+        assert entries["report.md"]["viewable"] is True
+    finally:
+        for f in d.iterdir():
+            f.unlink()
+        d.rmdir()
+
+
+def test_foreign_host_header_refused(http_server):
+    # DNS-rebinding guard: a rebound page presents its own hostname
+    code, _ = fetch(http_server + "/api/projects",
+                    headers={"X-Devtools-Token": "a" * 48, "Host": "evil.example"})
+    assert code == 403
+    port = http_server.rsplit(":", 1)[1]
+    code, _ = fetch(http_server + "/api/projects",
+                    headers={"X-Devtools-Token": "a" * 48,
+                             "Host": "127.0.0.1:" + port})
+    assert code == 200
+
+
+def test_log_redacts_tokens(capsys):
+    h = srv.Handler.__new__(srv.Handler)
+    srv.Handler.log_message(h, '"GET /api/viz?token=%s HTTP/1.1"', "a" * 48)
+    err = capsys.readouterr().err
+    assert "a" * 48 not in err and "[redacted]" in err
+    srv.Handler.log_message(h, '"GET /launch?k=%s HTTP/1.1"', "b" * 48)
+    assert "b" * 48 not in capsys.readouterr().err
+
+
+def test_token_and_state_live_outside_repo():
+    repo = Path(srv.__file__).resolve().parent
+    assert repo not in srv.TOKEN_FILE.parents, "token must not sit in the git repo"
+    assert repo not in srv.STATE_FILE.parents, "state must not sit in the git repo"
+    assert "claude-devtools" in str(srv.APP_DIR)
+
+
 def test_session_endpoint_roundtrip(http_server):
     code, body = fetch(http_server + "/api/session?project=-Users-x-proj&id=s1",
                        headers={"X-Devtools-Token": "a" * 48})

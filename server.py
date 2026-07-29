@@ -34,30 +34,61 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 CLAUDE_ROOT = Path(os.environ.get("CLAUDE_ROOT", str(Path.home() / ".claude")))
 
+# --- private data dir ------------------------------------------------------
+# Token and state live OUTSIDE the source folder: the source folder is a git
+# repo, and one `git add -f` would publish the token permanently.
+if sys.platform == "darwin":
+    APP_DIR = Path.home() / "Library" / "Application Support" / "claude-devtools"
+else:
+    APP_DIR = Path(os.environ.get("XDG_CONFIG_HOME",
+                                  Path.home() / ".config")) / "claude-devtools"
+APP_DIR.mkdir(parents=True, exist_ok=True)
+try:
+    os.chmod(APP_DIR, 0o700)
+except OSError:
+    pass
+
 # --- auth token: protects every /api endpoint from other local users -------
-# Persisted (0600) so bookmarks keep working across restarts. The launcher
-# passes it to the browser via the URL fragment; the UI stores it and sends
-# X-Devtools-Token on every call.
-TOKEN_FILE = HERE / ".token"
+# Persisted (0600) so bookmarks keep working across restarts. The app exchanges
+# it for a same-site cookie at /launch; the UI also sends X-Devtools-Token.
+TOKEN_FILE = APP_DIR / "token"
+LEGACY_TOKEN_FILE = HERE / ".token"
 
 
 def load_token():
-    try:
-        tok = TOKEN_FILE.read_text().strip()
+    for f in (TOKEN_FILE, LEGACY_TOKEN_FILE):
+        try:
+            tok = f.read_text().strip()
+        except OSError:
+            continue
         if re.fullmatch(r"[a-f0-9]{32,64}", tok):
+            if f is LEGACY_TOKEN_FILE:      # migrate out of the repo
+                TOKEN_FILE.write_text(tok)
+                os.chmod(TOKEN_FILE, 0o600)
+                try:
+                    LEGACY_TOKEN_FILE.unlink()
+                except OSError:
+                    pass
             return tok
-    except OSError:
-        pass
     tok = secrets.token_hex(24)
     TOKEN_FILE.write_text(tok)
     os.chmod(TOKEN_FILE, 0o600)
     return tok
 
 
-SERVER_TOKEN = None  # set in main()
+SERVER_TOKEN = None   # set in main()
+# DNS-rebinding guard: loopback by default; main() adds an explicit --host
+ALLOWED_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
-# --- small persistent state (usage baseline cache) -------------------------
-STATE_FILE = HERE / ".state.json"
+# --- small persistent state (usage baseline cache, layout) -----------------
+STATE_FILE = APP_DIR / "state.json"
+_LEGACY_STATE = HERE / ".state.json"
+if not STATE_FILE.exists() and _LEGACY_STATE.exists():
+    try:
+        STATE_FILE.write_text(_LEGACY_STATE.read_text())
+        _LEGACY_STATE.unlink()
+    except OSError:
+        pass
 _state_lock = threading.Lock()
 
 
@@ -707,6 +738,29 @@ def safe_home_path(raw):
     return p
 
 
+# Never serve credential-shaped files, even when their extension is otherwise
+# previewable (.json/.yml/.toml/…). Deliberately over-broad: a blocked
+# "tokens_analysis.json" is a smaller cost than a leaked API key.
+SENSITIVE_SUBSTRINGS = ("credential", "secret", "password", "passwd", "apikey",
+                        "api_key", "private_key", "privatekey", "token",
+                        "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa")
+SENSITIVE_EXACT = (".netrc", ".npmrc", ".pypirc", ".git-credentials",
+                   ".htpasswd", "hosts.yml", "hosts.yaml", "auth.json",
+                   "credentials", ".env")
+SENSITIVE_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".keystore", ".jks",
+                      ".asc", ".gpg", ".kdbx")
+
+
+def is_sensitive(path):
+    """True if this filename looks like it holds secrets."""
+    name = Path(path).name.lower()
+    if name in SENSITIVE_EXACT or name.startswith(".env"):
+        return True
+    if name.endswith(SENSITIVE_SUFFIXES):
+        return True
+    return any(s in name for s in SENSITIVE_SUBSTRINGS)
+
+
 def viz_list(dir_override=None):
     d = safe_home_path(dir_override) if dir_override else VIZ_DIR
     if not d.is_dir():
@@ -737,9 +791,11 @@ def fs_listing(raw_path):
             dirs.append({"name": f.name, "dir": True})
         else:
             ext = f.suffix.lower()
+            sens = is_sensitive(f.name)
             files.append({"name": f.name, "dir": False, "size": st.st_size,
-                          "mtime": st.st_mtime,
-                          "viewable": ext in VIZ_TYPES or ext in FS_TEXT})
+                          "mtime": st.st_mtime, "sensitive": sens,
+                          "viewable": (not sens)
+                                      and (ext in VIZ_TYPES or ext in FS_TEXT)})
     home = str(Path.home().resolve())
     return {"path": str(d), "home": home,
             "parent": str(d.parent) if str(d) != home else None,
@@ -885,7 +941,18 @@ class Handler(BaseHTTPRequestHandler):
     root = CLAUDE_ROOT  # overridden in main()
 
     def log_message(self, fmt, *args):
-        sys.stderr.write("[devtools] %s\n" % (fmt % args))
+        # never let a token reach the log: query-string tokens would otherwise
+        # persist wherever stderr is redirected
+        line = fmt % args
+        line = re.sub(r"([?&](?:token|k)=)[A-Za-z0-9]+", r"\1[redacted]", line)
+        sys.stderr.write("[devtools] %s\n" % line)
+
+    def _host_ok(self):
+        """Reject foreign Host headers (DNS-rebinding guard)."""
+        h = self.headers.get("Host")
+        if not h:
+            return True                      # non-browser clients may omit it
+        return h.rsplit(":", 1)[0].strip("[]").lower() in ALLOWED_HOSTS
 
     def _json(self, obj, code=200):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
@@ -913,6 +980,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         try:
+            if not self._host_ok():
+                self._err(403, "bad Host header")
+                return
             u = urllib.parse.urlparse(self.path)
             qs = urllib.parse.parse_qs(u.query)
             p = u.path
@@ -990,6 +1060,9 @@ class Handler(BaseHTTPRequestHandler):
                 raw = qs.get("path", [""])[0]
                 f = safe_home_path(raw)
                 ext = f.suffix.lower()
+                if is_sensitive(f.name):
+                    self._err(403, "refused: file looks like it contains secrets")
+                    return
                 if not f.is_file() or (ext not in VIZ_TYPES and ext not in FS_TEXT):
                     self._err(404, "not previewable")
                     return
@@ -1101,6 +1174,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         try:
+            if not self._host_ok():
+                self._err(403, "bad Host header")
+                return
             # CSRF guard: browsers can fire cross-origin "simple" POSTs at
             # localhost without preflight. Requiring a JSON content type forces
             # a preflight (which we never approve), and any Origin header must
@@ -1246,9 +1322,14 @@ def main():
     ap.add_argument("--root", default=str(CLAUDE_ROOT))
     args = ap.parse_args()
 
-    global SERVER_PORT, SERVER_TOKEN
+    global SERVER_PORT, SERVER_TOKEN, ALLOWED_HOSTS
     SERVER_PORT = args.port
     SERVER_TOKEN = load_token()
+    ALLOWED_HOSTS = ALLOWED_HOSTS | {args.host.lower()}
+    if args.host not in ("127.0.0.1", "localhost", "::1"):
+        print("WARNING: binding beyond loopback exposes a shell to your "
+              "network — anyone with the token gets code execution.",
+              file=sys.stderr)
     Handler.root = Path(args.root).expanduser()
     if not projects_dir(Handler.root).is_dir():
         sys.exit(f"error: {Handler.root}/projects not found — is this a Claude Code machine?")
