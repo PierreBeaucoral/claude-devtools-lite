@@ -903,16 +903,20 @@ class Term:
     """Terminal session: shared scrollback + streaming; the transport
     (POSIX pty or Windows ConPTY) is supplied by a subclass."""
 
-    def __init__(self, argv, cwd, cols=100, rows=30, extra_env=None):
+    def __init__(self, argv, cwd, cols=100, rows=30, extra_env=None, env=None):
         self.id = secrets.token_hex(8)
         self.label = Path(argv[0]).name + " · " + (Path(cwd).name or "/")
         self.argv, self.cwd = argv, cwd
         self.buf = bytearray()      # scrollback so re-attaching clients catch up
         self.cond = threading.Condition()
         self.alive = True
-        env = {"TERM": "xterm-256color", "COLORTERM": "truecolor"}
-        env.update(extra_env or {})
-        self._spawn(argv, cwd, env, cols, rows)
+        # `env` is the COMPLETE child environment (already scrubbed of the
+        # parent session's markers); extra_env only adds on top of it
+        full = dict(env if env is not None else os.environ)
+        full.setdefault("TERM", "xterm-256color")
+        full.setdefault("COLORTERM", "truecolor")
+        full.update(extra_env or {})
+        self._spawn(argv, cwd, full, cols, rows)
         threading.Thread(target=self._pump, daemon=True).start()
 
     # -- transport hooks -------------------------------------------------
@@ -1004,8 +1008,8 @@ class PosixTerm(Term):
                 os.chdir(cwd)
             except OSError:
                 pass
-            for k, v in env.items():
-                os.environ[k] = v
+            os.environ.clear()          # env is the complete child environment
+            os.environ.update(env)
             try:
                 os.execvp(argv[0], argv)
             except OSError as e:
@@ -1147,6 +1151,50 @@ def login_path():
     return _env_cache["path"]
 
 
+# --- child session hygiene -------------------------------------------------
+# If this server was started from inside a Claude Code session (a terminal
+# running claude, or an app launched from one), its environment carries that
+# session's markers. Children would inherit them, Claude Code would consider
+# itself a *nested child session*, and it would DISABLE TRANSCRIPT SAVING —
+# so sessions started from this dashboard would never be recorded, i.e. never
+# show up in this dashboard. Scrub them so every terminal starts clean.
+SESSION_MARKER_PREFIXES = ("CLAUDE_CODE_", "CLAUDE_AGENT_")
+SESSION_MARKER_EXACT = {"CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT",
+                        "CLAUDE_PLUGIN_DATA", "CLAUDE_PREVIEW_CLASSIFIER_FLOOR"}
+# genuine user configuration that must survive the scrub
+SESSION_MARKER_KEEP = {"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX",
+                       "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+                       "CLAUDE_CODE_GIT_BASH_PATH", "CLAUDE_CONFIG_DIR",
+                       "CLAUDE_BIN"}
+
+
+def is_session_marker(name):
+    if name in SESSION_MARKER_KEEP:
+        return False
+    return (name in SESSION_MARKER_EXACT
+            or name.startswith(SESSION_MARKER_PREFIXES))
+
+
+def inherited_session_markers(environ=None):
+    env = os.environ if environ is None else environ
+    return sorted(k for k in env if is_session_marker(k))
+
+
+def child_environment(environ=None, extra=None):
+    """A complete environment for a spawned terminal: the server's, minus the
+    parent session's markers, plus our own additions."""
+    env = dict(os.environ if environ is None else environ)
+    nested = "CLAUDECODE" in env or "CLAUDE_CODE_SESSION_ID" in env
+    for k in list(env):
+        if is_session_marker(k):
+            del env[k]
+    if nested:
+        # injected by the parent session rather than the user's own profile
+        env.pop("ANTHROPIC_BASE_URL", None)
+    env.update(extra or {})
+    return env
+
+
 def find_claude():
     """Locate the Claude Code CLI regardless of how this server was started."""
     if "claude" in _env_cache:
@@ -1200,14 +1248,16 @@ def start_term(kind, cwd, session_id=None, prompt=None):
             argv = [claude]
             if prompt:                  # e.g. "/graphify" from the viz pane
                 argv.append(str(prompt)[:2000])
-    # give the child the login PATH (an app-launched server has a minimal one)
-    # and let Claude Code know it runs inside this dashboard
-    env = {"PATH": login_path(),
-           "CLAUDE_DEVTOOLS_UI": "1",
-           "CLAUDE_DEVTOOLS_VIZ_DIR": str(VIZ_DIR),
-           "CLAUDE_DEVTOOLS_URL": f"http://127.0.0.1:{SERVER_PORT}"}
+    # complete child environment: scrubbed of the parent session's markers (so
+    # transcripts get saved), with the login PATH (an app-launched server has a
+    # minimal one), telling Claude Code it runs inside this dashboard
+    env = child_environment(extra={
+        "PATH": login_path(),
+        "CLAUDE_DEVTOOLS_UI": "1",
+        "CLAUDE_DEVTOOLS_VIZ_DIR": str(VIZ_DIR),
+        "CLAUDE_DEVTOOLS_URL": f"http://127.0.0.1:{SERVER_PORT}"})
     impl = PosixTerm if HAS_PTY else WindowsTerm
-    t = impl(argv, cwd, extra_env=env)
+    t = impl(argv, cwd, env=env)
     with TERMS_LOCK:
         # keep at most 6 terminals; reap dead ones
         for tid in [tid for tid, tt in TERMS.items() if not tt.alive]:
@@ -1495,7 +1545,7 @@ class Handler(BaseHTTPRequestHandler):
                 layout = body.get("layout")
                 if isinstance(layout, dict):
                     clean = {k: float(v) for k, v in layout.items()
-                             if k in ("col2", "rowL", "rowR", "sidebar")
+                             if k in ("col2", "rowL", "rowR", "sidebar", "headH")
                              and isinstance(v, (int, float))}
                     state_write({"layout": clean})
                 self._json({"ok": True})
@@ -1631,6 +1681,12 @@ def main():
         sys.exit(f"error: {Handler.root}/projects not found — is this a Claude Code machine?")
     VIZ_DIR.mkdir(exist_ok=True)
     threading.Thread(target=compute_baseline, args=(Handler.root,), daemon=True).start()
+
+    markers = inherited_session_markers()
+    if markers:
+        print(f"note: started from inside a Claude Code session; scrubbing "
+              f"{len(markers)} session marker(s) from spawned terminals so "
+              f"their transcripts are saved", file=sys.stderr)
 
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"claude-devtools-lite → http://{args.host}:{args.port}/#t={SERVER_TOKEN}")

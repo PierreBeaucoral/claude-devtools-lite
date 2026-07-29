@@ -394,9 +394,9 @@ def test_terminal_env_carries_login_path(monkeypatch):
         captured = {}
 
         class FakeTerm:
-            def __init__(self, argv, cwd, extra_env=None):
+            def __init__(self, argv, cwd, env=None, **kw):
                 captured["argv"] = argv
-                captured["env"] = extra_env
+                captured["env"] = env
                 self.id, self.alive = "x", True
 
         monkeypatch.setattr(srv, "PosixTerm", FakeTerm)
@@ -409,6 +409,45 @@ def test_terminal_env_carries_login_path(monkeypatch):
     finally:
         srv.TERMS.clear()
         srv._env_cache.clear()
+
+
+def test_child_env_scrubs_parent_session_markers():
+    """Regression: a dashboard started from inside a Claude Code session leaked
+    CLAUDE_CODE_CHILD_SESSION into terminals, which turns transcript saving OFF
+    — the sessions this tool exists to display would never be recorded."""
+    parent = {
+        "HOME": "/Users/x", "PATH": "/usr/bin",
+        "CLAUDECODE": "1", "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_CODE_SESSION_ID": "abc", "CLAUDE_CODE_ENTRYPOINT": "cli",
+        "CLAUDE_AGENT_SDK_VERSION": "1.2", "CLAUDE_PID": "42",
+        "CLAUDE_EFFORT": "high", "ANTHROPIC_BASE_URL": "http://internal",
+        # genuine user config that must survive
+        "CLAUDE_CONFIG_DIR": "/Users/x/.claude",
+        "CLAUDE_CODE_USE_BEDROCK": "1", "ANTHROPIC_API_KEY": "sk-user",
+    }
+    env = srv.child_environment(parent, extra={"CLAUDE_DEVTOOLS_UI": "1"})
+    for gone in ("CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION",
+                 "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_ENTRYPOINT",
+                 "CLAUDE_AGENT_SDK_VERSION", "CLAUDE_PID", "CLAUDE_EFFORT",
+                 "ANTHROPIC_BASE_URL"):
+        assert gone not in env, gone
+    assert env["CLAUDE_CONFIG_DIR"] == "/Users/x/.claude"
+    assert env["CLAUDE_CODE_USE_BEDROCK"] == "1"
+    assert env["ANTHROPIC_API_KEY"] == "sk-user"
+    assert env["HOME"] == "/Users/x"
+    assert env["CLAUDE_DEVTOOLS_UI"] == "1"
+
+
+def test_child_env_keeps_user_base_url_when_not_nested():
+    """Outside a Claude session, ANTHROPIC_BASE_URL is the user's own setting."""
+    env = srv.child_environment({"HOME": "/h", "ANTHROPIC_BASE_URL": "https://proxy"})
+    assert env["ANTHROPIC_BASE_URL"] == "https://proxy"
+
+
+def test_inherited_session_markers_detection():
+    assert srv.inherited_session_markers({"CLAUDECODE": "1", "HOME": "/h"}) \
+        == ["CLAUDECODE"]
+    assert srv.inherited_session_markers({"HOME": "/h"}) == []
 
 
 # ---------------------------------------------------------------- windows backend

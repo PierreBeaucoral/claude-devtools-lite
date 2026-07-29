@@ -142,9 +142,9 @@ class ConPtyProcess:
                 hpc, ctypes.sizeof(wintypes.HANDLE), None, None):
             raise OSError("UpdateProcThreadAttribute failed")
 
-        full_env = dict(os.environ)
-        full_env.update(env or {})
-        env_block = build_environment_block(full_env)
+        # `env`, when given, is the complete child environment (already
+        # scrubbed by the caller); otherwise inherit ours
+        env_block = build_environment_block(dict(env) if env else dict(os.environ))
         cmdline = ctypes.create_unicode_buffer(build_command_line(argv))
         pi = PROCESS_INFORMATION()
         ok = k32.CreateProcessW(

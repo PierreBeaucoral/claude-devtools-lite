@@ -79,10 +79,14 @@
   .memlink { padding:5px 12px 5px 24px; font-size:12px; color:var(--think); cursor:pointer; }
   .memlink:hover { background:var(--panel2); }
 
-  /* main header */
-  #shead { position:sticky; top:0; z-index:5; background:rgba(13,17,23,.95);
-           backdrop-filter:blur(4px); border-bottom:1px solid var(--border);
-           padding:12px 20px; }
+  /* session header: its own resizable strip above the scrolling timeline */
+  #sheadbox { flex:none; overflow-y:auto; max-height:var(--headH, 40vh);
+              background:var(--bg); }
+  #sheadbox:empty, #sheadbox:empty + #headgrip { display:none; }
+  #headgrip { flex:none; }
+  #cell-main.headcollapsed #sheadbox { max-height:64px; }
+  #shead { z-index:5; background:rgba(13,17,23,.95);
+           border-bottom:1px solid var(--border); padding:12px 20px; }
   #shead h2 { margin:0 0 4px; font-size:16px; }
   #shead .meta { color:var(--dim); font-size:12px; }
   .stats { display:flex; gap:14px; flex-wrap:wrap; margin-top:8px; }
@@ -248,8 +252,11 @@
     <div class="cell" id="cell-main">
       <div class="qhead">📄 SESSION
         <span style="margin-left:auto"></span>
+        <button class="copy" id="headToggle" title="collapse / expand the header">▲</button>
         <button class="copy maxbtn" data-cell="cell-main" title="maximize / restore">⛶</button>
       </div>
+      <div id="sheadbox"></div>
+      <div id="headgrip" class="split hsplit" title="drag to resize the header (double-click to collapse)"></div>
       <div id="main"><div class="placeholder">
         ← Pick a project and session.<br><br>
         This dashboard reads <code>~/.claude</code> read-only:<br>
@@ -498,6 +505,14 @@ async function openSubagent(slug, session, agent){
   }catch(e){ $("#main").innerHTML = `<div class="placeholder">error: ${esc(e.message)}</div>`; }
 }
 
+/* the session header lives in its own resizable strip above the timeline */
+function mountHeader(el){
+  const box = $("#sheadbox");
+  box.innerHTML = "";
+  if(el) box.appendChild(el);
+  return box;
+}
+
 function renderSession(s, ctx){
   const main = $("#main"); main.innerHTML = "";
   if(ctx.back){
@@ -525,7 +540,7 @@ function renderSession(s, ctx){
       <label><input type="checkbox" id="tgTools" checked> tool calls</label>
       <label><input type="checkbox" id="tgSys"> system / commands</label>
     </div>`;
-  main.appendChild(head);
+  mountHeader(head);
   const rbtn = head.querySelector("#btnResume");
   if(rbtn) rbtn.onclick = () => openTerm("resume",
     {project: ctx.slug, session: s.id, label: "resume · " + s.id.slice(0,8)});
@@ -745,7 +760,7 @@ async function showMemory(slug){
   const main = $("#main"); main.innerHTML = "";
   const head = document.createElement("div"); head.id = "shead";
   head.innerHTML = `<h2>🧠 Project memory</h2><div class="meta">${m.files.length} file(s)</div>`;
-  main.appendChild(head);
+  mountHeader(head);
   const tl = document.createElement("div"); tl.id = "timeline";
   for(const f of m.files){
     const div = document.createElement("div"); div.className = "entry assistant collapsible" +
@@ -773,7 +788,7 @@ $("#search").addEventListener("keydown", async ev=>{
     const main = $("#main"); main.innerHTML = "";
     const head = document.createElement("div"); head.id = "shead";
     head.innerHTML = `<h2>🔍 “${esc(q)}”</h2><div class="meta">${res.length} match(es)${res.length>=300?" (capped)":""}</div>`;
-    main.appendChild(head);
+    mountHeader(head);
     const tl = document.createElement("div"); tl.id = "timeline";
     const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"),"gi");
     for(const r of res){
@@ -1000,7 +1015,7 @@ function makeSplitter(el, compute, apply, onDone){
 }
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const wsEl = $("#workspace");
-const SZ = { col2: null, rowL: null, rowR: null, sidebar: null };
+const SZ = { col2: null, rowL: null, rowR: null, sidebar: null, headH: null };
 
 // clamp against the CURRENT viewport, so panes always end at the screen edge
 // (a size saved on a bigger window can never push content off-screen)
@@ -1013,6 +1028,11 @@ function applySizes(){
       clamp(SZ.rowL, 120, Math.max(140, w.height - 160)) + "px");
   if(SZ.rowR) wsEl.style.setProperty("--rowR",
       clamp(SZ.rowR, 120, Math.max(140, w.height - 160)) + "px");
+  if(SZ.headH){
+    const cellH = $("#cell-main").getBoundingClientRect().height || w.height;
+    wsEl.style.setProperty("--headH",
+        clamp(SZ.headH, 48, Math.max(60, cellH - 120)) + "px");
+  }
   fitActive();
 }
 let sizeSaveTimer = null;
@@ -1036,6 +1056,25 @@ makeSplitter($("#hsplitR"),
 makeSplitter($("#sideHandle"),
   ev => ev.clientX - $("#sidebar").getBoundingClientRect().left,
   v => { SZ.sidebar = v; applySizes(); }, saveSizes);
+
+// header strip (session title, stats, tool chips, toggles)
+makeSplitter($("#headgrip"),
+  ev => ev.clientY - $("#sheadbox").getBoundingClientRect().top,
+  v => { $("#cell-main").classList.remove("headcollapsed");
+         SZ.headH = v; applySizes(); }, saveSizes);
+
+function toggleHeader(){
+  const collapsed = $("#cell-main").classList.toggle("headcollapsed");
+  $("#headToggle").textContent = collapsed ? "▼" : "▲";
+  localStorage.setItem("cdl-headcollapsed", collapsed ? "1" : "");
+  fitActive();
+}
+$("#headToggle").onclick = toggleHeader;
+$("#headgrip").ondblclick = toggleHeader;
+if(localStorage.getItem("cdl-headcollapsed")){
+  $("#cell-main").classList.add("headcollapsed");
+  $("#headToggle").textContent = "▼";
+}
 
 // restore: localStorage first (instant), then the server copy (survives any
 // browser/app data loss and is shared across browsers)
