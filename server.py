@@ -898,6 +898,15 @@ def fs_listing(raw_path):
 #
 # Runs a real PTY (claude CLI or your shell) and streams it to the browser
 # over Server-Sent Events; input comes back via POST. Localhost only.
+#
+# Offsets are ABSOLUTE: every byte the child has ever produced counts, and a
+# client's position only ever moves forward. `buf` holds a bounded tail of that
+# stream, so a position must be translated (`pos - discarded`) before it can
+# index into it. Treating a position as a plain index into `buf` breaks the
+# moment the front gets trimmed.
+
+SCROLLBACK_CAP = 512 * 1024        # bytes of terminal output kept for replay
+
 
 class Term:
     """Terminal session: shared scrollback + streaming; the transport
@@ -908,6 +917,7 @@ class Term:
         self.label = Path(argv[0]).name + " · " + (Path(cwd).name or "/")
         self.argv, self.cwd = argv, cwd
         self.buf = bytearray()      # scrollback so re-attaching clients catch up
+        self.discarded = 0          # bytes trimmed off the front of buf, ever
         self.cond = threading.Condition()
         self.alive = True
         self.cols, self.rows = cols, rows
@@ -957,12 +967,31 @@ class Term:
                 break
             with self.cond:
                 self.buf.extend(data)
-                if len(self.buf) > 512 * 1024:      # cap scrollback
-                    del self.buf[: len(self.buf) - 512 * 1024]
+                if len(self.buf) > SCROLLBACK_CAP:      # cap scrollback
+                    drop = len(self.buf) - SCROLLBACK_CAP
+                    del self.buf[:drop]
+                    # every index into buf just shifted down by `drop`; record
+                    # it so absolute positions stay translatable
+                    self.discarded += drop
                 self.cond.notify_all()
         with self.cond:
             self.alive = False
             self.cond.notify_all()
+
+    def produced(self):
+        """Absolute count of bytes the child has emitted. Call under `cond`."""
+        return self.discarded + len(self.buf)
+
+    def slice_from(self, pos):
+        """Everything after absolute offset `pos`, as (chunk, new_pos).
+
+        `pos` is clamped into the window `buf` still holds: below `discarded`
+        those bytes have aged out (a client that fell that far behind skips the
+        gap rather than stalling forever), above `produced` the child has not
+        emitted them yet. Call under `cond`.
+        """
+        pos = min(max(pos, self.discarded), self.produced())
+        return bytes(self.buf[pos - self.discarded:]), self.produced()
 
     def write(self, data: bytes):
         try:
@@ -1286,7 +1315,7 @@ def start_term(kind, cwd, session_id=None, prompt=None, cols=100, rows=30):
 # ---------------------------------------------------------------- HTTP
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "claude-devtools-lite/0.5.0"
+    server_version = "claude-devtools-lite/0.6.0"
     root = CLAUDE_ROOT  # overridden in main()
 
     def log_message(self, fmt, *args):
@@ -1656,22 +1685,26 @@ class Handler(BaseHTTPRequestHandler):
             pos = max(0, int(qs.get("from", ["0"])[0]))
         except ValueError:
             pos = 0
-        pos = min(pos, len(t.buf))
         try:
             while True:
                 with t.cond:
-                    if pos >= len(t.buf) and t.alive:
+                    if pos >= t.produced() and t.alive:
                         t.cond.wait(timeout=15.0)
-                    chunk = bytes(t.buf[pos:])
-                    pos = len(t.buf)
+                    # `pos` is absolute — the client counts every byte it has
+                    # written into xterm and never rewinds, so it must be
+                    # translated, not used as an index into the trimmed buf
+                    chunk, pos = t.slice_from(pos)
                     alive = t.alive
                 if chunk:
                     b64 = base64.b64encode(chunk).decode()
-                    self.wfile.write(f"data: {b64}\n\n".encode())
+                    # `id` is the absolute offset just past this chunk. The
+                    # client adopts it instead of counting bytes itself, so a
+                    # skipped gap cannot leave the two sides disagreeing.
+                    self.wfile.write(f"id: {pos}\ndata: {b64}\n\n".encode())
                 elif alive:
                     self.wfile.write(b": keepalive\n\n")  # comment frame
                 self.wfile.flush()
-                if not alive and pos >= len(t.buf):
+                if not alive and pos >= t.produced():
                     self.wfile.write(b"event: exit\ndata: 0\n\n")
                     self.wfile.flush()
                     return

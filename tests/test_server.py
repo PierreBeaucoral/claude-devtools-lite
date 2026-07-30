@@ -499,3 +499,94 @@ def test_session_endpoint_roundtrip(http_server):
     data = json.loads(body)
     assert data["title"] == "hello"
     assert [e["kind"] for e in data["entries"]] == ["user", "assistant"]
+
+
+# ------------------------------------------------- terminal scrollback offsets
+#
+# The stream hands clients an ABSOLUTE byte offset while `buf` keeps only a
+# bounded tail. Conflating the two froze the terminal at exactly SCROLLBACK_CAP:
+# once a caught-up client's position equalled len(buf), trimming the front kept
+# len(buf) pinned at the cap, so `buf[pos:]` stayed empty forever and no further
+# output ever reached the browser.
+
+CAP = srv.SCROLLBACK_CAP
+
+
+def _detached_term(buf, discarded=0):
+    """A Term with its buffer state set directly — no PTY, no pump thread."""
+    t = srv.Term.__new__(srv.Term)
+    t.buf = bytearray(buf)
+    t.discarded = discarded
+    return t
+
+
+class _ScriptedTerm(srv.Term):
+    """Real Term with the PTY transport replaced by a scripted byte stream."""
+
+    def __init__(self, chunks):
+        self._chunks = list(chunks)
+        super().__init__(["/bin/false"], str(HERE), cols=80, rows=24, env={})
+
+    def _spawn(self, argv, cwd, env, cols, rows):
+        pass
+
+    def _read(self):
+        return self._chunks.pop(0) if self._chunks else b""   # b'' == EOF
+
+    def _write(self, data):
+        pass
+
+    def _set_size(self, cols, rows):
+        pass
+
+    def _hangup(self):
+        pass
+
+    def _terminate(self):
+        pass
+
+
+def test_pump_trims_scrollback_and_accounts_for_it():
+    chunks = 8                               # 800 KB, comfortably past the cap
+    total = chunks * 100_000
+    t = _ScriptedTerm([b"A" * 100_000] * chunks)
+    for _ in range(100):
+        if not t.alive:
+            break
+        time.sleep(0.02)
+    assert not t.alive, "pump never reached EOF"
+    assert len(t.buf) == CAP                 # tail is bounded
+    assert t.discarded == total - CAP        # ...and the loss is recorded
+    assert t.produced() == total             # absolute count survives trimming
+
+
+def test_slice_from_delivers_output_produced_after_a_trim():
+    """The exact freeze: client caught up at the cap, then the front trims."""
+    t = _detached_term(b"B" * CAP, discarded=100)   # 100 bytes aged out
+    chunk, pos = t.slice_from(CAP)                  # client had consumed CAP
+    assert chunk == b"B" * 100, "post-trim output was not delivered"
+    assert pos == CAP + 100
+    # and it does not re-deliver on the next poll
+    assert t.slice_from(pos) == (b"", CAP + 100)
+
+
+def test_slice_from_clamps_a_client_that_fell_behind():
+    t = _detached_term(b"C" * 1000, discarded=5000)
+    chunk, pos = t.slice_from(0)          # asking for bytes that aged out
+    assert chunk == b"C" * 1000           # skip the gap, do not stall
+    assert pos == 6000
+
+
+def test_slice_from_tolerates_a_position_past_the_end():
+    t = _detached_term(b"D" * 10, discarded=0)
+    assert t.slice_from(999) == (b"", 10)          # no negative index, no crash
+
+
+def test_slice_from_reassembles_the_stream_without_loss():
+    t = _detached_term(b"", 0)
+    pos, seen = 0, bytearray()
+    for i in range(20):
+        t.buf.extend(bytes([65 + i]) * 50)
+        chunk, pos = t.slice_from(pos)
+        seen.extend(chunk)
+    assert bytes(seen) == bytes(t.buf)

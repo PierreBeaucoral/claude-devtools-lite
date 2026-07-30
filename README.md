@@ -135,6 +135,7 @@ pane, and everything else keeps working.
 | Hide noise | Toggle **thinking** / **tool calls** / **system** above the timeline |
 | Search everything | Type in the search box, press Enter, click a result to jump to it |
 | Open the CLI in a project | Hover a project → **⌨** |
+| Start a session anywhere | **+ claude** → pick a project, `~`, or **browse…** for any folder |
 | Resume a session | Open it → **⌨ resume in CLI** |
 | Show a figure from a session | Have it write into `$CLAUDE_DEVTOOLS_VIZ_DIR` |
 | Maximize a pane | **⛶** in its header (click again to restore) |
