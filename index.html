@@ -5,6 +5,7 @@
 <title>claude-devtools-lite</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="/vendor/xterm.min.css">
+<link rel="stylesheet" href="/vendor/katex.min.css">
 <style>
   :root {
     --bg: #0d1117; --panel: #161b22; --panel2: #1c2129; --border: #2d333b;
@@ -143,7 +144,17 @@
   pre code { padding:0; background:none; }
   .md p { margin:6px 0; } .md h1,.md h2,.md h3 { font-size:1.05em; margin:10px 0 4px; }
   .md ul,.md ol { margin:4px 0; padding-left:22px; }
-  .md table { border-collapse:collapse; } .md td,.md th { border:1px solid var(--border); padding:3px 8px; }
+  .md .tablewrap { overflow-x:auto; margin:9px 0; }
+  .md table { border-collapse:collapse; font-size:12.5px; }
+  .md td,.md th { border:1px solid var(--border); padding:4px 9px; vertical-align:top; }
+  .md th { background:var(--panel); font-weight:600; white-space:nowrap; }
+  .md tbody tr:nth-child(even) { background:rgba(255,255,255,.02); }
+
+  /* KaTeX: inherit the panel's colour, and let a wide display equation scroll
+     inside its own box instead of stretching the timeline. */
+  .katex { color:var(--fg); font-size:1.05em; }
+  .katex-display { margin:10px 0; overflow-x:auto; overflow-y:hidden; padding:2px 0; }
+  .katex-error { color:var(--err); font-family:var(--mono); font-size:.92em; }
 
   .diff { font:12px/1.5 var(--mono); background:var(--bg); border:1px solid var(--border);
           border-radius:6px; margin:8px 0; overflow-x:auto; }
@@ -163,6 +174,25 @@
   .sresult:hover { border-color:var(--accent); }
   .sresult .where { font-size:11.5px; color:var(--dim); margin-bottom:3px; }
   mark { background:var(--tool); color:#000; border-radius:2px; padding:0 1px; }
+  /* subagent card, rendered under the Task call that launched it */
+  .agentcard { margin:6px 0 8px 14px; border:1px solid #3a3050; border-left:3px solid var(--think);
+               border-radius:0 7px 7px 0; background:linear-gradient(180deg,rgba(177,140,255,.06),transparent); }
+  .agentcard.failed { border-color:#5a2f2f; border-left-color:var(--err); }
+  .achead { display:flex; align-items:center; gap:7px; flex-wrap:wrap;
+            padding:6px 11px; cursor:pointer; font-size:12px; }
+  .achead:hover { background:rgba(177,140,255,.06); }
+  .agentcard .atag { color:var(--think); font-weight:600; }
+  .agentcard .adesc { color:var(--dim); overflow:hidden; text-overflow:ellipsis;
+                      white-space:nowrap; flex:1; min-width:60px; }
+  .agentcard .caret { transition:transform .12s; }
+  .agentcard.openx .caret { transform:rotate(90deg); }
+  .adot { width:6px; height:6px; border-radius:50%; flex:none; }
+  .adot.ok { background:var(--ok); } .adot.err { background:var(--err); }
+  .astats { display:flex; gap:11px; flex:none; color:var(--dim); font-size:11px; }
+  .astats .cost { color:var(--tool); }
+  .acbody { display:none; padding:2px 11px 10px; border-top:1px solid #3a3050; }
+  .agentcard.openx .acbody { display:block; }
+  .acnote { font-size:11.5px; color:var(--dim); padding:6px 0; }
   .agentbox { display:inline-block; margin:4px 8px 4px 0; padding:4px 10px; font-size:12px;
               border:1px solid var(--think); color:var(--think); border-radius:6px; cursor:pointer; }
   .agentbox:hover { background:var(--panel2); }
@@ -327,6 +357,7 @@
   </div>
 </div>
 
+<script src="/vendor/katex.min.js"></script>
 <script src="/vendor/xterm.min.js"></script>
 <script src="/vendor/addon-fit.min.js"></script>
 <script>
@@ -385,22 +416,111 @@ async function api(path){
   return j;
 }
 
+/* ---------- LaTeX in transcripts ----------
+   Claude writes math as $$…$$, \[…\], \(…\) and $…$. KaTeX turns those into
+   real typeset math in the session panel. The single-$ form is the risky one —
+   transcripts are full of "$5", "$HOME" and "$PATH:$LD_LIBRARY_PATH" — so it
+   only fires when the span actually looks like math. */
+const MATH_PAT = /\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\\(([\s\S]+?)\\\)|\$([^$\n]+?)\$/g;
+
+function inlineDollarOk(tex, before, after){
+  if(before === "\\" || before === "$") return false;   // \$9.99, or a stray $$ tail
+  if(after === "$" || /^\d/.test(after)) return false;  // "$5 to $10"
+  if(/^[\s\d]/.test(tex)) return false;                 // prices open with a digit
+  if(/[\s\\]$/.test(tex)) return false;                 // "$HOME/src and $PATH"
+  if(/\//.test(tex) && !/\\/.test(tex)) return false;   // bare paths
+  if(/^[A-Za-z_][A-Za-z0-9_]+$/.test(tex)) return false;// $HOME$, $foo$ — a var, not math
+  return true;
+}
+
+function mathify(src, hole){
+  if(typeof katex === "undefined") return src;
+  return src.replace(MATH_PAT, (m, dd, brk, paren, one, idx, str) => {
+    let tex, display = true;
+    if(dd !== undefined) tex = dd;
+    else if(brk !== undefined) tex = brk;
+    else if(paren !== undefined){ tex = paren; display = false; }
+    else {
+      tex = one; display = false;
+      if(!inlineDollarOk(tex, str[idx-1] || "", str[idx+m.length] || "")) return m;
+    }
+    try {
+      return hole(katex.renderToString(tex.trim(), {
+        displayMode: display, throwOnError: false, trust: false, strict: false,
+        errorColor: "#f85149", maxSize: 24, maxExpand: 500 }));
+    } catch(e){ return m; }   // unparseable — leave the source text alone
+  });
+}
+
+/* ---------- pipe tables ----------
+   A separator row is enough to start a table. Claude often emits a header with
+   more columns than the |---|---| line has (GFM would refuse to render that);
+   the header decides the column count and a short separator just means the
+   trailing columns keep the default alignment. */
+const TABLE_SEP = /^[ \t]*\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/;
+
+function splitRow(row){
+  const cells = [];
+  let cur = "";
+  row = row.trim().replace(/^\|/, "").replace(/\|[ \t]*$/, "");
+  for(let i = 0; i < row.length; i++){
+    if(row[i] === "\\" && row[i+1] === "|"){ cur += "|"; i++; continue; }   // escaped pipe
+    if(row[i] === "|"){ cells.push(cur); cur = ""; continue; }
+    cur += row[i];
+  }
+  cells.push(cur);
+  return cells.map(c => c.trim());
+}
+
+function tables(text, hole){
+  if(!text.includes("|")) return text;
+  const lines = text.split("\n");
+  const out = [];
+  for(let i = 0; i < lines.length; i++){
+    const sep = lines[i+1];
+    if(!lines[i].includes("|") || !sep || !sep.includes("|") || !TABLE_SEP.test(sep)){
+      out.push(lines[i]); continue;
+    }
+    const header = splitRow(lines[i]);
+    const align = splitRow(sep).map(c =>
+      /^:-+:$/.test(c) ? "center" : /^-+:$/.test(c) ? "right" : "left");
+    const rows = [];
+    let j = i + 2;
+    for(; j < lines.length && lines[j].trim() && lines[j].includes("|"); j++)
+      rows.push(splitRow(lines[j]));
+    const cell = (tag, txt, k) =>
+      `<${tag} style="text-align:${align[k] || "left"}">${txt}</${tag}>`;
+    out.push(hole(`<div class="tablewrap"><table><thead><tr>` +
+      header.map((c,k) => cell("th", c, k)).join("") + `</tr></thead><tbody>` +
+      rows.map(r => "<tr>" + header.map((_,k) => cell("td", r[k] || "", k)).join("") + "</tr>").join("") +
+      `</tbody></table></div>`));
+    i = j - 1;
+  }
+  return out.join("\n");
+}
+
 /* ---------- tiny markdown (safe: everything escaped first) ---------- */
 function md(src){
-  const fences = [];
-  src = src.replace(/```([^\n]*)\n([\s\S]*?)```/g, (_,lang,code)=>{
-    fences.push(`<pre><code>${esc(code)}</code></pre>`); return `\x00F${fences.length-1}\x00`; });
+  const holes = [];
+  const hole = html => { holes.push(html); return `\x00F${holes.length-1}\x00`; };
+  // code first: fenced, then inline — so neither math nor markdown touches it
+  src = src.replace(/```([^\n]*)\n([\s\S]*?)```/g, (_,lang,code)=>
+    hole(`<pre><code>${esc(code)}</code></pre>`));
+  src = src.replace(/`([^`\n]+)`/g, (_,code)=> hole(`<code>${esc(code)}</code>`));
+  src = mathify(src, hole);
   let h = esc(src)
-    .replace(/`([^`\n]+)`/g, "<code>$1</code>")
     .replace(/^######? *(.+)$/gm, "<h3>$1</h3>")
     .replace(/^#{1,4} *(.+)$/gm, "<h3>$1</h3>")
     .replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>")
     .replace(/(^|\s)\*([^*\n]+)\*(?=\s|[.,;:]|$)/g, "$1<i>$2</i>")
     .replace(/\[([^\]\n]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>')
-    .replace(/^[-*] (.+)$/gm, "•&nbsp;$1")
-    .replace(/\n\n+/g, "</p><p>").replace(/\n/g, "<br>");
-  h = "<p>"+h+"</p>";
-  return h.replace(/\x00F(\d+)\x00/g, (_,i)=>fences[+i]);
+    .replace(/^[-*] (.+)$/gm, "•&nbsp;$1");
+  h = tables(h, hole);            // after inline markup, before the <br> pass
+  h = "<p>" + h.replace(/\n\n+/g, "</p><p>").replace(/\n/g, "<br>") + "</p>";
+  // holes nest (math sits inside table cells), so restore until none are left
+  for(let pass = 0; pass < 5 && h.includes("\x00F"); pass++)
+    h = h.replace(/\x00F(\d+)\x00/g, (_,i)=> holes[+i]);
+  return h;
 }
 
 /* ---------- sidebar ---------- */
@@ -559,6 +679,7 @@ function renderSession(s, ctx){
       <label><input type="checkbox" id="tgThink" checked> thinking</label>
       <label><input type="checkbox" id="tgTools" checked> tool calls</label>
       <label><input type="checkbox" id="tgSys"> system / commands</label>
+      <label><input type="checkbox" id="tgAgents" checked> agents</label>
     </div>`;
   mountHeader(head);
   const rbtn = head.querySelector("#btnResume");
@@ -574,13 +695,21 @@ function renderSession(s, ctx){
   }
 
   if((s.subagents||[]).length){
+    // name the chips after the agent that ran, not its uuid — the Task calls in
+    // the timeline already carry the type and description
+    const byId = {};
+    for(const e of s.entries)
+      if(e.kind === "tool" && e.agent_id) byId[e.agent_id] = agentLabel(e);
     const box = document.createElement("div");
     box.style.cssText = "padding:10px 20px 0";
     box.innerHTML = `<span style="color:var(--dim);font-size:12px">subagents:</span> `;
     for(const a of s.subagents){
+      const id = a.file.replace(/^agent-|\.jsonl$/g, "");
+      const lab = byId[id];
       const el = document.createElement("span");
       el.className = "agentbox";
-      el.textContent = `🤖 ${a.file.replace(/^agent-|\.jsonl$/g,"")} (${fmtBytes(a.size)})`;
+      el.textContent = `🤖 ${lab ? lab.type : id} (${fmtBytes(a.size)})`;
+      el.title = lab ? lab.desc : a.file;
       el.onclick = () => openSubagent(ctx.slug, ctx.id, a.file);
       box.appendChild(el);
     }
@@ -599,7 +728,7 @@ function renderSession(s, ctx){
   const renderChunk = () => {
     const frag = document.createDocumentFragment();
     const end = Math.min(rendered + CHUNK, s.entries.length);
-    for(; rendered < end; rendered++) frag.appendChild(renderEntry(s.entries[rendered]));
+    for(; rendered < end; rendered++) frag.appendChild(renderEntry(s.entries[rendered], ctx, 0));
     tl.appendChild(frag);
     moreBtn.textContent = `show more (${s.entries.length - rendered} remaining)`;
     moreBtn.style.display = rendered >= s.entries.length ? "none" : "block";
@@ -622,8 +751,9 @@ function renderSession(s, ctx){
     tl.querySelectorAll(".entry.thinking").forEach(el=>el.style.display = $("#tgThink").checked?"":"none");
     tl.querySelectorAll(".entry.tool").forEach(el=>el.style.display = $("#tgTools").checked?"":"none");
     tl.querySelectorAll(".entry.command,.entry.system").forEach(el=>el.style.display = $("#tgSys").checked?"":"none");
+    tl.querySelectorAll(".agentcard").forEach(el=>el.style.display = $("#tgAgents").checked?"":"none");
   };
-  ["tgThink","tgTools","tgSys"].forEach(id=>$("#"+id).onchange=applyToggles);
+  ["tgThink","tgTools","tgSys","tgAgents"].forEach(id=>$("#"+id).onchange=applyToggles);
   renderChunk();
   main.scrollTop = 0;
 
@@ -663,7 +793,98 @@ function toolSummary(e){
   return String(first||"").slice(0,160);
 }
 
-function renderEntry(e){
+/* ---------- subagents, shown where they were launched ----------
+   A Task call and its agent transcript are the same event, so the agent gets a
+   card inside the tool entry instead of a uuid chip in the header 400 entries
+   away. The transcript is fetched on first expand — parsing every agent up
+   front would stall a session with a dozen of them. */
+const agentCache = new Map();          // "slug/session/file" -> parsed transcript
+
+function agentFile(id){ return "agent-" + id + ".jsonl"; }
+
+function agentLabel(e){
+  const i = e.input || {};
+  return {type: i.subagent_type || e.name || "agent",
+          desc: String(i.description || i.prompt || "").slice(0, 200)};
+}
+
+function agentCard(e, ctx, depth){
+  const {type, desc} = agentLabel(e);
+  const card = document.createElement("div");
+  card.className = "agentcard" + (e.is_error ? " failed" : "");
+  const head = document.createElement("div");
+  head.className = "achead";
+  head.innerHTML = `<span class="caret">▸</span>
+    <span class="atag">🤖 ${esc(type)}</span>
+    <span class="adot ${e.is_error ? "err" : "ok"}"></span>
+    <span class="adesc">${esc(desc)}</span>
+    <span class="astats"></span>`;
+  card.appendChild(head);
+  const body = document.createElement("div");
+  body.className = "acbody";
+  card.appendChild(body);
+
+  const key = `${ctx.slug}/${ctx.id}/${agentFile(e.agent_id)}`;
+  let loaded = false;
+  head.onclick = async (ev) => {
+    ev.stopPropagation();                       // don't collapse the parent tool entry
+    card.classList.toggle("openx");
+    if(loaded || !card.classList.contains("openx")) return;
+    loaded = true;
+    body.innerHTML = `<div class="acnote">reading agent transcript…</div>`;
+    let s = agentCache.get(key);
+    try{
+      if(!s){
+        s = await api(`/api/subagent?project=${encodeURIComponent(ctx.slug)}`
+                    + `&session=${encodeURIComponent(ctx.id)}`
+                    + `&agent=${encodeURIComponent(agentFile(e.agent_id))}`);
+        agentCache.set(key, s);
+      }
+    }catch(err){
+      body.innerHTML = `<div class="acnote">transcript not on disk (${esc(err.message)})</div>`;
+      return;
+    }
+    const t = s.totals || {};
+    const tools = Object.values(s.tool_counts || {}).reduce((a,b)=>a+b, 0);
+    const stamps = s.entries.map(x => x.ts).filter(Boolean);
+    const span = stamps.length > 1
+      ? (new Date(stamps[stamps.length-1]) - new Date(stamps[0])) / 1000 : 0;
+    head.querySelector(".astats").innerHTML =
+      `<span>${s.entries.length} entries</span><span>${tools} tools</span>
+       <span class="cost">${fmtTok(t.output_tokens)} out</span>
+       <span class="cost">${fmtTok(t.peak_context)} peak</span>
+       ${span > 0 ? `<span>${fmtDur(span)}</span>` : ""}`;
+
+    body.innerHTML = "";
+    const open = document.createElement("button");
+    open.className = "copy"; open.textContent = "open full transcript ↗";
+    open.onclick = ev2 => { ev2.stopPropagation();
+      openSubagent(ctx.slug, ctx.id, agentFile(e.agent_id)); };
+    body.appendChild(open);
+
+    // nested agents get a link, not another lazy tree — two levels is plenty
+    const CAP = 200;
+    const frag = document.createDocumentFragment();
+    for(const sub of s.entries.slice(0, CAP)) frag.appendChild(renderEntry(sub, ctx, depth + 1));
+    body.appendChild(frag);
+    if(s.entries.length > CAP){
+      const more = document.createElement("div");
+      more.className = "acnote";
+      more.textContent = `${s.entries.length - CAP} more entries — open the full transcript`;
+      body.appendChild(more);
+    }
+  };
+  return card;
+}
+
+function fmtDur(sec){
+  if(sec < 60) return Math.round(sec) + "s";
+  const m = Math.floor(sec / 60);
+  return m < 60 ? `${m}m ${Math.round(sec % 60)}s` : `${Math.floor(m/60)}h ${m % 60}m`;
+}
+
+function renderEntry(e, ctx, depth){
+  ctx = ctx || {}; depth = depth || 0;
   const div = document.createElement("div");
   div.className = "entry " + e.kind;
   const ts = e.ts ? `<span class="ts">${fmtDate(e.ts)}</span>` : "";
@@ -694,13 +915,16 @@ function renderEntry(e){
       const pre = document.createElement("pre"); pre.textContent = e.result;
       body.appendChild(pre);
     }
-    if(e.agent_id){
+    div.appendChild(body);
+    // the agent card sits outside the collapsible body: an agent's cost and
+    // outcome should be visible without opening the Task call first
+    if(e.agent_id && ctx.slug && ctx.id && depth < 2) div.appendChild(agentCard(e, ctx, depth));
+    else if(e.agent_id){
       const n = document.createElement("div");
-      n.style.cssText="font-size:12px;color:var(--think)";
-      n.textContent = "agent id: "+e.agent_id+" — see subagents above";
+      n.className = "acnote";
+      n.textContent = "agent " + e.agent_id;
       body.appendChild(n);
     }
-    div.appendChild(body);
     return div;
   }
 
@@ -984,6 +1208,9 @@ async function openTerm(kind, opts = {}){
 
   t.id = info.id;
   t.label = opts.label || info.label;
+  // the folder this session actually runs in — the file explorer follows it
+  t.cwd = info.cwd || opts.cwd || null;
+  t.fsPath = t.cwd;
   t.sentCols = term.cols; t.sentRows = term.rows;   // the size it was born with
   TM.terms.set(t.id, t);
 
@@ -1045,7 +1272,20 @@ async function streamTerm(t){
   if(!t.dead){ t.term.write("\r\n\x1b[31m[disconnected]\x1b[0m\r\n"); }
 }
 
+/* Switching terminal tabs moves the file explorer with you: a tab you have
+   never left sits at its session root, and one you browsed away from comes
+   back where you left it. Own function so openTerm/closeTerm get it too. */
+function fsFollowTerm(id){
+  const prev = TM.terms.get(TM.active);
+  if(prev && TM.active !== id) prev.fsPath = fsPath || prev.fsPath;
+  const t = TM.terms.get(id);
+  if(!t || !t.fsPath || t.fsPath === fsPath) return;
+  fsPath = t.fsPath;
+  if($("#filesview").style.display !== "none") loadFs(fsPath);
+}
+
 function activateTerm(id){
+  fsFollowTerm(id);
   TM.active = id;
   for(const [tid, t] of TM.terms)
     t.container.style.display = tid === id ? "block" : "none";

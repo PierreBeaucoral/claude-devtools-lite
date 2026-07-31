@@ -1315,7 +1315,7 @@ def start_term(kind, cwd, session_id=None, prompt=None, cols=100, rows=30):
 # ---------------------------------------------------------------- HTTP
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "claude-devtools-lite/0.6.0"
+    server_version = "claude-devtools-lite/0.6.1"
     root = CLAUDE_ROOT  # overridden in main()
 
     def log_message(self, fmt, *args):
@@ -1403,7 +1403,12 @@ class Handler(BaseHTTPRequestHandler):
                 if not f.is_file():
                     self._err(404, "not found")
                     return
-                ctype = "text/css" if name.endswith(".css") else "application/javascript"
+                if name.endswith(".css"):
+                    ctype = "text/css"
+                elif name.endswith(".woff2"):
+                    ctype = "font/woff2"
+                else:
+                    ctype = "application/javascript"
                 body = f.read_bytes()
                 self.send_response(200)
                 self.send_header("Content-Type", ctype)

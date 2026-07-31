@@ -38,11 +38,21 @@ into any session in an embedded terminal.
   paths (decoded from the transcripts, not the lossy folder slugs)
 - Full timeline: user prompts, assistant messages (rendered markdown), collapsible
   **thinking** blocks, and every **tool call** paired with its result
+- **LaTeX renders as math** — `$$…$$`, `\[…\]`, `\(…\)` and `$…$` are typeset with
+  KaTeX, so derivations and estimators read like a paper, not like source. Prices
+  (`$5`) and shell variables (`$HOME`) are left alone
+- **Markdown tables render as tables**, including the ragged ones Claude often emits
+  (a `|---|---|` line shorter than its own header); math inside cells is typeset too
+- **Subagents appear where they were launched**: each `Task` call carries an expandable
+  card showing the agent type, its task, whether it failed, and what it cost — entries,
+  tool calls, output tokens, peak context, wall time. Expanding nests the agent's
+  transcript inline, fetched on demand, so you keep your place in the parent session
 - **Real diffs** for `Edit`/`Write` calls, rendered from the recorded patch hunks
 - **Context-window chart**: one bar per API request, with automatic **compaction
   detection** (red bars where the context dropped sharply)
 - Token totals per session, deduplicated by request ID, plus a tool-call histogram
-- **Subagent transcripts** open in the same viewer
+- **Subagent transcripts** open in the same viewer, and the header chips are named by
+  agent type rather than uuid
 - **Full-text search** across every session; results jump to the matching entry
 - Project **memory** files rendered in place
 - Big transcripts (20 MB+, thousands of entries) load lazily and stay responsive
@@ -73,6 +83,9 @@ into any session in an embedded terminal.
   button that launches the skill
 - A Files pane that follows the selected project, previews files, copies paths, opens a
   shell in any folder, or points the viz watcher at it
+- It also follows the **active terminal tab**: switch between two Claude sessions and
+  the explorer jumps to that session's project root — or back to wherever you had
+  browsed to in it
 
 ## Install and run
 
@@ -196,7 +209,8 @@ helpers.
 | `index.html` | Single-page UI (vanilla JS, no framework) |
 | `native/main.swift` | macOS standalone window (WebKit) |
 | `launchers/`, `packaging/` | Per-platform launchers and app builders |
-| `vendor/` | xterm.js 5.5.0 + fit addon (MIT), vendored for offline use |
+| `vendor/` | xterm.js 5.5.0 + fit addon and KaTeX 0.16.11 with its woff2 fonts (both MIT), vendored for offline use |
+| `tests/` | `pytest tests/` for the server; `node tests/test_frontend.js` for the UI |
 
 ## Prior art
 
@@ -213,4 +227,4 @@ Entirely optional — bug reports and pull requests are just as welcome.
 ## License
 
 MIT — see [LICENSE](LICENSE). Bundles [xterm.js](https://github.com/xtermjs/xterm.js)
-(MIT). Not affiliated with Anthropic.
+(MIT) and [KaTeX](https://github.com/KaTeX/KaTeX) (MIT). Not affiliated with Anthropic.

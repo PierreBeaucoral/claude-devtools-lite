@@ -13,8 +13,8 @@ authors:
 repository-code: "https://github.com/PierreBeaucoral/claude-devtools-lite"
 url: "https://github.com/PierreBeaucoral/claude-devtools-lite"
 license: MIT
-version: "0.6.0"
-date-released: "2026-07-30"
+version: "0.6.1"
+date-released: "2026-07-31"
 keywords:
   - claude-code
   - developer-tools
