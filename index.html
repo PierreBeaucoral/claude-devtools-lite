@@ -32,6 +32,7 @@
   #colR { width: var(--col2, 320px); flex:none; }
   #cell-main, #cell-usage { flex:1; min-height:0; }
   #cell-term { height: var(--rowL, 40%); flex:none; }
+  #cell-plan { height: var(--rowP, 30%); flex:none; }
   #cell-viz  { height: var(--rowR, 45%); flex:none; }
   .split { background: var(--border); z-index: 5; transition: background .12s;
            touch-action: none; flex:none; }
@@ -212,6 +213,72 @@
              display:flex; justify-content:space-between; gap:6px; color:var(--dim); }
   .vizfile:hover, .vizfile.active { background:var(--panel2); color:var(--fg); }
   .vizempty { color:var(--dim); font-size:12px; padding:14px 4px; line-height:1.6; }
+
+  /* ---------- plan pane (markdown checklist, ticks write back to the file) */
+  #planbody { padding:8px 10px; }
+  .plan-head { font-weight:700; color:var(--fg); margin:9px 0 4px;
+               font-size:12px; letter-spacing:.3px; }
+  .plan-head.h1 { font-size:13px; }
+  .plan-text { color:var(--dim); font-size:11.5px; margin:2px 0 4px;
+               line-height:1.5; }
+  .plan-task { display:flex; gap:7px; align-items:flex-start; padding:2.5px 4px;
+               border-radius:5px; cursor:pointer; line-height:1.45; }
+  .plan-task:hover { background:var(--panel2); }
+  .plan-task .box { flex:none; width:13px; height:13px; margin-top:1px;
+                    border:1.5px solid var(--dim); border-radius:3px;
+                    display:flex; align-items:center; justify-content:center;
+                    font-size:10px; line-height:1; color:var(--bg); }
+  .plan-task.done .box { background:var(--accent); border-color:var(--accent); }
+  .plan-task.doing .box { border-color:var(--think); color:var(--think);
+                          background:transparent; }
+  .plan-task.done .lbl { color:var(--dim); text-decoration:line-through; }
+  .plan-task .lbl { flex:1; min-width:0; word-break:break-word; }
+  .plan-task.busy { opacity:.5; pointer-events:none; }
+  #planbar { flex:none; display:flex; align-items:center; gap:7px;
+             padding:5px 10px; border-bottom:1px solid var(--border);
+             font-size:11px; color:var(--dim); background:var(--bg); }
+  #planbar select { background:var(--panel); color:var(--fg);
+                    border:1px solid var(--border); border-radius:5px;
+                    font-size:11px; padding:2px 4px; max-width:180px; }
+  .planprog { flex:1; height:4px; border-radius:3px; background:var(--panel2);
+              overflow:hidden; min-width:30px; }
+  .planprog i { display:block; height:100%; background:var(--accent); }
+
+  /* ---------- config inventory ---------- */
+  .ptab { padding:2px 7px; border-radius:6px; cursor:pointer; font-weight:600;
+          font-size:11.5px; color:var(--dim); white-space:nowrap; flex:none; }
+  .ptab.active { background:var(--panel2); color:var(--fg); }
+  .cfggroup { margin:8px 0 2px; display:flex; align-items:baseline; gap:6px;
+              font-weight:700; font-size:11.5px; color:var(--fg); cursor:pointer;
+              white-space:nowrap; }
+  .cfggroup > span:first-child { overflow:hidden; text-overflow:ellipsis; }
+  .cfggroup .n { font-weight:400; color:var(--dim); font-size:11px; }
+  .cfgrow { display:flex; gap:7px; align-items:baseline; padding:2.5px 4px 2.5px 12px;
+            border-radius:5px; font-size:11.5px; cursor:pointer; }
+  .cfgrow:hover { background:var(--panel2); }
+  .cfgrow .nm { flex:none; color:var(--fg); font-family:var(--mono); font-size:11px; }
+  .cfgrow .ds { flex:1; min-width:0; color:var(--dim); overflow:hidden;
+                text-overflow:ellipsis; white-space:nowrap; }
+  .cfgrow .tk { flex:none; color:var(--dim); font-size:10.5px; font-variant-numeric:tabular-nums; }
+  .cfgrow.dead .nm { color:var(--tool); }
+  .cfgsum { display:flex; gap:10px; align-items:baseline; padding:6px 4px 2px;
+            border-bottom:1px solid var(--border); margin-bottom:4px;
+            white-space:nowrap; font-size:11px; }
+  .cfgsum > span:first-child { overflow:hidden; text-overflow:ellipsis; }
+  .cfgsum b { color:var(--fg); font-variant-numeric:tabular-nums; }
+  .cfgnote { color:var(--dim); font-size:10.5px; line-height:1.5; padding:6px 4px 0; }
+
+  /* ---------- click-to-expand shield over previews ---------- */
+  .previewwrap { position:relative; flex:1; min-height:0; display:flex; }
+  .shield { position:absolute; inset:0; z-index:4; cursor:zoom-in;
+            background:transparent; display:flex; align-items:flex-end;
+            justify-content:flex-end; padding:8px; }
+  .shield span { opacity:0; transition:opacity .12s; font-size:11px;
+                 background:var(--panel); border:1px solid var(--border);
+                 color:var(--dim); border-radius:6px; padding:3px 7px; }
+  .shield:hover span { opacity:1; }
+  #workspace.maxed .shield, .previewwrap.empty .shield { display:none; }
+  .previewwrap.empty { flex:none; }
   /* popup menu (folder picker) */
   .menu { position:fixed; z-index:60; min-width:240px; max-width:min(430px,92vw);
           max-height:62vh; overflow-y:auto; background:var(--panel2);
@@ -334,6 +401,25 @@
       <div class="qbody" id="usagebody"><div class="vizempty">computing…</div></div>
     </div>
     <div id="hsplitR" class="split hsplit" title="drag to resize rows"></div>
+    <div class="cell" id="cell-plan">
+      <div class="qhead" style="gap:4px">
+        <span class="ptab active" data-view="plan">✅ Plan</span>
+        <span class="ptab" data-view="config">⚙ Config</span>
+        <span id="plancount" style="margin-left:auto;font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></span>
+        <button class="copy" id="planimprove" style="display:none"
+                title="open the latest end-of-session retrospective">🔎</button>
+        <button class="copy" id="planrefresh" title="re-read the plan file">⟳</button>
+        <button class="copy maxbtn" data-cell="cell-plan" title="maximize / restore">⛶</button>
+      </div>
+      <div id="planbar" style="display:none">
+        <select id="planpick" title="which plan file this pane shows"></select>
+        <div class="planprog"><i id="planbarfill" style="width:0%"></i></div>
+        <a id="planopen" title="open this plan in the Files preview">open</a>
+      </div>
+      <div class="qbody" id="planbody"><div class="vizempty">Pick a project.</div></div>
+      <div class="qbody" id="configbody" style="display:none"></div>
+    </div>
+    <div id="hsplitR2" class="split hsplit" title="drag to resize rows"></div>
     <div class="cell" id="cell-viz">
       <div class="qhead" style="gap:4px">
         <span class="vtab active" data-view="viz">📊 Viz</span>
@@ -343,14 +429,20 @@
       </div>
       <div id="vizview" style="display:flex;flex-direction:column;flex:1;min-height:0">
         <div class="qbody" id="vizlist" style="flex:none;max-height:110px"></div>
-        <iframe id="vizframe" sandbox="allow-scripts" title="viz preview"></iframe>
-        <embed id="vizpdf" class="pdfview" type="application/pdf" title="pdf preview">
+        <div class="previewwrap empty">
+          <iframe id="vizframe" sandbox="allow-scripts" title="viz preview"></iframe>
+          <embed id="vizpdf" class="pdfview" type="application/pdf" title="pdf preview">
+          <div class="shield" data-cell="cell-viz" title="click to expand"><span>⛶ click to expand</span></div>
+        </div>
       </div>
       <div id="filesview" style="display:none;flex-direction:column;flex:1;min-height:0">
         <div id="fscrumb"></div>
         <div class="qbody" id="fslist" style="flex:1"></div>
-        <iframe id="fsframe" sandbox="allow-scripts" title="file preview"></iframe>
-        <embed id="fspdf" class="pdfview" type="application/pdf" title="pdf preview">
+        <div class="previewwrap empty">
+          <iframe id="fsframe" sandbox="allow-scripts" title="file preview"></iframe>
+          <embed id="fspdf" class="pdfview" type="application/pdf" title="pdf preview">
+          <div class="shield" data-cell="cell-viz" title="click to expand"><span>⛶ click to expand</span></div>
+        </div>
       </div>
     </div>
    </div>
@@ -403,9 +495,14 @@ const fmtDate = ts => { if(!ts) return ""; const d = new Date(typeof ts==="numbe
   return d.toLocaleDateString(undefined,{month:"short",day:"numeric"})+" "+
          d.toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"}); };
 const esc = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const shortHome = p => (p && fsHome && p.startsWith(fsHome)) ? "~" + p.slice(fsHome.length) : (p || "");
 
-async function api(path){
-  const r = await fetch(path, {headers: authHeaders()});
+async function api(path, body){
+  const r = body === undefined
+    ? await fetch(path, {headers: authHeaders()})
+    : await fetch(path, {method: "POST",
+        headers: authHeaders({"Content-Type": "application/json"}),
+        body: JSON.stringify(body)});
   const j = await r.json();
   if(r.status === 401){
     $("#main").innerHTML = `<div class="placeholder">🔒 ${esc(j.error)}<br><br>
@@ -588,6 +685,7 @@ async function toggleProject(slug){
   const p = state.projects.find(x => x.slug === slug);
   if(p && p.path.startsWith("/")){
     fsPath = p.path;
+    setPlanProject(p.path);
     if($("#filesview").style.display !== "none") loadFs(fsPath);
   }
   // projects with a graphify knowledge graph show it in the viz pane by
@@ -600,6 +698,12 @@ async function toggleProject(slug){
     showPinned();
     refreshViz();
   } else {
+    // leaving a project whose graph was pinned: drop the stale preview rather
+    // than leaving the previous project's graph on screen
+    if(vizPinned || vizActive === "::pinned"){
+      clearPreview("#vizframe", "#vizpdf");
+      vizActive = null; vizNewest = 0;
+    }
     vizPinned = null;
     vizGraphOffer = (p && p.path.startsWith("/"))
       ? {cwd: p.path, name: p.path.split("/").pop() || "project"} : null;
@@ -1287,6 +1391,8 @@ function fsFollowTerm(id){
 function activateTerm(id){
   fsFollowTerm(id);
   TM.active = id;
+  const at = TM.terms.get(id);
+  if(at && at.cwd) setPlanProject(at.cwd);   // plan pane follows the console
   for(const [tid, t] of TM.terms)
     t.container.style.display = tid === id ? "block" : "none";
   renderTabs();
@@ -1404,7 +1510,7 @@ function makeSplitter(el, compute, apply, onDone){
 }
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const wsEl = $("#workspace");
-const SZ = { col2: null, rowL: null, rowR: null, sidebar: null, headH: null };
+const SZ = { col2: null, rowL: null, rowR: null, rowP: null, sidebar: null, headH: null };
 
 // clamp against the CURRENT viewport, so panes always end at the screen edge
 // (a size saved on a bigger window can never push content off-screen)
@@ -1417,6 +1523,8 @@ function applySizes(){
       clamp(SZ.rowL, 120, Math.max(140, w.height - 160)) + "px");
   if(SZ.rowR) wsEl.style.setProperty("--rowR",
       clamp(SZ.rowR, 120, Math.max(140, w.height - 160)) + "px");
+  if(SZ.rowP) wsEl.style.setProperty("--rowP",
+      clamp(SZ.rowP, 70, Math.max(90, w.height - 240)) + "px");
   if(SZ.headH){
     const cellH = $("#cell-main").getBoundingClientRect().height || w.height;
     wsEl.style.setProperty("--headH",
@@ -1439,7 +1547,10 @@ makeSplitter($("#vsplit"),
 makeSplitter($("#hsplitL"),
   ev => $("#colL").getBoundingClientRect().bottom - ev.clientY,
   v => { SZ.rowL = v; applySizes(); }, saveSizes);
-makeSplitter($("#hsplitR"),
+makeSplitter($("#hsplitR"),          // usage | plan  → sizes the plan pane
+  ev => $("#hsplitR2").getBoundingClientRect().top - ev.clientY,
+  v => { SZ.rowP = v; applySizes(); }, saveSizes);
+makeSplitter($("#hsplitR2"),         // plan | viz    → sizes the viz pane
   ev => $("#colR").getBoundingClientRect().bottom - ev.clientY,
   v => { SZ.rowR = v; applySizes(); }, saveSizes);
 makeSplitter($("#sideHandle"),
@@ -1540,8 +1651,10 @@ async function refreshUsage(){
    and the sandbox blocks it — so PDFs go to a sibling <embed> instead, which
    gives the native viewer with page nav, zoom, search, print and download.
    Only one of the two is ever visible. */
+function previewWrap(sel){ return $(sel).closest(".previewwrap"); }
 function setPreview(frameSel, pdfSel, url, isPdf, dark){
   const fr = $(frameSel), pd = $(pdfSel);
+  const wrap = previewWrap(frameSel); if(wrap) wrap.classList.remove("empty");
   if(isPdf){
     fr.removeAttribute("src"); fr.style.display = "none";
     pd.src = url; pd.style.display = "block";
@@ -1552,6 +1665,7 @@ function setPreview(frameSel, pdfSel, url, isPdf, dark){
   }
 }
 function clearPreview(frameSel, pdfSel){
+  const wrap = previewWrap(frameSel); if(wrap) wrap.classList.add("empty");
   $(frameSel).removeAttribute("src"); $(frameSel).style.display = "none";
   $(pdfSel).removeAttribute("src");   $(pdfSel).style.display = "none";
 }
@@ -1629,6 +1743,271 @@ function showViz(f){
 }
 $("#vizPath").onclick = () => navigator.clipboard.writeText(vizDir)
   .then(() => { $("#vizPath").textContent = "✓"; setTimeout(()=>$("#vizPath").textContent="copy path", 900); });
+
+
+/* ---------- plan pane ----------------------------------------------------
+   Reads a markdown checklist out of the selected project (.claude/plan.md,
+   quality_reports/plans/*.md, PLAN.md/TODO.md/…), renders it with live
+   checkboxes, and writes ticks straight back into the file — so the plan is
+   a shared artefact: Claude Code writes it, you tick it, the next session
+   reads the ticks back. Follows whichever project the console is in. */
+let planCwd = null, planFile = null, planStamp = 0, planBusy = false;
+
+function planEmpty(msg, withCreate){
+  const b = $("#planbody");
+  $("#planbar").style.display = "none";
+  $("#plancount").textContent = "";
+  b.innerHTML = `<div class="vizempty">${msg}</div>`;
+  if(withCreate && planCwd){
+    const btn = document.createElement("button");
+    btn.className = "copy"; btn.textContent = "＋ create .claude/plan.md";
+    btn.style.marginTop = "6px";
+    btn.onclick = async () => {
+      try{
+        const d = await api("/api/plan/create", {cwd: planCwd});
+        renderPlan(d);
+      }catch(e){ toast("could not create plan: " + e.message); }
+    };
+    b.appendChild(btn);
+  }
+}
+
+async function refreshPlan(force){
+  if(planView !== "plan") return;
+  if(!planCwd){ planEmpty("Pick a project — its plan shows up here."); return; }
+  if(planBusy) return;
+  try{
+    const q = "/api/plan?cwd=" + encodeURIComponent(planCwd)
+            + (planFile ? "&file=" + encodeURIComponent(planFile) : "");
+    const d = await api(q);
+    // skip a repaint when nothing moved (keeps scroll position stable)
+    const stamp = (d.mtime || 0) + ":" + (d.file || "") + ":" + d.done + "/" + d.total;
+    if(!force && stamp === planStamp) return;
+    planStamp = stamp;
+    renderPlan(d);
+  }catch(e){ /* server briefly down; retry next tick */ }
+}
+
+function renderPlan(d){
+  const body = $("#planbody"); body.innerHTML = "";
+  if(!d.file){
+    planEmpty(`No plan file in <code style="font-size:10.5px">${esc(shortHome(d.dir||planCwd))}</code>.<br>
+      Looks for <code>.claude/plan.md</code>, <code>quality_reports/plans/*.md</code>,
+      <code>PLAN.md</code>, <code>TODO.md</code>.`, true);
+    return;
+  }
+  planFile = d.file;
+  // header bar: file picker + progress
+  const bar = $("#planbar"); bar.style.display = "flex";
+  const pick = $("#planpick"); pick.innerHTML = "";
+  for(const c of d.candidates){
+    const o = document.createElement("option");
+    o.value = c.path; o.textContent = c.rel; o.selected = c.path === d.file;
+    pick.appendChild(o);
+  }
+  pick.style.display = d.candidates.length > 1 ? "" : "none";
+  const pct = d.total ? Math.round(100 * d.done / d.total) : 0;
+  $("#planbarfill").style.width = pct + "%";
+  $("#plancount").textContent = d.total ? `${d.done}/${d.total}` : "no tasks";
+
+  for(const it of d.items){
+    if(it.kind === "head"){
+      const h = document.createElement("div");
+      h.className = "plan-head" + (it.level === 1 ? " h1" : "");
+      h.textContent = it.text; body.appendChild(h); continue;
+    }
+    if(it.kind === "text"){
+      const t = document.createElement("div");
+      t.className = "plan-text"; t.textContent = it.text; body.appendChild(t); continue;
+    }
+    const row = document.createElement("div");
+    row.className = "plan-task " + it.state;
+    row.style.marginLeft = (it.depth * 14) + "px";
+    row.innerHTML = `<span class="box">${it.state === "done" ? "✓" : it.state === "doing" ? "•" : ""}</span>
+                     <span class="lbl"></span>`;
+    row.querySelector(".lbl").textContent = it.text;
+    row.title = it.state === "done" ? "click to reopen" : "click to tick off";
+    row.onclick = () => togglePlan(row, it, d.file);
+    body.appendChild(row);
+  }
+  if(!d.total) body.appendChild(Object.assign(document.createElement("div"),
+    {className: "vizempty", textContent:
+      "This file has no checkbox lines yet — add “- [ ] task” lines to it."}));
+}
+
+async function togglePlan(row, it, file){
+  row.classList.add("busy"); planBusy = true;
+  const next = it.state === "done" ? "open" : "done";
+  try{
+    const d = await api("/api/plan/toggle", {cwd: planCwd, file, line: it.line,
+                                             expect: it.text, state: next});
+    planBusy = false; planStamp = ""; renderPlan(d);
+  }catch(e){
+    planBusy = false; row.classList.remove("busy");
+    toast(e.message); refreshPlan(true);
+  }
+}
+
+/* the end-of-session retrospective (see spawn_improve in server.py): a
+   read-only /improve run fires when a Claude session closes, and its report
+   lands here. The button appears only once a project has one. */
+let improveLatest = null;
+async function refreshImprove(){
+  const btn = $("#planimprove");
+  if(!planCwd){ btn.style.display = "none"; return; }
+  try{
+    const d = await api("/api/improve?cwd=" + encodeURIComponent(planCwd));
+    const r = d.reports[0];
+    improveLatest = r ? r.path : null;
+    btn.style.display = r ? "" : "none";
+    if(r) btn.title = "retrospective from " + fmtDate(r.mtime)
+                    + (d.enabled ? "" : " · auto-retrospective is OFF");
+  }catch(e){ btn.style.display = "none"; }
+}
+$("#planimprove").onclick = async () => {
+  if(!improveLatest) return;
+  vizTab("files");
+  await loadFs(improveLatest.replace(/\/[^\/]+$/, ""));
+  ensureCookie();
+  setPreview("#fsframe", "#fspdf",
+             "/api/fs/file?path=" + encodeURIComponent(improveLatest) + "&t=" + Date.now(),
+             false, true);
+};
+$("#planrefresh").onclick = () => {           // refreshes whichever tab is up
+  if(planView === "config") refreshConfig();
+  else { planStamp = ""; refreshPlan(true); }
+  refreshImprove();
+};
+$("#planpick").onchange = e => { planFile = e.target.value; refreshPlan(true); };
+$("#planopen").onclick = async () => {
+  if(!planFile) return;
+  vizTab("files");
+  await loadFs(planFile.replace(/\/[^\/]+$/, ""));
+  ensureCookie();
+  setPreview("#fsframe", "#fspdf",
+             "/api/fs/file?path=" + encodeURIComponent(planFile) + "&t=" + Date.now(),
+             false, true);
+};
+function setPlanProject(cwd){
+  if(cwd === planCwd) return;
+  planCwd = cwd; planFile = null; planStamp = 0;
+  refreshPlan(true); refreshImprove();
+  if(planView === "config") refreshConfig();
+}
+setInterval(refreshPlan, 4000);
+setInterval(refreshImprove, 30000);
+
+/* ---------- click a preview to expand it ----------------------------------
+   Sandboxed iframes swallow their own clicks, so a transparent shield sits on
+   top while the pane is small: click it and the pane maximizes (the shield is
+   hidden when maximized, so the content is fully interactive there). */
+document.querySelectorAll(".shield").forEach(sh => {
+  sh.onclick = () => { if(!maxedCell) toggleMax(sh.dataset.cell); };
+});
+document.addEventListener("keydown", e => {
+  if(e.key === "Escape" && maxedCell) toggleMax(maxedCell);
+});
+
+
+/* ---------- config inventory (⚙ Config tab) -------------------------------
+   What is installed in ~/.claude, and what it costs you in context. The split
+   that matters: CLAUDE.md and rules/ are pasted into every request, and so are
+   the one-line descriptions of every agent, skill and command — their bodies
+   are not. So a 45 kB command is nearly free until invoked, while a 10 kB
+   rules file is a tax on every turn. "resident" is the every-turn figure. */
+let planView = "plan", cfgOpen = JSON.parse(localStorage.getItem("cdl-cfgopen") || "{}");
+// the two groups worth seeing unprompted: what costs you every turn, and what
+// is wired to fire behind your back
+const cfgOpenDefault = k => k === "memory" || k === "hooks";
+const cfgIsOpen = (gid, key) => gid in cfgOpen ? !!cfgOpen[gid] : cfgOpenDefault(key);
+
+function planTab(view){
+  planView = view;
+  document.querySelectorAll(".ptab").forEach(t =>
+    t.classList.toggle("active", t.dataset.view === view));
+  $("#planbody").style.display   = view === "plan"   ? "" : "none";
+  $("#configbody").style.display = view === "config" ? "" : "none";
+  $("#planbar").style.display = (view === "plan" && planFile) ? "flex" : "none";
+  if(view === "config"){ refreshConfig(); }
+  else { planStamp = ""; refreshPlan(true); }   // force a repaint of bar + count
+}
+document.querySelectorAll(".ptab").forEach(t => t.onclick = () => planTab(t.dataset.view));
+
+const fmtTokShort = n => n >= 1000 ? (n/1000).toFixed(n >= 10000 ? 0 : 1) + "k" : String(n);
+
+async function refreshConfig(){
+  const box = $("#configbody");
+  try{
+    const d = await api("/api/config" + (planCwd ? "?cwd=" + encodeURIComponent(planCwd) : ""));
+    box.innerHTML = "";
+    renderConfigSide(box, d.user, "~/.claude");
+    if(d.project) renderConfigSide(box, d.project, "this project's .claude");
+    const note = document.createElement("div");
+    note.className = "cfgnote";
+    note.innerHTML = `<b>resident</b> = pasted into every request (instruction files in full,
+      plus one description per agent/skill/command). <b>on demand</b> = the rest of those
+      bodies, loaded only when dispatched or invoked. Token counts are estimated at
+      ~4 bytes each — use them to rank, not to budget exactly. Hooks in
+      <span style="color:var(--tool)">amber</span> read a hook payload but no
+      <code>settings.json</code> event points at them — helper scripts that merely
+      live in <code>hooks/</code> are not flagged.`;
+    box.appendChild(note);
+    $("#plancount").textContent = fmtTokShort(d.user.resident) + " resident";
+  }catch(e){
+    box.innerHTML = `<div class="vizempty">${esc(e.message)}</div>`;
+  }
+}
+
+function renderConfigSide(box, inv, label){
+  const head = document.createElement("div");
+  head.className = "cfgsum";
+  head.innerHTML = `<span style="color:var(--dim)">${esc(label)}</span>
+    <span style="margin-left:auto">resident <b>~${fmtTokShort(inv.resident)}</b></span>
+    <span>on demand <b>~${fmtTokShort(inv.ondemand)}</b></span>`;
+  box.appendChild(head);
+
+  for(const g of inv.groups){
+    const gid = label + ":" + g.key;
+    const gh = document.createElement("div");
+    gh.className = "cfggroup";
+    const res = g.items.reduce((a, i) => a + i.resident, 0);
+    gh.innerHTML = `<span>${cfgIsOpen(gid, g.key) ? "▾" : "▸"} ${esc(g.label)}</span>
+      <span class="n">${g.items.length}</span>
+      <span class="n" style="margin-left:auto">~${fmtTokShort(res)} resident</span>`;
+    box.appendChild(gh);
+
+    const wrap = document.createElement("div");
+    wrap.style.display = cfgIsOpen(gid, g.key) ? "" : "none";
+    // heaviest first: that is the only ordering anyone acts on
+    for(const it of [...g.items].sort((a, b) => (b.resident - a.resident) || (b.tokens - a.tokens))){
+      const row = document.createElement("div");
+      row.className = "cfgrow" + (it.orphan ? " dead" : "");
+      row.innerHTML = `<span class="nm"></span><span class="ds"></span>
+        <span class="tk">${it.bytes ? "~" + fmtTokShort(it.always ? it.resident : it.tokens) : ""}</span>`;
+      row.querySelector(".nm").textContent = it.name;
+      row.querySelector(".ds").textContent =
+        (it.event ? it.event + " · " : "") + (it.description || "");
+      row.title = (it.path || it.name) + (it.bytes ? "\n" + fmtBytes(it.bytes) : "")
+                + (it.always ? "\nloaded on every turn" : "\nloaded on demand");
+      if(it.path) row.onclick = async () => {
+        vizTab("files");
+        await loadFs(it.path.replace(/\/[^\/]+$/, ""));
+        ensureCookie();
+        setPreview("#fsframe", "#fspdf",
+                   "/api/fs/file?path=" + encodeURIComponent(it.path) + "&t=" + it.mtime,
+                   false, true);
+      };
+      wrap.appendChild(row);
+    }
+    box.appendChild(wrap);
+    gh.onclick = () => {
+      cfgOpen[gid] = !cfgIsOpen(gid, g.key);
+      localStorage.setItem("cdl-cfgopen", JSON.stringify(cfgOpen));
+      wrap.style.display = cfgOpen[gid] ? "" : "none";
+      gh.firstElementChild.textContent = (cfgOpen[gid] ? "▾ " : "▸ ") + g.label;
+    };
+  }
+}
 
 $("#btnRight").onclick = () => { $("#workspace").classList.toggle("noright"); fitActive(); };
 if(window.innerWidth < 900) $("#workspace").classList.add("noright");
@@ -1741,7 +2120,7 @@ setInterval(async () => {   // badges + activity toasts
 }, 30000);
 setInterval(refreshUsage, 60000);
 setInterval(refreshViz, 5000);
-refreshUsage(); refreshViz();
+refreshUsage(); refreshViz(); refreshPlan(true);
 
 loadProjects().then(restoreFromHash).catch(e => {
   const isAuth = /token/i.test(e.message);

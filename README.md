@@ -2,9 +2,10 @@
 
 A local dashboard for inspecting **Claude Code** sessions — timelines, thinking blocks,
 tool calls, diffs, token usage, subagents, and memory — with an **embedded terminal**,
-a **file explorer**, and a **visual output pane**, laid out like RStudio.
+a **live plan checklist**, a **file explorer**, and a **visual output pane**, laid out
+like RStudio.
 
-It reads `~/.claude` **read-only** and runs entirely on your machine.
+It reads your transcripts **read-only** and runs entirely on your machine.
 **No dependencies, no build step, no API keys, no telemetry** — one Python file, one HTML
 file, and the Python standard library. Works on **macOS, Linux, and Windows**.
 
@@ -13,10 +14,14 @@ file, and the Python standard library. Works on **macOS, Linux, and Windows**.
 │            │  SESSION                  │  TOKEN USE       │
 │  projects  │  prompts, thinking,       │  5h block, P90   │
 │  sessions  │  tool calls, diffs        │  limit, sparkline│
-│  search    ├───────────────────────────┼──────────────────┤
-│  memory    │  TERMINAL                 │  VIZ / FILES     │
-│            │  real claude CLI / shell  │  charts, graphs, │
-│            │  tabs, resume a session   │  file explorer   │
+│  search    │                           ├──────────────────┤
+│  memory    │                           │  PLAN / CONFIG   │
+│            ├───────────────────────────┤  checklist, what │
+│            │                           │  ~/.claude costs │
+│            │  TERMINAL                 ├──────────────────┤
+│            │  real claude CLI / shell  │  VIZ / FILES     │
+│            │  tabs, resume a session   │  charts, graphs, │
+│            │                           │  file explorer   │
 └────────────┴───────────────────────────┴──────────────────┘
 ```
 
@@ -74,6 +79,47 @@ into any session in an embedded terminal.
 - Terminals export `CLAUDE_DEVTOOLS_UI=1`, `CLAUDE_DEVTOOLS_VIZ_DIR`, and
   `CLAUDE_DEVTOOLS_URL`, so a session can tell it's running inside the dashboard
 
+**Plan pane**
+- A third right-hand quadrant showing the project's plan as a **live checklist**.
+  It reads the first plan file it finds: `.claude/plan.md`, then the newest
+  `quality_reports/plans/*.md`, then `PLAN.md` / `TODO.md` / `TASKS.md` / `ROADMAP.md`
+- **Ticking a box rewrites the marker in the file** — so the plan is a shared artefact:
+  Claude Code writes it, you tick it, the next session reads the ticks back. `[~]` and
+  `[/]` render as *in progress*
+- Follows the selected project **and the active terminal tab**, so switching consoles
+  switches plans; re-reads the file every few seconds, so edits Claude makes show up live
+- A file picker appears when a project has several plans; **＋ create** scaffolds
+  `.claude/plan.md` when it has none
+
+**Config inventory (⚙ Config tab)**
+- What is actually installed in `~/.claude` — agents, skills, commands, rules, hooks,
+  plugins, MCP servers — with the project's own `.claude/` alongside it when it has one
+- Splits **resident** from **on demand**: `CLAUDE.md` and `rules/` are pasted into every
+  request, and so is one description line per agent/skill/command — their bodies are not.
+  So a 45 kB command is nearly free until you invoke it, while a 10 kB rules file is a tax
+  on every turn. The pane totals both and sorts each group heaviest-first
+- **Flags hooks nothing points at**: files sitting in `~/.claude/hooks/` that no
+  `settings.json` event references show in amber, and hooks registered from outside that
+  folder still get a row
+- **MCP servers are found where Claude Code actually keeps them** — `~/.claude.json`, both
+  the global list and the per-project one — not `settings.json`, which usually has none
+- Metadata only — never file contents, and never MCP server args or env, which routinely
+  hold API keys (there is a test asserting this). Token figures are estimated at ~4 bytes each: rank with them, don't budget
+- Click any row to open the file in the Files preview
+
+**End-of-session retrospective**
+- When a Claude terminal closes — including when you quit the app — the dashboard can
+  run [`/improve`](https://github.com/TerenceBristol/claude-improve) over the transcript
+  that just ended and drop a dated report in `~/.claude/improve-reports/<project>/`
+- **Read-only by construction** (`--allowedTools Read Grep Glob`) and explicitly told to
+  propose rather than apply, so it never edits your `CLAUDE.md` behind your back
+- Rate-limited to one run per project per 3 hours, skipped for sessions under 20 KB, and
+  guarded against recursing into its own session
+- The newest report opens from the **🔎** button in the plan pane. Turn the whole thing
+  off with `CDL_IMPROVE=0` in the environment
+- Needs the command installed once:
+  `mkdir -p ~/.claude/commands && curl -o ~/.claude/commands/improve.md https://raw.githubusercontent.com/TerenceBristol/claude-improve/main/improve.md`
+
 **Viz inbox and file explorer**
 - A watched folder: any `.html`, `.png`, `.svg`, `.md`, `.pdf`, `.csv` written there
   appears within 5 seconds and renders automatically. Tell a running Claude session
@@ -86,6 +132,8 @@ into any session in an embedded terminal.
 - It also follows the **active terminal tab**: switch between two Claude sessions and
   the explorer jumps to that session's project root — or back to wherever you had
   browsed to in it
+- **Click a preview to expand it**: the pane goes full-screen (Esc, or ⛶, restores it),
+  which is where a knowledge graph or a wide figure is actually usable
 
 ## Install and run
 
@@ -151,6 +199,11 @@ pane, and everything else keeps working.
 | Start a session anywhere | **+ claude** → pick a project, `~`, or **browse…** for any folder |
 | Resume a session | Open it → **⌨ resume in CLI** |
 | Show a figure from a session | Have it write into `$CLAUDE_DEVTOOLS_VIZ_DIR` |
+| Tick off a plan step | Click it in the **PLAN** pane — the markdown file is updated |
+| Point the plan pane elsewhere | Use its file picker, or **＋ create `.claude/plan.md`** |
+| Read the last retrospective | **🔎** in the PLAN pane header |
+| See what's loaded into every turn | **⚙ Config** tab in the PLAN pane |
+| Expand a preview | Click the preview itself (Esc restores) |
 | Maximize a pane | **⛶** in its header (click again to restore) |
 | Resize panes | Drag the splitters; sizes persist |
 | Quit | **⏻** in the sidebar (or ⌘Q in the macOS app) |
@@ -170,13 +223,22 @@ When `CLAUDE_DEVTOOLS_UI=1` is set, this session runs inside the claude-devtools
 dashboard. To show the user a visual output (figure, chart, HTML report), also write a
 self-contained file into `$CLAUDE_DEVTOOLS_VIZ_DIR` — it renders automatically in the
 Viz pane. Prefer inline-only `.html`, `.png`, or `.svg`, with descriptive filenames.
+
+Keep the working plan in `.claude/plan.md` as markdown checkboxes (`- [ ] step`). The
+dashboard's PLAN pane renders it and writes ticks back into it, so re-read it before
+planning and update it as steps complete.
 ```
 
 ## Security
 
 The dashboard can spawn shells, so it is built to be safe on a shared machine:
 
-- Binds to **127.0.0.1** only, and **never writes** to `~/.claude`
+- Binds to **127.0.0.1** only. It **never modifies your transcripts, settings or
+  memory**. It writes in exactly three places: its own state file, the plan checkbox you
+  click (see below), and `~/.claude/improve-reports/` when a retrospective runs
+- **Plan writes are narrow**: only a file the pane discovered for the open project, only
+  the `[ ]` / `[x]` marker on one line, and only when the line's text still matches what
+  the UI displayed — a stale click is refused rather than applied to the wrong task
 - Every `/api` route requires a **token** (generated once, stored `0600` in your OS's
   app-data directory, outside this repo). The launchers hand it to the browser via a
   same-site cookie — it never appears in a URL, and the request log redacts it

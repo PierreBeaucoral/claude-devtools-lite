@@ -18,6 +18,7 @@ import os
 import re
 import secrets
 import select
+import shlex
 import shutil
 import signal
 import subprocess
@@ -894,6 +895,671 @@ def fs_listing(raw_path):
             "entries": (dirs + files)[:600]}
 
 
+# ---------------------------------------------------------------- plan / checklist
+#
+# The plan pane reads a markdown checklist out of the selected project and
+# renders it with live checkboxes. Ticking one rewrites the `- [ ]` marker in
+# the file itself, so the plan is a shared artefact: Claude Code writes it,
+# you tick it, the next Claude Code session reads the ticks back.
+#
+# Discovery order (first hit wins, the rest stay selectable in the UI):
+#   1. .claude/plan.md                 — the live plan the pane owns
+#   2. quality_reports/plans/*.md      — newest first (research-workflow layout)
+#   3. PLAN.md / TODO.md / TASKS.md / ROADMAP.md at the project root
+#   4. docs/plan.md
+
+PLAN_MAX_BYTES = 512 * 1024
+PLAN_ROOT_NAMES = ("PLAN.md", "TODO.md", "TASKS.md", "ROADMAP.md")
+PLAN_LIVE = (".claude", "plan.md")
+
+# "- [ ] text", "* [x] text", "1. [~] text" — indentation preserved
+PLAN_ITEM_RE = re.compile(r"^(\s*)([-*+]|\d+[.)])\s+\[([ xX~/\-])\]\s?(.*)$")
+PLAN_HEAD_RE = re.compile(r"^(#{1,6})\s+(.*)$")
+
+PLAN_TEMPLATE = """# Plan
+
+<!-- claude-devtools-lite reads this file into its PLAN pane.
+     Keep one task per line as a markdown checkbox; tick them off as you go. -->
+
+Status: DRAFT
+
+## Steps
+
+- [ ] First step
+- [ ] Second step
+"""
+
+
+def plan_candidates(cwd):
+    """Ordered, de-duplicated list of plan files for a project directory."""
+    try:
+        root = safe_home_path(cwd)
+    except (ValueError, OSError):
+        return []
+    if not root.is_dir():
+        return []
+    out = []
+
+    def add(f):
+        try:
+            if f.is_file() and f.stat().st_size <= PLAN_MAX_BYTES and f not in out:
+                out.append(f)
+        except OSError:
+            pass
+
+    add(root.joinpath(*PLAN_LIVE))
+    plans = root / "quality_reports" / "plans"
+    if plans.is_dir():
+        try:
+            md = [p for p in plans.glob("*.md") if p.is_file()]
+            md.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        except OSError:
+            md = []
+        for f in md[:12]:
+            add(f)
+    for n in PLAN_ROOT_NAMES:
+        add(root / n)
+    add(root / "docs" / "plan.md")
+    return out
+
+
+def parse_plan_text(text):
+    """Markdown -> a flat list of headings and checkbox items."""
+    items, done, total = [], 0, 0
+    in_comment = in_fence = False
+    for i, raw in enumerate(text.splitlines()):
+        stripped = raw.strip()
+        if in_comment:
+            in_comment = "-->" not in stripped
+            continue
+        if stripped.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if stripped.startswith("<!--"):
+            in_comment = "-->" not in stripped
+            continue
+        m = PLAN_ITEM_RE.match(raw)
+        if m:
+            mark = m.group(3)
+            state = ("done" if mark in "xX"
+                     else "doing" if mark in "~/" else "open")
+            total += 1
+            if state == "done":
+                done += 1
+            items.append({"kind": "task", "line": i, "state": state,
+                          "depth": min(len(m.group(1)) // 2, 4),
+                          "text": truncate(m.group(4).strip(), 400)})
+            continue
+        h = PLAN_HEAD_RE.match(raw)
+        if h:
+            items.append({"kind": "head", "line": i,
+                          "level": len(h.group(1)),
+                          "text": truncate(h.group(2).strip(), 200)})
+            continue
+        if stripped and not stripped.startswith("|") and len(items) < 400:
+            # keep a little prose for context (status lines, one-line rationale)
+            items.append({"kind": "text", "line": i,
+                          "text": truncate(stripped, 300)})
+    return items[:800], done, total
+
+
+def plan_entry(f, root):
+    try:
+        rel = str(f.relative_to(root))
+    except ValueError:
+        rel = f.name
+    return {"path": str(f), "rel": rel, "name": f.name,
+            "mtime": f.stat().st_mtime}
+
+
+def plan_read(cwd, which=None):
+    """The plan pane's payload: the chosen file, its items, and the alternatives."""
+    cands = plan_candidates(cwd)
+    root = safe_home_path(cwd)
+    out = {"dir": str(root), "candidates": [plan_entry(f, root) for f in cands],
+           "file": None, "items": [], "done": 0, "total": 0}
+    if not cands:
+        return out
+    chosen = cands[0]
+    if which:
+        w = safe_home_path(which)
+        if w in cands:
+            chosen = w
+    try:
+        text = chosen.read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        out["error"] = str(e)
+        return out
+    items, done, total = parse_plan_text(text)
+    out.update(plan_entry(chosen, root))
+    out["file"] = str(chosen)
+    out["items"], out["done"], out["total"] = items, done, total
+    return out
+
+
+def plan_toggle(cwd, path, line, expect, state):
+    """Flip one checkbox in place. Refuses anything that is not a discovered
+    plan file, and refuses if the line moved or its text changed under us."""
+    f = safe_home_path(path)
+    if f not in plan_candidates(cwd):
+        raise ValueError("not a plan file for this project")
+    raw = f.read_bytes()
+    if len(raw) > PLAN_MAX_BYTES:
+        raise ValueError("plan file too large")
+    lines = raw.decode("utf-8", errors="replace").splitlines(keepends=True)
+    if not isinstance(line, int) or not 0 <= line < len(lines):
+        raise ValueError("line out of range")
+    body = lines[line]
+    eol = ""
+    while body.endswith(("\n", "\r")):
+        eol = body[-1] + eol
+        body = body[:-1]
+    m = PLAN_ITEM_RE.match(body)
+    if not m:
+        raise ValueError("line is not a checkbox")
+    if expect is not None and m.group(4).strip() != expect:
+        raise ValueError("plan changed on disk — refresh and try again")
+    mark = {"done": "x", "doing": "~", "open": " "}.get(state)
+    if mark is None:
+        raise ValueError("bad state")
+    lines[line] = f"{m.group(1)}{m.group(2)} [{mark}] {m.group(4)}" + eol
+    tmp = f.with_name(f.name + ".cdl-tmp")
+    tmp.write_text("".join(lines), encoding="utf-8")
+    os.replace(tmp, f)
+    return plan_read(cwd, str(f))
+
+
+def plan_create(cwd):
+    """Create .claude/plan.md so the pane has somewhere to live."""
+    root = safe_home_path(cwd)
+    if not root.is_dir():
+        raise FileNotFoundError(cwd)
+    f = root.joinpath(*PLAN_LIVE)
+    if not f.exists():
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(PLAN_TEMPLATE, encoding="utf-8")
+    return plan_read(cwd, str(f))
+
+
+# ---------------------------------------------------------------- config inventory
+#
+# What is actually installed in ~/.claude — agents, skills, commands, rules,
+# hooks, plugins, MCP servers — and roughly what each costs you in context.
+#
+# The distinction that matters: CLAUDE.md and rules/ are pasted into EVERY
+# request, and so are the one-line descriptions of every agent, skill and
+# command. Their bodies are not: those load only when dispatched or invoked.
+# So a 40 kB skill is nearly free until you use it, while a 40 kB rules file
+# is a tax on every single turn. The pane separates the two.
+#
+# Metadata only — never file contents, and never MCP server args or env, which
+# routinely hold API keys.
+
+TOKENS_PER_BYTE = 0.25          # ~4 chars per token; good enough to rank by
+CONFIG_MAX_ITEMS = 400
+
+
+def read_frontmatter(path, limit=8192):
+    """name/description out of a YAML front-matter block, without a YAML parser."""
+    out = {}
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            head = fh.read(limit)
+    except OSError:
+        return out
+    if not head.startswith("---"):
+        return out
+    end = head.find("\n---", 3)
+    if end == -1:
+        return out
+    key = None
+    for line in head[3:end].splitlines():
+        m = re.match(r"^([A-Za-z_-]+):\s*(.*)$", line)
+        if m:
+            key = m.group(1).lower()
+            val = m.group(2).strip().strip("'\"")
+            if key in ("name", "description", "model", "argument-hint"):
+                out[key] = val
+            continue
+        # folded/continued value (description: >- style)
+        if key in out and line.startswith((" ", "\t")):
+            out[key] = (out[key] + " " + line.strip()).strip()
+    return out
+
+
+def first_heading(path, limit=4096):
+    """A markdown file's first `# heading`, used when it has no front matter."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            for line in fh.read(limit).splitlines():
+                if line.startswith("#"):
+                    return line.lstrip("#").strip()
+    except OSError:
+        pass
+    return ""
+
+
+def est_tokens(n_bytes):
+    return int(n_bytes * TOKENS_PER_BYTE)
+
+
+def config_item(path, always_loaded, desc=None, extra=None):
+    st = path.stat()
+    d = desc if desc is not None else ""
+    item = {"name": path.stem if path.name != "SKILL.md" else path.parent.name,
+            "path": str(path), "bytes": st.st_size, "mtime": st.st_mtime,
+            "description": truncate(d, 300),
+            # always-loaded components cost their whole body every turn;
+            # on-demand ones only cost their description until invoked
+            "tokens": est_tokens(st.st_size),
+            "resident": est_tokens(st.st_size if always_loaded else len(d)),
+            "always": always_loaded}
+    item.update(extra or {})
+    return item
+
+
+def _md_group(root, sub, always, glob="*.md", nested=None):
+    d = root / sub
+    items = []
+    if not d.is_dir():
+        return items
+    paths = sorted(d.glob(nested) if nested else d.glob(glob))
+    for f in paths[:CONFIG_MAX_ITEMS]:
+        if not f.is_file():
+            continue
+        fm = read_frontmatter(f)
+        items.append(config_item(f, always,
+                                 fm.get("description") or first_heading(f)))
+    return items
+
+
+# A file in hooks/ is not necessarily a Claude Code hook. Some are libraries
+# other hooks call, some are git hooks. Only flag the ones that read a hook
+# payload on stdin or say which event they want — the rest are just files.
+HOOK_EVENTS = ("PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop",
+               "SubagentStop", "Notification", "UserPromptSubmit",
+               "PreCompact", "SessionStart", "SessionEnd")
+
+
+def declared_hook_event(path, limit=4096):
+    """`Hook Event: PreCompact` in a file's own header comment, if present."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            head = fh.read(limit)
+    except OSError:
+        return None
+    m = re.search(r"hook\s+event\s*:\s*([A-Za-z]+)", head, re.I)
+    if m:
+        for ev in HOOK_EVENTS:
+            if m.group(1).lower() == ev.lower():
+                return ev
+    return None
+
+
+def looks_like_a_hook(path, limit=4096):
+    """Does this file consume a hook payload, or name its own event?"""
+    if declared_hook_event(path):
+        return True
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            head = fh.read(limit)
+    except OSError:
+        return False
+    return ("tool_input" in head or "hook_event_name" in head
+            or "tool_name" in head)
+
+
+HOOK_SCRIPT_SUFFIXES = (".sh", ".bash", ".zsh", ".py", ".js", ".mjs", ".rb", ".pl")
+
+
+def hook_script_name(argv):
+    """The script a hook command runs — `python3 /a/b/pre-compact.py` is the
+    hook `pre-compact.py`, not `python3`."""
+    for a in argv:
+        if a.startswith("-"):
+            continue
+        if a.lower().endswith(HOOK_SCRIPT_SUFFIXES):
+            return Path(a).name
+    return Path(argv[0]).name if argv else "?"
+
+
+def hook_registrations(settings):
+    """event -> [command basenames], from a settings.json hooks block."""
+    out = {}
+    for event, entries in (settings.get("hooks") or {}).items():
+        cmds = []
+        for entry in entries if isinstance(entries, list) else []:
+            for h in (entry.get("hooks") or []):
+                c = str(h.get("command", "")).strip()
+                if not c:
+                    cmds.append("?")
+                    continue
+                # commands are quoted shell strings; paths contain spaces
+                try:
+                    argv = shlex.split(c)
+                except ValueError:
+                    argv = [c]
+                cmds.append(hook_script_name(argv))
+        out[event] = cmds
+    return out
+
+
+def mcp_servers(root, scope=None):
+    """name -> transport, from the places Claude Code actually keeps them.
+
+    Global servers live in ~/.claude.json's `mcpServers`; project ones under
+    `projects[<cwd>].mcpServers` in the same file, or in a project .mcp.json.
+    Names and transports only — the entries hold args and env, i.e. API keys."""
+    out = {}
+
+    def take(d):
+        for name, spec in (d or {}).items():
+            if isinstance(spec, dict):
+                out[name] = str(spec.get("type") or "stdio")
+
+    try:
+        conf = json.loads((Path.home() / ".claude.json").read_text())
+    except (OSError, ValueError):
+        conf = {}
+    if scope is None:                       # the global ~/.claude inventory
+        take(conf.get("mcpServers"))
+    else:                                   # a project's own .claude
+        take(((conf.get("projects") or {}).get(str(scope)) or {}).get("mcpServers"))
+        try:
+            take(json.loads((Path(scope) / ".mcp.json").read_text()).get("mcpServers"))
+        except (OSError, ValueError):
+            pass
+    return out
+
+
+def config_inventory(root, scope=None):
+    """One .claude directory's worth of installed components.
+
+    `scope` is the project directory when this is a project-level .claude, and
+    None for the global one — it decides which MCP servers apply."""
+    root = Path(root)
+    if not root.is_dir() and scope is None:
+        return None
+    # a project can have no .claude/ at all and still have MCP servers wired to
+    # it in ~/.claude.json — that is worth a row, so keep going
+    groups = []
+
+    # --- always resident: the instruction files themselves
+    memory = []
+    for name in ("CLAUDE.md",):
+        f = root / name
+        if f.is_file():
+            memory.append(config_item(f, True, "project/global instructions"))
+    memory += _md_group(root, "rules", True)
+    if memory:
+        groups.append({"key": "memory", "label": "Instructions (every turn)",
+                       "always": True, "items": memory})
+
+    # --- descriptions resident, bodies on demand
+    for key, sub, label, glob, nested in (
+            ("agents", "agents", "Agents", "*.md", None),
+            ("skills", "skills", "Skills", None, "*/SKILL.md"),
+            ("commands", "commands", "Commands", "*.md", None)):
+        items = _md_group(root, sub, False, glob or "*.md", nested)
+        if items:
+            groups.append({"key": key, "label": label, "always": False,
+                           "items": items})
+
+    # --- hooks: files on disk, annotated with the events they are wired to
+    settings = {}
+    for name in ("settings.json", "settings.local.json"):
+        try:
+            loaded = json.loads((root / name).read_text())
+        except (OSError, ValueError):
+            continue
+        # shallow-merge, but never let a file without a `hooks` key erase one
+        for k, v in loaded.items():
+            if k == "hooks" and isinstance(v, dict):
+                settings.setdefault("hooks", {}).update(v)
+            else:
+                settings[k] = v
+    regs = hook_registrations(settings)
+    wired = {c: ev for ev, cmds in regs.items() for c in cmds}
+    hooks = []
+    hd = root / "hooks"
+    if hd.is_dir():
+        for f in sorted(hd.iterdir()):
+            if not f.is_file() or f.name.startswith("."):
+                continue
+            event = wired.get(f.name)
+            if event:
+                desc, orphan = event, False
+            elif looks_like_a_hook(f):
+                want = declared_hook_event(f)
+                desc = ("expects " + want + ", not registered" if want
+                        else "hook-shaped, but no settings.json event points at it")
+                orphan = True
+            else:
+                # a helper the other hooks call, or a git hook that happens to
+                # live here — not something settings.json should point at
+                desc, orphan = "helper script (not a Claude Code hook)", False
+            hooks.append(config_item(f, False, desc,
+                                     {"event": event, "orphan": orphan}))
+    # hooks registered from elsewhere on the filesystem still deserve a row
+    for ev, cmds in regs.items():
+        for c in cmds:
+            if not any(h["name"] == Path(c).stem for h in hooks):
+                hooks.append({"name": Path(c).stem, "path": None, "bytes": 0,
+                              "mtime": 0, "description": ev + " · registered from "
+                              "outside " + str(hd),
+                              "tokens": 0, "resident": 0, "always": False,
+                              "event": ev, "orphan": False})
+    if hooks:
+        groups.append({"key": "hooks", "label": "Hooks", "always": False,
+                       "items": hooks, "events": regs})
+
+    # --- plugins and MCP servers: names only, never args or env
+    ext = []
+    for name, on in (settings.get("enabledPlugins") or {}).items():
+        ext.append({"name": name, "path": None, "bytes": 0, "mtime": 0,
+                    "description": "plugin · " + ("enabled" if on else "disabled"),
+                    "tokens": 0, "resident": 0, "always": False})
+    for name, kind in sorted(mcp_servers(root, scope).items()):
+        ext.append({"name": name, "path": None, "bytes": 0, "mtime": 0,
+                    "description": kind + " MCP server — its tool schemas are "
+                                   "resident once connected",
+                    "tokens": 0, "resident": 0, "always": False})
+    if ext:
+        groups.append({"key": "ext", "label": "Plugins & MCP", "always": False,
+                       "items": ext})
+
+    resident = sum(i["resident"] for g in groups for i in g["items"])
+    ondemand = sum(i["tokens"] - i["resident"] for g in groups for i in g["items"])
+    return {"root": str(root), "groups": groups,
+            "resident": resident, "ondemand": ondemand,
+            "count": sum(len(g["items"]) for g in groups)}
+
+
+def config_view(cwd=None):
+    """Global config, plus the project's own .claude when it has one."""
+    out = {"user": config_inventory(CLAUDE_ROOT), "project": None}
+    if cwd:
+        try:
+            p = safe_home_path(cwd) / ".claude"
+        except (ValueError, OSError):
+            p = None
+        if p and p.resolve() != Path(CLAUDE_ROOT).resolve():
+            inv = config_inventory(p, scope=p.parent)
+            out["project"] = inv if inv and inv["count"] else None
+    return out
+
+
+# ---------------------------------------------------------------- improve reports
+#
+# The /improve retrospective (github.com/TerenceBristol/claude-improve) runs
+# from a SessionEnd hook and drops a dated markdown report per project. The
+# plan pane links the newest one; previews go through /api/fs/file.
+
+IMPROVE_DIR = Path.home() / ".claude" / "improve-reports"
+
+
+def improve_reports(slug, limit=8):
+    d = IMPROVE_DIR / re.sub(r"[^A-Za-z0-9._-]", "-", slug or "")
+    if not d.is_dir():
+        return {"dir": str(d), "reports": []}
+    try:
+        files = [p for p in d.glob("*.md") if p.is_file()]
+    except OSError:
+        files = []
+    files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    now = time.time()
+    out = []
+    for f in files:
+        st = f.stat()
+        # a finished run that wrote nothing past the header is not a report
+        if st.st_size < IMPROVE_MIN_REPORT and now - st.st_mtime > 600:
+            continue
+        out.append({"path": str(f), "name": f.name,
+                    "mtime": st.st_mtime, "size": st.st_size})
+        if len(out) >= limit:
+            break
+    return {"dir": str(d), "reports": out}
+
+
+# The retrospective itself runs detached, so it survives the server exiting
+# (that is the whole point: it fires when you quit the app).
+
+IMPROVE_MIN_TRANSCRIPT = 20 * 1024      # don't analyse a three-message session
+IMPROVE_MIN_INTERVAL = 3 * 3600         # at most one retrospective per project
+IMPROVE_MIN_REPORT = 400                # a header and nothing else
+IMPROVE_TIMEOUT = "1800"                # seconds; enforced by a watchdog
+
+IMPROVE_PROMPT = """/improve
+
+This run was started automatically by claude-devtools-lite when a Claude Code
+session closed. There is no live conversation to review, so analyse the
+transcript of the session that just ended instead:
+
+  transcript: {transcript}
+  project:    {cwd}
+
+Skip the scope question — use "current conversation only" scope, reading that
+transcript as the conversation. REPORT ONLY: do not modify CLAUDE.md, settings,
+skills, rules, memory or learnings files; you have read-only tools on purpose.
+Write the findings list to stdout as markdown, most important first, each with
+the file it would change and the exact edit you would propose. If nothing in
+this session is worth changing, say so in one line and stop.
+"""
+
+
+def improve_enabled():
+    if os.environ.get("CDL_IMPROVE", "1") == "0":
+        return False
+    return bool(state_read().get("improve", True))
+
+
+def newest_transcript(cwd, within=900):
+    """The session file this terminal most likely just wrote."""
+    slug = mangle_cwd(cwd)
+    d = projects_dir(CLAUDE_ROOT) / slug
+    if not d.is_dir():
+        return None
+    now = time.time()
+    best = None
+    for f in d.glob("*.jsonl"):
+        try:
+            st = f.stat()
+        except OSError:
+            continue
+        if now - st.st_mtime > within:
+            continue
+        if best is None or st.st_mtime > best[0]:
+            best = (st.st_mtime, st.st_size, f)
+    if best and best[1] >= IMPROVE_MIN_TRANSCRIPT:
+        return best[2]
+    return None
+
+
+def mangle_cwd(cwd):
+    """Claude Code's project-directory naming: / and space and . become -."""
+    return re.sub(r"[/ .]", "-", str(cwd))
+
+
+def improve_stamp_ok(slug):
+    """Rate-limit: one retrospective per project per IMPROVE_MIN_INTERVAL."""
+    stamp = IMPROVE_DIR / re.sub(r"[^A-Za-z0-9._-]", "-", slug) / ".last-run"
+    try:
+        return time.time() - stamp.stat().st_mtime >= IMPROVE_MIN_INTERVAL
+    except OSError:
+        return True                   # never run for this project
+
+
+def improve_stamp_write(slug):
+    stamp = IMPROVE_DIR / re.sub(r"[^A-Za-z0-9._-]", "-", slug) / ".last-run"
+    try:
+        stamp.parent.mkdir(parents=True, exist_ok=True)
+        stamp.write_text(str(time.time()))
+    except OSError:
+        pass
+
+
+def spawn_improve(cwd):
+    """Kick off a /improve retrospective for a just-closed session, detached.
+
+    Read-only by construction (Read/Grep/Glob only), rate-limited, and skipped
+    entirely for short sessions. Never runs inside a retrospective's own
+    session — CDL_IMPROVE_RUN stops the obvious recursion."""
+    if not cwd or not improve_enabled() or os.environ.get("CDL_IMPROVE_RUN"):
+        return None
+    claude = find_claude()
+    if not claude:
+        return None
+    transcript = newest_transcript(cwd)
+    if not transcript:
+        return None
+    slug = mangle_cwd(cwd)
+    if not improve_stamp_ok(slug):
+        return None
+    d = IMPROVE_DIR / re.sub(r"[^A-Za-z0-9._-]", "-", slug)
+    d.mkdir(parents=True, exist_ok=True)
+    out = d / (time.strftime("%Y-%m-%d_%H%M") + ".md")
+    prompt = IMPROVE_PROMPT.format(transcript=transcript, cwd=cwd)
+    env = child_environment(extra={"CDL_IMPROVE_RUN": "1"})
+    header = (f"# Retrospective — {Path(cwd).name}\n\n"
+              f"*{time.strftime('%Y-%m-%d %H:%M')} · session "
+              f"`{transcript.stem}` · read-only run started by "
+              f"claude-devtools-lite when the session closed.*\n\n---\n\n")
+    try:
+        fh = open(out, "w", encoding="utf-8")
+        fh.write(header)
+        fh.flush()
+        run = [claude, "-p", prompt, "--allowedTools", "Read", "Grep", "Glob"]
+        kw = {}
+        if os.name == "nt":
+            # no fork, no sh: detach so quitting the app does not take it down.
+            # There is no watchdog here — `claude -p` exits on its own.
+            kw["creationflags"] = (getattr(subprocess, "DETACHED_PROCESS", 0x8)
+                                   | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x200))
+            argv = run
+        else:
+            # a tiny sh wrapper gives us a timeout without depending on
+            # `timeout`, which macOS does not ship
+            kw["start_new_session"] = True
+            argv = ["/bin/sh", "-c",
+                    '"$0" "$@" & p=$!; '
+                    '(sleep ' + IMPROVE_TIMEOUT + '; kill $p 2>/dev/null) & '
+                    'w=$!; wait $p; kill $w 2>/dev/null'] + run
+        subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+                         stdout=fh, stderr=subprocess.STDOUT, close_fds=True, **kw)
+        fh.close()
+        improve_stamp_write(slug)     # only burn the rate-limit window on success
+        return str(out)
+    except OSError:
+        try:
+            fh.close()
+            out.unlink()
+        except OSError:
+            pass
+        return None
+
+
 # ---------------------------------------------------------------- embedded terminal
 #
 # Runs a real PTY (claude CLI or your shell) and streams it to the browser
@@ -916,6 +1582,7 @@ class Term:
         self.id = secrets.token_hex(8)
         self.label = Path(argv[0]).name + " · " + (Path(cwd).name or "/")
         self.argv, self.cwd = argv, cwd
+        self.is_claude = "claude" in Path(argv[0]).name.lower()
         self.buf = bytearray()      # scrollback so re-attaching clients catch up
         self.discarded = 0          # bytes trimmed off the front of buf, ever
         self.cond = threading.Condition()
@@ -1024,6 +1691,14 @@ class Term:
                     time.sleep(0.15)
         finally:
             self._cleanup()
+            # the session has written its transcript and run its own hooks by
+            # now — hand it to the retrospective (detached, so quitting the
+            # app does not cut it short)
+            if self.is_claude:
+                try:
+                    spawn_improve(self.cwd)
+                except Exception:
+                    pass
 
     def kill(self):
         """Non-blocking graceful close (used by the per-tab close button)."""
@@ -1428,6 +2103,7 @@ class Handler(BaseHTTPRequestHandler):
 
             if p == "/api/state":
                 self._json({"layout": state_read().get("layout"),
+                            "improve": improve_enabled(),
                             "has_terminal": HAS_TERMINAL,
                             "terminal_blocked": (None if HAS_TERMINAL
                                                  else winconpty.unsupported_reason()),
@@ -1541,6 +2217,29 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(parse_session(f, include_sidechain=True))
                 return
 
+            if p == "/api/plan":
+                slug = qs.get("project", [""])[0]
+                cwd = qs.get("cwd", [None])[0] or project_cwd(self.root, slug)
+                if not cwd:
+                    self._json({"dir": None, "candidates": [], "items": [],
+                                "done": 0, "total": 0, "file": None})
+                    return
+                self._json(plan_read(cwd, qs.get("file", [None])[0]))
+                return
+
+            if p == "/api/config":
+                self._json(config_view(qs.get("cwd", [None])[0]))
+                return
+
+            if p == "/api/improve":
+                cwd = qs.get("cwd", [None])[0]
+                slug = (mangle_cwd(cwd) if cwd
+                        else qs.get("project", [""])[0])
+                out = improve_reports(slug)
+                out["enabled"] = improve_enabled()
+                self._json(out)
+                return
+
             if p == "/api/memory":
                 slug = qs.get("project", [""])[0]
                 self._json(read_memory(self.root, slug))
@@ -1594,10 +2293,27 @@ class Handler(BaseHTTPRequestHandler):
                 layout = body.get("layout")
                 if isinstance(layout, dict):
                     clean = {k: float(v) for k, v in layout.items()
-                             if k in ("col2", "rowL", "rowR", "sidebar", "headH")
+                             if k in ("col2", "rowL", "rowR", "rowP", "sidebar", "headH")
                              and isinstance(v, (int, float))}
                     state_write({"layout": clean})
-                self._json({"ok": True})
+                if isinstance(body.get("improve"), bool):
+                    state_write({"improve": body["improve"]})
+                self._json({"ok": True, "improve": improve_enabled()})
+                return
+
+            if p in ("/api/plan/toggle", "/api/plan/create"):
+                slug = body.get("project") or ""
+                cwd = body.get("cwd") or project_cwd(self.root, slug)
+                if not cwd:
+                    self._err(404, "project has no working directory")
+                    return
+                if p.endswith("create"):
+                    self._json(plan_create(cwd))
+                else:
+                    self._json(plan_toggle(cwd, body.get("file"),
+                                           body.get("line"),
+                                           body.get("expect"),
+                                           body.get("state", "done")))
                 return
 
             if p == "/api/shutdown":
@@ -1669,6 +2385,8 @@ class Handler(BaseHTTPRequestHandler):
             self._err(424, str(e))
         except RuntimeError as e:
             self._err(429, str(e))
+        except ValueError as e:
+            self._err(409, str(e))
         except BrokenPipeError:
             pass
         except Exception as e:

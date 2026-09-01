@@ -2,10 +2,11 @@ cff-version: 1.2.0
 message: "If you use this software in your work, please cite it as below."
 title: claude-devtools-lite
 abstract: >-
-  A local, read-only dashboard for inspecting Claude Code sessions: timelines,
-  thinking blocks, tool calls, diffs, token usage, subagents and memory, with an
-  embedded terminal, a file explorer and a visual output pane. Zero
-  dependencies; runs on macOS, Linux and Windows.
+  A local dashboard for inspecting Claude Code sessions: timelines, thinking
+  blocks, tool calls, diffs, token usage, subagents and memory, with an embedded
+  terminal, a live plan checklist, a configuration inventory that shows what each
+  installed component costs in context, a file explorer and a visual output pane.
+  Zero dependencies; runs on macOS, Linux and Windows.
 type: software
 authors:
   - family-names: Beaucoral
@@ -13,8 +14,8 @@ authors:
 repository-code: "https://github.com/PierreBeaucoral/claude-devtools-lite"
 url: "https://github.com/PierreBeaucoral/claude-devtools-lite"
 license: MIT
-version: "0.6.1"
-date-released: "2026-07-31"
+version: "0.7.0"
+date-released: "2026-09-01"
 keywords:
   - claude-code
   - developer-tools

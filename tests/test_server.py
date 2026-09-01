@@ -590,3 +590,264 @@ def test_slice_from_reassembles_the_stream_without_loss():
         chunk, pos = t.slice_from(pos)
         seen.extend(chunk)
     assert bytes(seen) == bytes(t.buf)
+
+
+# ---------------------------------------------------------------- plan pane
+
+@pytest.fixture
+def plan_project(tmp_path, monkeypatch):
+    """A project directory that looks like $HOME so safe_home_path accepts it."""
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+    proj = tmp_path / "proj"
+    (proj / ".claude").mkdir(parents=True)
+    return proj
+
+
+def test_plan_parses_checkboxes_and_skips_comments_and_fences():
+    items, done, total = srv.parse_plan_text(
+        "# Plan\n"
+        "<!-- a note\n     spanning two lines -->\n"
+        "Status: DRAFT\n"
+        "## Steps\n"
+        "- [x] first\n"
+        "- [ ] second\n"
+        "  - [~] nested\n"
+        "1. [ ] numbered\n"
+        "```\n- [ ] inside a fence\n```\n")
+    kinds = [(i["kind"], i.get("state"), i["text"]) for i in items]
+    assert ("task", "done", "first") in kinds
+    assert ("task", "doing", "nested") in kinds
+    assert ("head", None, "Plan") in kinds
+    assert ("text", None, "Status: DRAFT") in kinds
+    assert not any("fence" in i["text"] for i in items)     # code blocks ignored
+    assert not any("spanning" in i["text"] for i in items)  # comments ignored
+    assert (done, total) == (1, 4)
+
+
+def test_plan_discovery_prefers_the_live_plan_then_dated_plans(plan_project):
+    root = plan_project
+    (root / "PLAN.md").write_text("- [ ] root\n")
+    plans = root / "quality_reports" / "plans"
+    plans.mkdir(parents=True)
+    (plans / "2026-01-01_old.md").write_text("- [ ] old\n")
+    # no .claude/plan.md yet: the dated plan wins over PLAN.md
+    assert srv.plan_candidates(root)[0].name == "2026-01-01_old.md"
+    (root / ".claude" / "plan.md").write_text("- [ ] live\n")
+    cands = srv.plan_candidates(root)
+    assert cands[0].name == "plan.md"
+    assert [c.name for c in cands[1:]] == ["2026-01-01_old.md", "PLAN.md"]
+
+
+def test_plan_toggle_rewrites_only_the_marker(plan_project):
+    f = plan_project / ".claude" / "plan.md"
+    f.write_text("# Plan\n- [ ] alpha\n- [ ] beta\n")
+    out = srv.plan_toggle(plan_project, str(f), 1, "alpha", "done")
+    assert f.read_text() == "# Plan\n- [x] alpha\n- [ ] beta\n"
+    assert (out["done"], out["total"]) == (1, 2)
+    srv.plan_toggle(plan_project, str(f), 1, "alpha", "open")
+    assert f.read_text() == "# Plan\n- [ ] alpha\n- [ ] beta\n"
+
+
+def test_plan_toggle_refuses_files_outside_the_project(plan_project):
+    victim = Path.home() / "secrets.md"
+    victim.write_text("- [ ] do not touch\n")
+    with pytest.raises(ValueError):
+        srv.plan_toggle(plan_project, str(victim), 0, None, "done")
+    assert victim.read_text() == "- [ ] do not touch\n"
+
+
+def test_plan_toggle_refuses_when_the_line_moved(plan_project):
+    f = plan_project / ".claude" / "plan.md"
+    f.write_text("- [ ] alpha\n- [ ] beta\n")
+    with pytest.raises(ValueError):                 # stale text from the client
+        srv.plan_toggle(plan_project, str(f), 0, "beta", "done")
+    with pytest.raises(ValueError):                 # not a checkbox line
+        f.write_text("plain prose\n")
+        srv.plan_toggle(plan_project, str(f), 0, None, "done")
+    with pytest.raises(ValueError):                 # out of range
+        srv.plan_toggle(plan_project, str(f), 99, None, "done")
+
+
+def test_plan_toggle_preserves_crlf_and_indentation(plan_project):
+    f = plan_project / ".claude" / "plan.md"
+    f.write_bytes(b"# Plan\r\n  - [ ] indented\r\n")
+    srv.plan_toggle(plan_project, str(f), 1, "indented", "done")
+    assert f.read_bytes() == b"# Plan\r\n  - [x] indented\r\n"
+
+
+# ------------------------------------------------------- end-of-session improve
+
+def test_mangle_cwd_matches_claude_code_project_dirs():
+    assert srv.mangle_cwd("/Users/x/Docs/Cours MACRO 1/app") == \
+        "-Users-x-Docs-Cours-MACRO-1-app"
+    assert srv.mangle_cwd("/a/b.c") == "-a-b-c"
+
+
+def test_improve_never_runs_inside_its_own_retrospective(monkeypatch, tmp_path):
+    monkeypatch.setenv("CDL_IMPROVE_RUN", "1")
+    monkeypatch.setattr(srv, "find_claude", lambda: "/bin/false")
+    assert srv.spawn_improve(str(tmp_path)) is None
+
+
+def test_improve_respects_the_kill_switch(monkeypatch, tmp_path):
+    monkeypatch.delenv("CDL_IMPROVE_RUN", raising=False)
+    monkeypatch.setenv("CDL_IMPROVE", "0")
+    assert srv.improve_enabled() is False
+    assert srv.spawn_improve(str(tmp_path)) is None
+
+
+def test_improve_skips_short_sessions(monkeypatch, tmp_path):
+    monkeypatch.setattr(srv, "CLAUDE_ROOT", tmp_path)
+    cwd = "/tmp/tiny"
+    d = tmp_path / "projects" / srv.mangle_cwd(cwd)
+    d.mkdir(parents=True)
+    (d / "s.jsonl").write_text("{}\n")                 # far under the threshold
+    assert srv.newest_transcript(cwd) is None
+    (d / "s.jsonl").write_text("x" * (srv.IMPROVE_MIN_TRANSCRIPT + 1))
+    assert srv.newest_transcript(cwd).name == "s.jsonl"
+
+
+# ---------------------------------------------------------------- config pane
+
+def test_front_matter_reads_name_and_description(tmp_path):
+    f = tmp_path / "a.md"
+    f.write_text("---\nname: coder\ndescription: Writes code.\n"
+                 "tools: Read, Grep\n---\n\n# body\n")
+    fm = srv.read_frontmatter(f)
+    assert fm["name"] == "coder" and fm["description"] == "Writes code."
+    f.write_text("no front matter\n# Heading\n")
+    assert srv.read_frontmatter(f) == {}
+    assert srv.first_heading(f) == "Heading"
+
+
+def test_config_inventory_separates_resident_from_on_demand(tmp_path):
+    root = tmp_path / ".claude"
+    (root / "rules").mkdir(parents=True)
+    (root / "agents").mkdir()
+    (root / "skills" / "graphify").mkdir(parents=True)
+    (root / "CLAUDE.md").write_text("x" * 4000)
+    (root / "rules" / "workflow.md").write_text("# Workflow\n" + "y" * 2000)
+    (root / "agents" / "coder.md").write_text(
+        "---\nname: coder\ndescription: Writes code.\n---\n" + "z" * 8000)
+    (root / "skills" / "graphify" / "SKILL.md").write_text(
+        "---\nname: graphify\ndescription: Graphs things.\n---\n" + "w" * 8000)
+
+    inv = srv.config_inventory(root)
+    by = {g["key"]: g for g in inv["groups"]}
+    assert [i["name"] for i in by["skills"]["items"]] == ["graphify"]
+    assert by["memory"]["items"][1]["description"] == "Workflow"   # heading fallback
+
+    # instruction files cost their whole body every turn ...
+    claude_md = by["memory"]["items"][0]
+    assert claude_md["resident"] == claude_md["tokens"] > 900
+    # ... an agent costs only its description until it is dispatched
+    coder = by["agents"]["items"][0]
+    assert coder["resident"] < 10 < coder["tokens"]
+    assert inv["ondemand"] > inv["resident"]
+
+
+def test_config_inventory_flags_hooks_nothing_points_at(tmp_path):
+    root = tmp_path / ".claude"
+    (root / "hooks").mkdir(parents=True)
+    (root / "hooks" / "orphan.sh").write_text("#!/bin/sh\n")
+    (root / "hooks" / "live.sh").write_text("#!/bin/sh\n")
+    (root / "settings.json").write_text(json.dumps({"hooks": {"SessionEnd": [
+        {"hooks": [{"type": "command",
+                    "command": '"' + str(root / "hooks" / "live.sh") + '"'}]}]}}))
+    # a settings.local.json without hooks must not erase the registration
+    (root / "settings.local.json").write_text(json.dumps({"permissions": {}}))
+
+    hooks = {i["name"]: i for g in srv.config_inventory(root)["groups"]
+             if g["key"] == "hooks" for i in g["items"]}
+    assert hooks["live"]["event"] == "SessionEnd"
+    assert hooks["orphan"]["event"] is None
+
+
+def test_config_view_skips_a_project_claude_dir_with_nothing_in_it(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr(srv, "CLAUDE_ROOT", tmp_path / ".claude")
+    (tmp_path / ".claude").mkdir()
+    proj = tmp_path / "proj" / ".claude"
+    proj.mkdir(parents=True)
+    (proj / "plan.md").write_text("- [ ] a\n")        # not a config component
+    assert srv.config_view(str(tmp_path / "proj"))["project"] is None
+    (proj / "agents").mkdir()
+    (proj / "agents" / "x.md").write_text("---\nname: x\ndescription: d\n---\n")
+    assert srv.config_view(str(tmp_path / "proj"))["project"]["count"] == 1
+
+
+def test_mcp_servers_come_from_claude_json_not_settings(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+    (tmp_path / ".claude.json").write_text(json.dumps({
+        "mcpServers": {"garmin": {"type": "stdio", "command": "x",
+                                  "env": {"TOKEN": "sekrit"}}},
+        "projects": {str(tmp_path / "proj"): {
+            "mcpServers": {"datagouv": {"type": "http", "url": "https://x"}}}}}))
+    assert srv.mcp_servers(tmp_path / ".claude") == {"garmin": "stdio"}
+    assert srv.mcp_servers(None, scope=tmp_path / "proj") == {"datagouv": "http"}
+
+
+def test_config_reports_project_mcp_even_without_a_project_claude_dir(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr(srv, "CLAUDE_ROOT", tmp_path / ".claude")
+    (tmp_path / ".claude").mkdir()
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (tmp_path / ".claude.json").write_text(json.dumps({"projects": {
+        str(proj): {"mcpServers": {"datagouv": {"type": "http"}}}}}))
+    inv = srv.config_view(str(proj))["project"]
+    assert [i["name"] for g in inv["groups"] for i in g["items"]] == ["datagouv"]
+
+
+def test_mcp_inventory_never_leaks_args_or_env(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr(srv, "CLAUDE_ROOT", tmp_path / ".claude")
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude.json").write_text(json.dumps({"mcpServers": {
+        "s": {"type": "stdio", "command": "/bin/x",
+              "args": ["--key", "AKIA-DO-NOT-LEAK"],
+              "env": {"API_KEY": "sk-do-not-leak"}}}}))
+    blob = json.dumps(srv.config_view())
+    assert "DO-NOT-LEAK" not in blob and "sk-do-not-leak" not in blob
+    assert "/bin/x" not in blob
+
+
+def test_empty_retrospectives_are_not_offered_as_reports(tmp_path, monkeypatch):
+    monkeypatch.setattr(srv, "IMPROVE_DIR", tmp_path)
+    d = tmp_path / "proj"
+    d.mkdir()
+    stale = d / "2026-01-01_0900.md"
+    stale.write_text("# Retrospective\n")                 # header only
+    os.utime(stale, (time.time() - 7200, time.time() - 7200))
+    real = d / "2026-01-02_0900.md"
+    real.write_text("# Retrospective\n\n" + "finding. " * 60)
+    names = [r["name"] for r in srv.improve_reports("proj")["reports"]]
+    assert names == [real.name]
+
+    fresh = d / "2026-01-03_0900.md"                      # still being written
+    fresh.write_text("# Retrospective\n")
+    assert fresh.name in [r["name"] for r in srv.improve_reports("proj")["reports"]]
+
+
+def test_hook_name_resolves_through_an_interpreter(tmp_path):
+    assert srv.hook_script_name(["python3", "/a/pre-compact.py"]) == "pre-compact.py"
+    assert srv.hook_script_name(["/a/protect-files.sh"]) == "protect-files.sh"
+    assert srv.hook_script_name(["node", "--enable-source-maps", "/a/x.mjs"]) == "x.mjs"
+    assert srv.hook_script_name(["some-binary"]) == "some-binary"
+
+
+def test_helper_scripts_in_hooks_are_not_flagged_as_orphans(tmp_path):
+    root = tmp_path / ".claude"
+    (root / "hooks").mkdir(parents=True)
+    (root / "hooks" / "lib.sh").write_text("#!/bin/sh\n# a linter other hooks call\n")
+    (root / "hooks" / "guard.sh").write_text(
+        "#!/bin/sh\n# reads the payload\ncat | grep tool_input\n")
+    (root / "hooks" / "declared.py").write_text('"""Hook Event: PreCompact"""\n')
+    (root / "settings.json").write_text("{}")
+
+    got = {i["name"]: i for g in srv.config_inventory(root)["groups"]
+           if g["key"] == "hooks" for i in g["items"]}
+    assert got["lib"]["orphan"] is False          # helper, not a hook
+    assert got["guard"]["orphan"] is True         # consumes a hook payload
+    assert got["declared"]["orphan"] is True
+    assert "PreCompact" in got["declared"]["description"]
