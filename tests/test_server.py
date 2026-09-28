@@ -1370,3 +1370,26 @@ def test_session_tail_splices_to_a_full_parse(tmp_path):
     r = srv.session_tail(f, first["key"], len(ents))
     spliced = ents[:r["start"]] + r["entries"]
     assert spliced == srv.parse_session(f)["entries"] and r["total"] == len(spliced)
+
+
+@pytest.mark.skipif(not getattr(srv, "HAS_PTY", False), reason="POSIX pty only")
+def test_one_stream_carries_every_terminal(http_server, monkeypatch):
+    """A browser allows 6 connections per host: one stream per tab starved
+    keystrokes. One stream must carry all terminals, output and exits."""
+    import base64
+    a = srv.PosixTerm(["/bin/sh", "-c", "echo AAA"], "/tmp")
+    b = srv.PosixTerm(["/bin/sh", "-c", "sleep 0.3; echo BBB"], "/tmp")
+    monkeypatch.setattr(srv, "TERMS", {a.id: a, b.id: b})
+    code, body = fetch(f"{http_server}/api/term/stream?id={a.id}&from=0"
+                       f"&id={b.id}&from=0&id=gone&from=0",
+                       headers={"X-Devtools-Token": "a" * 48})
+    assert code == 200
+    out, exits = {a.id: b"", b.id: b""}, set()
+    for frame in body.decode().split("\n\n"):
+        if frame.startswith("event: exit"):
+            exits.add(frame.split("data: ")[1])
+        elif frame.startswith("data: "):
+            tid, _, b64 = frame[6:].split(" ")
+            out[tid] += base64.b64decode(b64)
+    assert b"AAA" in out[a.id] and b"BBB" in out[b.id]
+    assert exits == {a.id, b.id, "gone"}

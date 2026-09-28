@@ -2023,6 +2023,18 @@ def spawn_improve(cwd):
 # moment the front gets trimmed.
 
 SCROLLBACK_CAP = 512 * 1024        # bytes of terminal output kept for replay
+# One output stream serves every terminal of a page: a browser allows only 6
+# connections per host, so a stream per tab left none for keystrokes once 6
+# tabs were open. Every pump bumps TERMS_SEQ; the stream waits on it.
+TERMS_COND = threading.Condition()
+TERMS_SEQ = 0
+
+
+def terms_changed():
+    global TERMS_SEQ
+    with TERMS_COND:
+        TERMS_SEQ += 1
+        TERMS_COND.notify_all()
 
 
 class Term:
@@ -2093,9 +2105,11 @@ class Term:
                     # it so absolute positions stay translatable
                     self.discarded += drop
                 self.cond.notify_all()
+            terms_changed()
         with self.cond:
             self.alive = False
             self.cond.notify_all()
+        terms_changed()
         # a child that exits by itself (`exit`, /quit) gets the same ending as
         # a closed tab: reaped, fds closed, retrospective considered
         self._finish()
@@ -3006,44 +3020,55 @@ class Handler(BaseHTTPRequestHandler):
             self._err(500, f"{type(e).__name__}: {e}")
 
     def stream_term(self, qs):
-        """SSE stream of a terminal's output (base64 chunks)."""
-        tid = qs.get("id", [""])[0]
-        with TERMS_LOCK:
-            t = TERMS.get(tid)
-        if t is None:
-            self._err(404, "terminal not found")
+        """SSE stream of several terminals' output: ?id=a&from=0&id=b&from=0.
+        Frames: `data: <id> <offset> <base64>`, where offset is the absolute
+        position just past the chunk, and `event: exit / data: <id>`."""
+        ids, froms = qs.get("id", []), qs.get("from", [])
+        pos = {}
+        for i, tid in enumerate(ids):
+            try:
+                pos[tid] = max(0, int(froms[i]))
+            except (IndexError, ValueError):
+                pos[tid] = 0
+        if not pos:
+            self._err(400, "no terminal id")
             return
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         try:
-            pos = max(0, int(qs.get("from", ["0"])[0]))
-        except ValueError:
-            pos = 0
-        try:
-            while True:
-                with t.cond:
-                    if pos >= t.produced() and t.alive:
-                        t.cond.wait(timeout=15.0)
-                    # `pos` is absolute — the client counts every byte it has
-                    # written into xterm and never rewinds, so it must be
-                    # translated, not used as an index into the trimmed buf
-                    chunk, pos = t.slice_from(pos)
-                    alive = t.alive
-                if chunk:
-                    b64 = base64.b64encode(chunk).decode()
-                    # `id` is the absolute offset just past this chunk. The
-                    # client adopts it instead of counting bytes itself, so a
-                    # skipped gap cannot leave the two sides disagreeing.
-                    self.wfile.write(f"id: {pos}\ndata: {b64}\n\n".encode())
-                elif alive:
-                    self.wfile.write(b": keepalive\n\n")  # comment frame
-                self.wfile.flush()
-                if not alive and pos >= t.produced():
-                    self.wfile.write(b"event: exit\ndata: 0\n\n")
+            while pos:
+                with TERMS_COND:
+                    seen = TERMS_SEQ
+                wrote = False
+                for tid in list(pos):
+                    with TERMS_LOCK:
+                        t = TERMS.get(tid)
+                    if t is None:               # killed, or gone after a restart
+                        chunk, alive, done = b"", False, True
+                    else:
+                        with t.cond:
+                            # `pos` is absolute — translated, never an index
+                            chunk, pos[tid] = t.slice_from(pos[tid])
+                            alive = t.alive
+                            done = not alive and pos[tid] >= t.produced()
+                    if chunk:
+                        b64 = base64.b64encode(chunk).decode()
+                        self.wfile.write(f"data: {tid} {pos[tid]} {b64}\n\n".encode())
+                        wrote = True
+                    if done:
+                        self.wfile.write(f"event: exit\ndata: {tid}\n\n".encode())
+                        del pos[tid]
+                        wrote = True
+                if wrote:
                     self.wfile.flush()
-                    return
+                    continue
+                with TERMS_COND:
+                    changed = TERMS_COND.wait_for(lambda: TERMS_SEQ != seen, 15.0)
+                if not changed:
+                    self.wfile.write(b": keepalive\n\n")    # comment frame
+                    self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError, OSError):
             return
 

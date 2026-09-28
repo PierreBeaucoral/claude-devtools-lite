@@ -2189,7 +2189,7 @@ async function termView(kind, label){
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
   const t = { id: null, kind, label, term, fit, container,
-              dead: false, pos: 0, abort: null,
+              dead: false, pos: 0,
               sentCols: null, sentRows: null, pendingSize: null,
               sizeInFlight: false };
   for(const [, other] of TM.terms) other.container.style.display = "none";
@@ -2211,7 +2211,7 @@ function attachTerm(t, info, noFocus){
   t.term.onData(d => sendInput(t, d));
   t.term.onResize(() => syncSize(t));
   activateTerm(t.id, noFocus);
-  streamTerm(t);
+  restreamTerms();
   renderTabs();
 }
 
@@ -2255,11 +2255,24 @@ async function reattachTerms(){
   }
 }
 
-async function streamTerm(t){
-  for(let attempt = 0; attempt < 3 && !t.dead; attempt++){
+/* ONE output stream for every terminal. A browser keeps at most 6
+   connections per host: a stream per tab left none for keystrokes once six
+   tabs were open (typing froze while output kept flowing). Opening or closing
+   a tab restarts the stream from each tab's offset, so nothing is lost. */
+function restreamTerms(){
+  if(TM.stream) TM.stream.abort();
+  const live = [...TM.terms.values()].filter(t => !t.dead && t.id);
+  if(!live.length){ TM.stream = null; return; }
+  const ac = new AbortController(); TM.stream = ac;
+  streamTerms(ac);
+}
+async function streamTerms(ac){
+  for(let attempt = 0; attempt < 3 && !ac.signal.aborted; attempt++){
+    const live = [...TM.terms.values()].filter(t => !t.dead && t.id);
+    if(!live.length) return;
     try{
-      const ac = new AbortController(); t.abort = ac;
-      const resp = await fetch(`/api/term/stream?id=${t.id}&from=${t.pos}`,
+      const qs = live.map(t => `id=${encodeURIComponent(t.id)}&from=${t.pos}`).join("&");
+      const resp = await fetch(`/api/term/stream?${qs}`,
         {signal: ac.signal, headers: authHeaders()});
       if(!resp.ok) throw new Error("stream " + resp.status);
       const reader = resp.body.getReader();
@@ -2272,35 +2285,35 @@ async function streamTerm(t){
         let i;
         while((i = acc.indexOf("\n\n")) >= 0){
           const frame = acc.slice(0, i); acc = acc.slice(i + 2);
+          const data = (frame.split("\n").find(l => l.startsWith("data: ")) || "").slice(6);
+          if(!data) continue;                      // keepalive
           if(frame.startsWith("event: exit")){
-            t.dead = true;
-            t.term.write("\r\n\x1b[31m[process exited]\x1b[0m\r\n");
-            renderTabs();
-            return;
+            const t = TM.terms.get(data.trim());
+            if(t && !t.dead){
+              t.dead = true;
+              t.term.write("\r\n\x1b[31m[process exited]\x1b[0m\r\n");
+              renderTabs();
+            }
+            continue;
           }
-          // a frame may carry an "id" line (absolute offset just past its
-          // payload) before the "data" line
-          let abs = null, payload = null;
-          for(const line of frame.split("\n")){
-            if(line.startsWith("id: ")) abs = parseInt(line.slice(4), 10);
-            else if(line.startsWith("data: ")) payload = line.slice(6).trim();
-          }
-          if(payload !== null){
-            const bytes = b64ToBytes(payload);
-            // the server's offset wins: if output aged out of its scrollback
-            // while we were disconnected, counting bytes here would drift
-            t.pos = Number.isFinite(abs) ? abs : t.pos + bytes.length;
-            t.term.write(bytes);
-          }
+          const [tid, abs, payload] = data.split(" ");
+          const t = TM.terms.get(tid);
+          if(!t || t.dead) continue;               // closed while in flight
+          // the server's offset wins: if output aged out of its scrollback
+          // while we were disconnected, counting bytes here would drift
+          t.pos = parseInt(abs, 10);
+          t.term.write(b64ToBytes(payload));
         }
       }
-      attempt = 0; // clean server close; retry from offset
+      attempt = 0; // clean server close; retry from offsets
     }catch(e){
-      if(t.dead || (t.abort && t.abort.signal.aborted)) return;
+      if(ac.signal.aborted) return;
       await new Promise(r => setTimeout(r, 800));
     }
   }
-  if(!t.dead){ t.term.write("\r\n\x1b[31m[disconnected]\x1b[0m\r\n"); }
+  if(ac.signal.aborted) return;
+  for(const t of TM.terms.values())
+    if(!t.dead) t.term.write("\r\n\x1b[31m[disconnected]\x1b[0m\r\n");
 }
 
 /* Switching terminal tabs moves the file explorer with you: a tab you have
@@ -2340,11 +2353,11 @@ function fitActive(force){
 async function closeTerm(id){
   const t = TM.terms.get(id); if(!t) return;
   t.dead = true;
-  if(t.abort) t.abort.abort();
   fetch("/api/term/kill", {method:"POST", headers:authHeaders({"Content-Type":"application/json"}),
     body: JSON.stringify({id})}).catch(() => {});      // already gone is fine
   t.term.dispose(); t.container.remove();
   TM.terms.delete(id);
+  restreamTerms();
   if(TM.active === id) TM.active = TM.terms.keys().next().value || null;
   if(TM.active) activateTerm(TM.active);
   else $("#termempty").style.display = "block";
