@@ -912,3 +912,15 @@ def test_review_rejects_bad_input(figure, plan_project):
         srv.review_read(str(notes))                           # not an image
     with pytest.raises(ValueError):
         srv.review_read("/etc/hosts.png")                     # outside $HOME
+
+
+def test_every_kernel32_call_has_a_ctypes_signature():
+    """An undeclared kernel32 function gets its arguments as 32-bit C ints, so
+    a 64-bit HANDLE or pointer raises "argument 1: OverflowError: int too long
+    to convert" on Windows. This runs anywhere: it reads the source."""
+    import re
+    src = (HERE.parent / "winconpty.py").read_text()
+    called = set(re.findall(r"k32\.(\w+)\(", src))
+    declared = set(re.findall(r'\(\s*"(\w+)",', src))
+    assert called, "no kernel32 calls found — pattern out of date"
+    assert called <= declared, f"missing argtypes: {sorted(called - declared)}"

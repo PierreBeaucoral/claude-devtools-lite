@@ -97,14 +97,35 @@ class ConPtyProcess:
                         ("dwThreadId", wintypes.DWORD)]
 
         self._COORD = COORD
-        k32.CreatePseudoConsole.argtypes = [COORD, wintypes.HANDLE,
-                                            wintypes.HANDLE, wintypes.DWORD,
-                                            ctypes.POINTER(wintypes.HANDLE)]
-        k32.CreatePseudoConsole.restype = ctypes.HRESULT
-        k32.ResizePseudoConsole.argtypes = [wintypes.HANDLE, COORD]
-        k32.ResizePseudoConsole.restype = ctypes.HRESULT
-        k32.ClosePseudoConsole.argtypes = [wintypes.HANDLE]
-        k32.ClosePseudoConsole.restype = None
+        # Every kernel32 call gets a signature. Without one, ctypes passes a
+        # Python int as a 32-bit C int — and pointer-typed struct fields
+        # (lpAttributeList, hProcess) come back as ints, so on 64-bit Windows
+        # the first call raised "argument 1: OverflowError: int too long to
+        # convert" before any process started. HANDLE/pointer params must be
+        # declared pointer-sized. tests/test_server.py checks none is missing.
+        H, D, B = wintypes.HANDLE, wintypes.DWORD, wintypes.BOOL
+        VP, PSZ = ctypes.c_void_p, ctypes.POINTER(ctypes.c_size_t)
+        for name, args, res in (
+                ("CreatePseudoConsole",
+                 [COORD, H, H, D, ctypes.POINTER(H)], ctypes.HRESULT),
+                ("ResizePseudoConsole", [H, COORD], ctypes.HRESULT),
+                ("ClosePseudoConsole", [H], None),
+                ("CreatePipe", [ctypes.POINTER(H), ctypes.POINTER(H), VP, D], B),
+                ("CloseHandle", [H], B),
+                ("InitializeProcThreadAttributeList", [VP, D, D, PSZ], B),
+                ("UpdateProcThreadAttribute",
+                 [VP, D, ctypes.c_size_t, VP, ctypes.c_size_t, VP, PSZ], B),
+                ("DeleteProcThreadAttributeList", [VP], None),
+                ("CreateProcessW",
+                 [wintypes.LPCWSTR, VP, VP, VP, B, D, VP, wintypes.LPCWSTR,
+                  ctypes.POINTER(STARTUPINFOW),
+                  ctypes.POINTER(PROCESS_INFORMATION)], B),
+                ("ReadFile", [H, VP, D, ctypes.POINTER(D), VP], B),
+                ("WriteFile", [H, VP, D, ctypes.POINTER(D), VP], B),
+                ("GetExitCodeProcess", [H, ctypes.POINTER(D)], B),
+                ("TerminateProcess", [H, wintypes.UINT], B)):
+            fn = getattr(k32, name)
+            fn.argtypes, fn.restype = args, res
 
         # two pipes: one feeds the console's input, one drains its output
         in_read = wintypes.HANDLE()
