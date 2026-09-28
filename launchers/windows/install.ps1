@@ -6,6 +6,10 @@ $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Cmd  = Join-Path $Here "Claude DevTools.cmd"
 if (-not (Test-Path $Cmd)) { Write-Error "Claude DevTools.cmd not found next to install.ps1"; exit 1 }
 
+# the app's own icon, committed next to this script; a stock one if it's gone
+$Icon = Join-Path $Here "claude-devtools.ico"
+if (Test-Path $Icon) { $Icon = "$Icon,0" } else { $Icon = "$env:SystemRoot\System32\SHELL32.dll,13" }
+
 $WShell = New-Object -ComObject WScript.Shell
 $targets = @(
   (Join-Path ([Environment]::GetFolderPath("Desktop")) "Claude DevTools.lnk"),
@@ -18,7 +22,7 @@ foreach ($t in $targets) {
     $sc.TargetPath       = $Cmd
     $sc.WorkingDirectory = $Here
     $sc.Description      = "Inspect Claude Code sessions, tokens, and outputs"
-    $sc.IconLocation     = "$env:SystemRoot\System32\SHELL32.dll,13"
+    $sc.IconLocation     = $Icon
     $sc.Save()
     Write-Host "Created $t"
 }

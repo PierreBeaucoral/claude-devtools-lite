@@ -924,3 +924,61 @@ def test_every_kernel32_call_has_a_ctypes_signature():
     declared = set(re.findall(r'\(\s*"(\w+)",', src))
     assert called, "no kernel32 calls found — pattern out of date"
     assert called <= declared, f"missing argtypes: {sorted(called - declared)}"
+
+
+# ---------------------------------------------------------------- add-ons
+
+def test_shipped_addons_manifest_is_complete():
+    data = json.loads((HERE.parent / "addons.json").read_text())
+    ids = [a["id"] for a in data["addons"]]
+    assert len(ids) == len(set(ids))
+    for a in data["addons"]:
+        assert srv.ADDON_ID_RE.fullmatch(a["id"]), a["id"]
+        assert a["check"]["kind"] in ("skill", "command", "plugin"), a["id"]
+        for plat in ("posix", "windows"):
+            assert a["install"][plat], f"{a['id']} has no {plat} commands"
+        assert a["source"].startswith("https://"), a["id"]
+    used = {a["id"] for a in data["addons"] if a.get("used_by_app")}
+    assert used == {"graphify", "improve"}
+
+
+def test_addon_detection_by_kind(tmp_path):
+    root = tmp_path / ".claude"
+    (root / "skills" / "graphify").mkdir(parents=True)
+    (root / "skills" / "graphify" / "SKILL.md").write_text("x")
+    (root / "skills" / "empty").mkdir()                     # no SKILL.md
+    (root / "commands").mkdir()
+    (root / "commands" / "improve.md").write_text("x")
+    (root / "plugins").mkdir()
+    (root / "plugins" / "installed_plugins.json").write_text(
+        json.dumps({"version": 2, "plugins": {"ponytail@ponytail": []}}))
+    ok = lambda kind, name: srv.addon_installed({"kind": kind, "name": name}, root)
+    assert ok("skill", "graphify") and not ok("skill", "empty")
+    assert ok("command", "improve") and not ok("command", "nope")
+    assert ok("plugin", "ponytail@ponytail") and not ok("plugin", "codex@openai-codex")
+    assert not ok("skill", "../skills/graphify")             # no path games
+    assert not ok("weird", "graphify")
+
+
+def test_addons_status_reports_missing_prerequisites(tmp_path, monkeypatch):
+    manifest = tmp_path / "addons.json"
+    manifest.write_text(json.dumps({"addons": [
+        {"id": "x", "check": {"kind": "skill", "name": "x"},
+         "needs": ["definitely-not-a-real-program-cdl"],
+         "install": {"posix": ["echo hi"], "windows": ["echo hi"]}},
+        {"id": "Bad Id!", "check": {"kind": "skill", "name": "y"}}]}))
+    st = srv.addons_status(root=tmp_path / ".claude", manifest=manifest)
+    assert [a["id"] for a in st["addons"]] == ["x"]           # invalid id dropped
+    a = st["addons"][0]
+    assert a["installed"] is False and a["commands"] == ["echo hi"]
+    assert a["missing_needs"] == ["definitely-not-a-real-program-cdl"]
+
+
+def test_improve_is_skipped_when_the_command_is_not_installed(tmp_path, monkeypatch):
+    monkeypatch.setattr(srv, "CLAUDE_ROOT", tmp_path / ".claude")
+    monkeypatch.setattr(srv, "improve_enabled", lambda: True)
+    monkeypatch.delenv("CDL_IMPROVE_RUN", raising=False)
+    called = []
+    monkeypatch.setattr(srv, "find_claude", lambda: called.append(1) or "/bin/true")
+    assert srv.spawn_improve(str(tmp_path)) is None
+    assert called == []                   # bailed out before looking for claude

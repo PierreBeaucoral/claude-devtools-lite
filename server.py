@@ -1490,6 +1490,72 @@ def config_view(cwd=None):
     return out
 
 
+# ---------------------------------------------------------------- optional add-ons
+#
+# addons.json (next to this file) lists Claude Code add-ons the dashboard can
+# offer: graphify and /improve power features here; the rest are suggestions.
+# This only DETECTS what is installed. Installing happens in a visible
+# terminal tab, with commands taken from that file and shown to the user
+# first — never from anything a request supplies.
+
+ADDONS_FILE = HERE / "addons.json"
+ADDON_ID_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,40}")
+
+
+def installed_plugins(root=None):
+    try:
+        data = json.loads((Path(root or CLAUDE_ROOT) / "plugins" /
+                           "installed_plugins.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    plugins = data.get("plugins", data) if isinstance(data, dict) else {}
+    return set(plugins) if isinstance(plugins, dict) else set()
+
+
+def addon_installed(check, root=None, plugins=None):
+    root = Path(root or CLAUDE_ROOT)
+    kind, name = (check or {}).get("kind"), str((check or {}).get("name") or "")
+    if not name or "/" in name or "\\" in name or ".." in name:
+        return False
+    if kind == "skill":
+        return (root / "skills" / name / "SKILL.md").is_file()
+    if kind == "command":
+        return (root / "commands" / (name + ".md")).is_file()
+    if kind == "plugin":
+        return name in (installed_plugins(root) if plugins is None else plugins)
+    return False
+
+
+def program_on_path(name):
+    if name == "claude":
+        return bool(find_claude())
+    return bool(shutil.which(name, path=login_path()))
+
+
+def addons_status(root=None, manifest=None):
+    """Every add-on in addons.json with: installed?, missing prerequisites,
+    and the install commands for this OS."""
+    try:
+        data = json.loads(Path(manifest or ADDONS_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"platform": None, "addons": []}
+    plat = "windows" if os.name == "nt" else "posix"
+    plugins = installed_plugins(root)
+    out = []
+    for a in data.get("addons", []):
+        if not ADDON_ID_RE.fullmatch(str(a.get("id", ""))):
+            continue
+        cmds = (a.get("install") or {}).get(plat) or []
+        out.append({"id": a["id"], "name": a.get("name", a["id"]),
+                    "used_by_app": bool(a.get("used_by_app")),
+                    "unlocks": a.get("unlocks", ""), "source": a.get("source", ""),
+                    "installed": addon_installed(a.get("check"), root, plugins),
+                    "missing_needs": [n for n in a.get("needs", [])
+                                      if not program_on_path(n)],
+                    "commands": [str(c) for c in cmds]})
+    return {"platform": plat, "addons": out}
+
+
 # ---------------------------------------------------------------- improve reports
 #
 # The /improve retrospective (github.com/TerenceBristol/claude-improve) runs
@@ -1606,6 +1672,11 @@ def spawn_improve(cwd):
     entirely for short sessions. Never runs inside a retrospective's own
     session — CDL_IMPROVE_RUN stops the obvious recursion."""
     if not cwd or not improve_enabled() or os.environ.get("CDL_IMPROVE_RUN"):
+        return None
+    # without the command, `claude -p "/improve …"` would burn a request on
+    # an unknown slash command every time a session closes
+    if not (addon_installed({"kind": "command", "name": "improve"})
+            or (Path(cwd) / ".claude" / "commands" / "improve.md").is_file()):
         return None
     claude = find_claude()
     if not claude:
@@ -2090,7 +2161,7 @@ def start_term(kind, cwd, session_id=None, prompt=None, cols=100, rows=30):
 # ---------------------------------------------------------------- HTTP
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "claude-devtools-lite/0.8.0"
+    server_version = "claude-devtools-lite/0.9.0"
     root = CLAUDE_ROOT  # overridden in main()
 
     def log_message(self, fmt, *args):
@@ -2213,6 +2284,10 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/viz":
                 files, d = viz_list(qs.get("dir", [None])[0])
                 self._json({"dir": str(d), "default_dir": str(VIZ_DIR), "files": files})
+                return
+
+            if p == "/api/addons":
+                self._json(addons_status())
                 return
 
             if p == "/api/review":

@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <title>claude-devtools-lite</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- same mark as the app icons (launchers/linux/claude-devtools.svg); in an
+     app-mode Chrome/Edge window on Windows or Linux this is the taskbar icon -->
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128' width='128' height='128'%3E %3Crect x='8' y='8' width='112' height='112' rx='28' fill='%230d1117' stroke='%232d333b' stroke-width='2'/%3E %3Cpath d='M31 44 L49 64 L31 84' fill='none' stroke='%2358a6ff' stroke-width='9' stroke-linecap='round' stroke-linejoin='round'/%3E %3Crect x='60' y='76' width='27' height='9' rx='4.5' fill='%23d29922'/%3E %3Cpath d='M87 30 L91.5 41 L102 43.5 L91.5 46 L87 57 L82.5 46 L72 43.5 L82.5 41 Z' fill='%233fb950'/%3E %3C/svg%3E">
 <link rel="stylesheet" href="/vendor/xterm.min.css">
 <link rel="stylesheet" href="/vendor/katex.min.css">
 <style>
@@ -404,6 +407,40 @@
                   font-size:11px; padding:0 6px; color:var(--tool); flex:none; }
   .proj:hover .cli { visibility:visible; }
   .proj .grow { flex:1; min-width:0; }
+  /* ---------- add-ons pane (modal) ---------- */
+  #addons { position:fixed; inset:0; z-index:80; display:none; align-items:center;
+            justify-content:center; background:color-mix(in srgb, var(--bg) 70%, transparent); }
+  #addons.open { display:flex; }
+  .adbox { width:min(720px, 94vw); max-height:88vh; display:flex; flex-direction:column;
+           background:var(--panel); border:1px solid var(--border); border-radius:10px;
+           box-shadow:0 18px 50px var(--shadow); }
+  .adhead { padding:14px 18px 8px; }
+  .adhead h2 { margin:0 0 4px; font-size:15px; }
+  .adhead p { margin:0; color:var(--dim); font-size:12.5px; line-height:1.5; }
+  .adlist { overflow-y:auto; padding:4px 10px; min-height:0; }
+  .adrow { display:flex; gap:10px; align-items:flex-start; padding:8px; border-radius:7px; }
+  .adrow:hover { background:var(--panel2); }
+  .adrow input { margin-top:3px; }
+  .adrow .main { flex:1; min-width:0; font-size:12.5px; line-height:1.45; }
+  .adrow .nm { font-weight:600; color:var(--fg); }
+  .adrow .un { color:var(--dim); }
+  .adrow .src { font-size:11px; }
+  .adrow .st { flex:none; font-size:11px; padding:1px 8px; border-radius:10px;
+               border:1px solid var(--border); color:var(--dim); white-space:nowrap; }
+  .adrow .st.ok { color:var(--ok); border-color:var(--ok); }
+  .adrow .st.miss { color:var(--tool); border-color:var(--tool); }
+  .adrow .need { color:var(--err); font-size:11.5px; }
+  .adrow .used { font-size:10.5px; color:var(--think); border:1px solid var(--think);
+                 border-radius:9px; padding:0 6px; margin-left:6px; font-weight:400; }
+  .adcmds { margin:6px 18px 0; max-height:130px; overflow:auto; font-size:11px; }
+  .adfoot { display:flex; align-items:center; gap:12px; padding:10px 18px 14px;
+            border-top:1px solid var(--border); margin-top:8px; flex-wrap:wrap; }
+  .adfoot label { color:var(--dim); font-size:12px; display:flex; gap:6px;
+                  align-items:center; cursor:pointer; }
+  .adfoot .copy { margin-left:0; font-size:12px; padding:4px 12px; }
+  .adfoot .go { color:var(--accent); border-color:var(--accent); }
+  .adfoot .go:disabled { opacity:.45; cursor:default; }
+
   /* keyboard users see where they are; mouse clicks stay unringed */
   :focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
   .copy:focus-visible, .ptab:focus-visible, .vtab:focus-visible { outline-offset:2px; }
@@ -420,6 +457,7 @@
     <div id="topbar">
       <h1><span class="ttl">claude-devtools <span>lite</span></span>
         <span class="topbtns">
+          <button class="copy termbtn" id="btnAddons" title="optional add-ons (graphify, /improve, …)">🧩</button>
           <button class="copy termbtn" id="btnTheme" title="change theme">◐</button>
           <button class="copy termbtn" id="btnRight" title="toggle usage/viz panels">◫</button>
           <button class="copy termbtn" id="btnTerm" title="open a terminal">⌨ CLI</button>
@@ -536,6 +574,24 @@
       </div>
     </div>
    </div>
+  </div>
+</div>
+
+<div id="addons" role="dialog" aria-modal="true" aria-labelledby="adtitle">
+  <div class="adbox">
+    <div class="adhead">
+      <h2 id="adtitle">Optional add-ons</h2>
+      <p>Claude Code extras this dashboard works with. Tick what you want, check the
+        commands below, then install: they run in a terminal tab you can watch.
+        Nothing is installed without your click.</p>
+    </div>
+    <div class="adlist" id="adlist"></div>
+    <pre class="adcmds" id="adcmds"></pre>
+    <div class="adfoot">
+      <button class="copy go" id="adgo">Install selected</button>
+      <button class="copy" id="adclose">Close</button>
+      <label style="margin-left:auto"><input type="checkbox" id="adquiet"> Don't show at launch</label>
+    </div>
   </div>
 </div>
 
@@ -1959,14 +2015,18 @@ function graphOfferDismissed(cwd){
 function graphOfferCard(o){
   const card = document.createElement("div");
   card.className = "graphoffer";
+  const have = addonInstalled("graphify");
   card.innerHTML = `<div>🕸 <b>${esc(o.name)}</b> has no knowledge graph yet.
-      Build one with <code>/graphify</code>?</div>
+      ${have ? "Build one with <code>/graphify</code>?"
+             : "Graphs come from the graphify add-on, which isn't installed yet."}</div>
     <div class="goact">
-      <button class="copy" title="opens claude in ${esc(o.cwd)} and runs /graphify">Build graph</button>
+      <button class="copy" title="${have ? "opens claude in " + esc(o.cwd) + " and runs /graphify"
+                                         : "open the add-ons pane with graphify ticked"}">${have ? "Build graph" : "Set up graphify"}</button>
       <label><input type="checkbox"> Don't ask again for this folder</label>
     </div>`;
-  card.querySelector("button").onclick = () => openTerm("claude", {cwd: o.cwd,
-    label: "graphify · " + o.name, prompt: "/graphify"});
+  card.querySelector("button").onclick = () => have
+    ? openTerm("claude", {cwd: o.cwd, label: "graphify · " + o.name, prompt: "/graphify"})
+    : openAddons("graphify");
   card.querySelector("input").onchange = e => {
     if(!e.target.checked) return;
     try{ localStorage.setItem(graphOfferKey(o.cwd), "1"); }catch(_){}
@@ -2535,6 +2595,120 @@ function toast(msg, onclick){
   box.appendChild(t);
   setTimeout(() => t.remove(), 8000);
 }
+
+/* ---------- optional add-ons (🧩) ----------------------------------------
+   The server says which add-ons from addons.json are installed; this pane
+   offers the missing ones with tickboxes. Commands come from addons.json,
+   are shown before anything runs, and run in a visible terminal tab.
+   It opens at launch while something is missing, unless "Don't show at
+   launch" was ticked for that same set of missing add-ons. */
+// var + function declarations: the graph card can render before this runs
+var AD = {list: [], platform: null, picked: new Set(), timer: null};
+function addonInstalled(id){
+  const a = ((typeof AD !== "undefined" && AD) || {list: []}).list.find(x => x.id === id);
+  return !a || a.installed;               // unknown = don't nag
+}
+
+async function loadAddons(){
+  try{
+    const d = await api("/api/addons");
+    AD.list = d.addons; AD.platform = d.platform;
+  }catch(e){ AD.list = []; }
+  return AD.list;
+}
+const missingIds = () => AD.list.filter(a => !a.installed).map(a => a.id).sort().join(",");
+
+function renderAddons(){
+  const box = $("#adlist"); box.innerHTML = "";
+  for(const a of AD.list){
+    const blocked = !a.installed && a.missing_needs.length;
+    if(a.installed || blocked) AD.picked.delete(a.id);
+    const row = document.createElement("label");
+    row.className = "adrow";
+    row.innerHTML = `<input type="checkbox"${AD.picked.has(a.id) ? " checked" : ""}
+        ${a.installed || blocked ? " disabled" : ""}>
+      <div class="main">
+        <div class="nm"></div>
+        <div class="un"></div>
+        ${blocked ? `<div class="need">Needs ${a.missing_needs.map(esc).join(", ")} on your PATH first.</div>` : ""}
+        <div class="src"><a target="_blank" rel="noreferrer"></a></div>
+      </div>
+      <span class="st ${a.installed ? "ok" : "miss"}">${a.installed ? "installed ✓" : "not installed"}</span>`;
+    row.querySelector(".nm").textContent = a.name;
+    if(a.used_by_app) row.querySelector(".nm").insertAdjacentHTML("beforeend",
+      '<span class="used" title="a feature of this dashboard uses it">used by the app</span>');
+    row.querySelector(".un").textContent = a.unlocks;
+    const link = row.querySelector(".src a");
+    link.href = /^https:\/\//.test(a.source) ? a.source : "#";
+    link.textContent = a.source.replace(/^https:\/\//, "");
+    row.querySelector("input").onchange = e => {
+      e.target.checked ? AD.picked.add(a.id) : AD.picked.delete(a.id);
+      renderAddonCmds();
+    };
+    box.appendChild(row);
+  }
+  renderAddonCmds();
+}
+function addonScript(){
+  const win = AD.platform === "windows";
+  return AD.list.filter(a => AD.picked.has(a.id)).map(a =>
+    (win ? `echo [install] ${a.name}` : `echo '[install] ${a.name}'`)
+    + " && " + a.commands.join(" && "));
+}
+function renderAddonCmds(){
+  const lines = addonScript();
+  $("#adcmds").textContent = lines.length ? lines.join("\n")
+    : AD.list.every(a => a.installed) ? "Everything on the list is installed."
+    : "Tick an add-on to see the commands that will run.";
+  $("#adgo").disabled = !lines.length;
+  $("#adgo").textContent = lines.length ? `Install ${lines.length} selected` : "Install selected";
+}
+
+async function openAddons(preselect){
+  await loadAddons();
+  AD.picked = new Set(preselect ? [preselect]
+    : AD.list.filter(a => !a.installed && a.used_by_app).map(a => a.id));
+  $("#adquiet").checked = localStorage.getItem("cdl-addons-quiet") === missingIds();
+  renderAddons();
+  $("#addons").classList.add("open");
+  clearInterval(AD.timer);                 // pick up installs as they finish
+  AD.timer = setInterval(async () => {
+    const before = AD.list.map(a => a.installed).join();
+    await loadAddons();
+    if(AD.list.map(a => a.installed).join() !== before){ renderAddons(); refreshViz(); }
+  }, 4000);
+  $("#adgo").focus();
+}
+function closeAddons(){
+  $("#addons").classList.remove("open");
+  clearInterval(AD.timer); AD.timer = null;
+}
+$("#adclose").onclick = closeAddons;
+$("#addons").addEventListener("mousedown", e => { if(e.target.id === "addons") closeAddons(); });
+$("#addons").addEventListener("keydown", e => { if(e.key === "Escape"){ e.stopPropagation(); closeAddons(); } });
+$("#adquiet").onchange = e => {
+  if(e.target.checked) localStorage.setItem("cdl-addons-quiet", missingIds());
+  else localStorage.removeItem("cdl-addons-quiet");
+};
+$("#btnAddons").onclick = () => openAddons();
+$("#adgo").onclick = async () => {
+  const lines = addonScript();
+  if(!lines.length) return;
+  await openTerm("shell", {label: "add-ons"});
+  const t = TM.terms.get(TM.active);
+  if(!t || t.label !== "add-ons") return;   // spawn failed; openTerm said why
+  const done = AD.platform === "windows" ? "echo [done] Back in the add-ons pane, statuses update by themselves."
+                                          : "echo '[done] Back in the add-ons pane, statuses update by themselves.'";
+  fetch("/api/term/input", {method: "POST",
+    headers: authHeaders({"Content-Type": "application/json"}),
+    body: JSON.stringify({id: t.id, data: strToB64(lines.concat(done).join("\r") + "\r")})});
+  AD.picked.clear(); renderAddonCmds();
+};
+// at launch: open when something is missing, unless silenced for this exact set
+loadAddons().then(() => {
+  const miss = missingIds();
+  if(miss && localStorage.getItem("cdl-addons-quiet") !== miss) openAddons();
+});
 
 /* ---------- polling ---------- */
 let prevMtimes = null;

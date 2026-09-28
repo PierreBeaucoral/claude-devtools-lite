@@ -160,6 +160,26 @@ into any session in an embedded terminal.
   editor themes RStudio users know. The choice is remembered per browser
 - Claude Code picks its own colours: with a light theme here, run `/theme light` there
 
+## Optional add-ons
+
+The dashboard runs on its own, but two features use Claude Code add-ons:
+**graphify** (knowledge graphs in the Viz pane) and **/improve** (the end-of-session
+retrospective). The **🧩** button opens a pane that shows which add-ons from
+[`addons.json`](addons.json) are installed, with a tickbox for each missing one.
+It also opens by itself at launch while something is missing; tick
+**Don't show at launch** to stop that until the list of missing add-ons changes.
+
+- Ticked add-ons install in a **visible terminal tab**, with the exact commands shown
+  in the pane first. Nothing installs without that click
+- An add-on whose prerequisite is missing (`uv`, `git`, the `codex` CLI…) says so and
+  can't be ticked, rather than failing halfway
+- Statuses refresh on their own while the pane is open
+- The list also suggests ponytail, frontend-design, codex, crossref and dream, which the
+  dashboard doesn't use. Edit `addons.json` to change what it offers. The app only ever
+  runs commands written in that file
+- Without `/improve` installed, the retrospective simply doesn't run; without graphify,
+  the graph prompt offers to set it up instead of launching an unknown command
+
 ## Install and run
 
 Requires **Python 3.9+** and an existing Claude Code installation (`~/.claude`).
@@ -199,7 +219,9 @@ with macOS.
 powershell -ExecutionPolicy Bypass -File launchers\windows\install.ps1
 ```
 
-Creates Desktop and Start-menu shortcuts, or double-click
+Creates Desktop and Start-menu shortcuts with the app's own icon
+(`launchers\windows\claude-devtools.ico`; re-run the script to refresh existing
+shortcuts), or double-click
 `launchers\windows\Claude DevTools.cmd`.
 
 The embedded terminal works on **Windows 10 1809+** through ConPTY, driven via `ctypes`

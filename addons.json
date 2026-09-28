@@ -1,0 +1,96 @@
+{
+  "_comment": "Optional Claude Code add-ons offered by the Add-ons pane (🧩). The app only ever runs the install commands written here: edit this list to change what it proposes. check.kind: skill = ~/.claude/skills/<name>/SKILL.md, command = ~/.claude/commands/<name>.md, plugin = <name>@<marketplace> in ~/.claude/plugins/installed_plugins.json. needs = programs that must be on PATH first. install.posix runs in the login shell (macOS/Linux), install.windows in cmd.exe; an add-on's lines run in order and stop at the first failure.",
+  "addons": [
+    {
+      "id": "graphify",
+      "name": "graphify",
+      "used_by_app": true,
+      "unlocks": "Knowledge graph of a project in the Viz pane, and the Build graph button.",
+      "source": "https://pypi.org/project/graphifyy/",
+      "check": {"kind": "skill", "name": "graphify"},
+      "needs": ["uv"],
+      "install": {
+        "posix": ["uv tool install graphifyy", "graphify install"],
+        "windows": ["uv tool install graphifyy", "graphify install --platform windows"]
+      }
+    },
+    {
+      "id": "improve",
+      "name": "/improve",
+      "used_by_app": true,
+      "unlocks": "End-of-session retrospective (the 🔎 button in the Plan pane).",
+      "source": "https://github.com/TerenceBristol/claude-improve",
+      "check": {"kind": "command", "name": "improve"},
+      "needs": ["curl"],
+      "install": {
+        "posix": ["mkdir -p ~/.claude/commands", "curl -fsSL -o ~/.claude/commands/improve.md https://raw.githubusercontent.com/TerenceBristol/claude-improve/main/improve.md"],
+        "windows": ["if not exist \"%USERPROFILE%\\.claude\\commands\" mkdir \"%USERPROFILE%\\.claude\\commands\"", "curl -fsSL -o \"%USERPROFILE%\\.claude\\commands\\improve.md\" https://raw.githubusercontent.com/TerenceBristol/claude-improve/main/improve.md"]
+      }
+    },
+    {
+      "id": "ponytail",
+      "name": "ponytail",
+      "used_by_app": false,
+      "unlocks": "Plugin that pushes Claude toward the smallest code that works.",
+      "source": "https://github.com/DietrichGebert/ponytail",
+      "check": {"kind": "plugin", "name": "ponytail@ponytail"},
+      "needs": ["claude"],
+      "install": {
+        "posix": ["claude plugin marketplace add DietrichGebert/ponytail || echo (marketplace already added)", "claude plugin install ponytail@ponytail"],
+        "windows": ["claude plugin marketplace add DietrichGebert/ponytail || echo (marketplace already added)", "claude plugin install ponytail@ponytail"]
+      }
+    },
+    {
+      "id": "frontend-design",
+      "name": "frontend-design",
+      "used_by_app": false,
+      "unlocks": "Anthropic's skill for deliberate, non-templated UI design.",
+      "source": "https://github.com/anthropics/claude-plugins-official",
+      "check": {"kind": "plugin", "name": "frontend-design@claude-plugins-official"},
+      "needs": ["claude"],
+      "install": {
+        "posix": ["claude plugin marketplace add anthropics/claude-plugins-official || echo (marketplace already added)", "claude plugin install frontend-design@claude-plugins-official"],
+        "windows": ["claude plugin marketplace add anthropics/claude-plugins-official || echo (marketplace already added)", "claude plugin install frontend-design@claude-plugins-official"]
+      }
+    },
+    {
+      "id": "codex",
+      "name": "codex",
+      "used_by_app": false,
+      "unlocks": "Hand tasks to OpenAI Codex from Claude Code. Needs the Codex CLI and an OpenAI account.",
+      "source": "https://github.com/openai/codex-plugin-cc",
+      "check": {"kind": "plugin", "name": "codex@openai-codex"},
+      "needs": ["claude", "codex"],
+      "install": {
+        "posix": ["claude plugin marketplace add openai/codex-plugin-cc || echo (marketplace already added)", "claude plugin install codex@openai-codex"],
+        "windows": ["claude plugin marketplace add openai/codex-plugin-cc || echo (marketplace already added)", "claude plugin install codex@openai-codex"]
+      }
+    },
+    {
+      "id": "crossref",
+      "name": "crossref",
+      "used_by_app": false,
+      "unlocks": "Skill that checks a pasted bibliography against Crossref and finds DOIs.",
+      "source": "https://github.com/jusi-aalto/crossref",
+      "check": {"kind": "skill", "name": "crossref"},
+      "needs": ["git"],
+      "install": {
+        "posix": ["git clone https://github.com/jusi-aalto/crossref.git ~/.claude/skills/crossref"],
+        "windows": ["git clone https://github.com/jusi-aalto/crossref.git \"%USERPROFILE%\\.claude\\skills\\crossref\""]
+      }
+    },
+    {
+      "id": "dream",
+      "name": "dream",
+      "used_by_app": false,
+      "unlocks": "/dream consolidates Claude's memory files from recent sessions. Runs on demand; its nightly auto-trigger is set up separately (see its README).",
+      "source": "https://github.com/grandamenium/dream-skill",
+      "check": {"kind": "skill", "name": "dream"},
+      "needs": ["git"],
+      "install": {
+        "posix": ["git clone https://github.com/grandamenium/dream-skill.git ~/.claude/skills/dream"],
+        "windows": ["git clone https://github.com/grandamenium/dream-skill.git \"%USERPROFILE%\\.claude\\skills\\dream\""]
+      }
+    }
+  ]
+}
