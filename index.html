@@ -220,6 +220,16 @@
   .vizfile { padding:4px 8px; font-size:11.5px; cursor:pointer; border-radius:5px;
              display:flex; justify-content:space-between; gap:6px; color:var(--dim); }
   .vizfile:hover, .vizfile.active { background:var(--panel2); color:var(--fg); }
+  .imgview { flex:1; min-height:0; min-width:0; width:100%; object-fit:contain;
+             display:none; }
+  .graphoffer { border:1px solid var(--border); border-left:3px solid var(--think);
+                border-radius:6px; padding:7px 10px; margin:2px 0 6px;
+                font-size:12px; line-height:1.5; background:var(--panel2); }
+  .graphoffer .goact { display:flex; align-items:center; gap:12px; margin-top:6px;
+                       flex-wrap:wrap; }
+  .graphoffer .copy { margin-left:0; color:var(--think); border-color:var(--think); }
+  .graphoffer label { color:var(--dim); font-size:11.5px; cursor:pointer;
+                      display:flex; align-items:center; gap:5px; }
   .vizempty { color:var(--dim); font-size:12px; padding:14px 4px; line-height:1.6; }
 
   /* ---------- figure review (click a point / drag a region, comment) ---- */
@@ -495,7 +505,7 @@
         <button class="copy maxbtn" data-cell="cell-viz" title="maximize / restore">⛶</button>
       </div>
       <div id="vizview" style="display:flex;flex-direction:column;flex:1;min-height:0">
-        <div class="qbody" id="vizlist" style="flex:none;max-height:110px"></div>
+        <div class="qbody" id="vizlist" style="flex:none;max-height:160px"></div>
         <div class="previewwrap empty">
           <iframe id="vizframe" sandbox="allow-scripts" title="viz preview"></iframe>
           <embed id="vizpdf" class="pdfview" type="application/pdf" title="pdf preview">
@@ -1846,14 +1856,32 @@ async function refreshUsage(){
    gives the native viewer with page nav, zoom, search, print and download.
    Only one of the two is ever visible. */
 function previewWrap(sel){ return $(sel).closest(".previewwrap"); }
+/* images get an <img> scaled to the pane: in an iframe they render at their
+   natural size, so a 1440-px figure showed as a cropped corner */
+const IMG_URL = /\.(png|jpe?g|gif|webp|svg)(&|$)/i;
+function previewImg(wrap){
+  let im = wrap.querySelector("img.imgview");
+  if(!im){
+    im = document.createElement("img");
+    im.className = "imgview"; im.alt = "preview";
+    wrap.insertBefore(im, wrap.querySelector(".shield"));
+  }
+  return im;
+}
 function setPreview(frameSel, pdfSel, url, isPdf, dark){
   const fr = $(frameSel), pd = $(pdfSel);
   const wrap = previewWrap(frameSel); if(wrap) wrap.classList.remove("empty");
+  const im = previewImg(wrap);
+  const isImg = !isPdf && IMG_URL.test(decodeURIComponent(url));
+  for(const el of [fr, pd, im]) el.style.display = "none";
+  if(!isPdf) pd.removeAttribute("src");
+  if(isPdf || isImg) fr.removeAttribute("src");
+  if(!isImg) im.removeAttribute("src");
   if(isPdf){
-    fr.removeAttribute("src"); fr.style.display = "none";
     pd.src = url; pd.style.display = "block";
+  } else if(isImg){
+    im.src = url; im.style.display = "block";
   } else {
-    pd.removeAttribute("src"); pd.style.display = "none";
     fr.classList.toggle("darkbg", !!dark);
     fr.src = url; fr.style.display = "block";
   }
@@ -1862,6 +1890,8 @@ function clearPreview(frameSel, pdfSel){
   const wrap = previewWrap(frameSel); if(wrap) wrap.classList.add("empty");
   $(frameSel).removeAttribute("src"); $(frameSel).style.display = "none";
   $(pdfSel).removeAttribute("src");   $(pdfSel).style.display = "none";
+  const im = wrap && wrap.querySelector("img.imgview");
+  if(im){ im.removeAttribute("src"); im.style.display = "none"; }
 }
 const isPdfName = n => /\.pdf(\?|$)/i.test(n || "");
 
@@ -1893,18 +1923,11 @@ async function refreshViz(){
       el.innerHTML = `<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(vizPinned.label)}</span>`;
       el.onclick = () => showPinned();
       list.appendChild(el);
-    } else if(vizGraphOffer){
-      const el = document.createElement("div");
-      el.className = "vizfile";
-      el.title = "opens claude in " + vizGraphOffer.cwd + " and runs the /graphify skill";
-      el.innerHTML = `<span style="color:var(--think)">🕸 no knowledge graph yet —
-        <u>build one for ${esc(vizGraphOffer.name)}</u> (/graphify)</span>`;
-      el.onclick = () => openTerm("claude", {cwd: vizGraphOffer.cwd,
-        label: "graphify · " + vizGraphOffer.name, prompt: "/graphify"});
-      list.appendChild(el);
+    } else if(vizGraphOffer && !graphOfferDismissed(vizGraphOffer.cwd)){
+      list.appendChild(graphOfferCard(vizGraphOffer));
     }
     if(!v.files.length){
-      if(!vizPinned && !vizGraphOffer){
+      if(!vizPinned && !(vizGraphOffer && !graphOfferDismissed(vizGraphOffer.cwd))){
         list.innerHTML = `<div class="vizempty">Empty. Ask a Claude Code session to write an
           <b>.html</b>, image, or <b>.md</b> file into<br><code style="font-size:10.5px">${esc(v.dir)}</code><br>and it appears here automatically.</div>`;
         clearPreview("#vizframe", "#vizpdf");
@@ -1927,6 +1950,32 @@ async function refreshViz(){
     }
   }catch(e){ /* server briefly down; retry next tick */ }
 }
+/* a project without graphify-out/graph.html gets asked once whether to build
+   one; ticking "don't ask again" silences it for that folder only */
+const graphOfferKey = cwd => "cdl-nograph:" + cwd;
+function graphOfferDismissed(cwd){
+  try{ return !!localStorage.getItem(graphOfferKey(cwd)); }catch(_){ return false; }
+}
+function graphOfferCard(o){
+  const card = document.createElement("div");
+  card.className = "graphoffer";
+  card.innerHTML = `<div>🕸 <b>${esc(o.name)}</b> has no knowledge graph yet.
+      Build one with <code>/graphify</code>?</div>
+    <div class="goact">
+      <button class="copy" title="opens claude in ${esc(o.cwd)} and runs /graphify">Build graph</button>
+      <label><input type="checkbox"> Don't ask again for this folder</label>
+    </div>`;
+  card.querySelector("button").onclick = () => openTerm("claude", {cwd: o.cwd,
+    label: "graphify · " + o.name, prompt: "/graphify"});
+  card.querySelector("input").onchange = e => {
+    if(!e.target.checked) return;
+    try{ localStorage.setItem(graphOfferKey(o.cwd), "1"); }catch(_){}
+    card.remove();
+    refreshViz();
+  };
+  return card;
+}
+
 function showViz(f){
   vizActive = f.name;
   vizImage = /^image\//.test(f.kind || "") ? vizDir + "/" + f.name : null;

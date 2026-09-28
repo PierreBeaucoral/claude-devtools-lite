@@ -128,8 +128,10 @@ into any session in an embedded terminal.
   appears within 5 seconds and renders automatically. Tell a running Claude session
   *"write the chart to $CLAUDE_DEVTOOLS_VIZ_DIR"* and watch it appear.
 - Projects with a [graphify](https://github.com/anthropics/skills) knowledge graph
-  (`graphify-out/graph.html`) display it automatically; projects without one get a
-  button that launches the skill
+  (`graphify-out/graph.html`) display it automatically; projects without one are asked
+  whether to build one (**Build graph** launches the skill), and **Don't ask again for
+  this folder** silences the prompt for that project
+- Images preview scaled to fit the pane (click to expand them full-size)
 - A Files pane that follows the selected project, previews files, copies paths, opens a
   shell in any folder, or points the viz watcher at it
 - It also follows the **active terminal tab**: switch between two Claude sessions and
