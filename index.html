@@ -583,7 +583,8 @@
       <h2 id="adtitle">Optional add-ons</h2>
       <p>Claude Code extras this dashboard works with. Tick what you want, check the
         commands below, then install: they run in a terminal tab you can watch.
-        Nothing is installed without your click.</p>
+        Nothing is installed without your click. Claude sessions that are already
+        open won't see a new add-on: start a new one (or restart it) afterwards.</p>
     </div>
     <div class="adlist" id="adlist"></div>
     <pre class="adcmds" id="adcmds"></pre>
@@ -2697,8 +2698,8 @@ $("#adgo").onclick = async () => {
   await openTerm("shell", {label: "add-ons"});
   const t = TM.terms.get(TM.active);
   if(!t || t.label !== "add-ons") return;   // spawn failed; openTerm said why
-  const done = AD.platform === "windows" ? "echo [done] Back in the add-ons pane, statuses update by themselves."
-                                          : "echo '[done] Back in the add-ons pane, statuses update by themselves.'";
+  const done = AD.platform === "windows" ? "echo [done] Statuses update in the add-ons pane. Start a new Claude session to use what you installed."
+                                          : "echo '[done] Statuses update in the add-ons pane. Start a new Claude session to use what you installed.'";
   fetch("/api/term/input", {method: "POST",
     headers: authHeaders({"Content-Type": "application/json"}),
     body: JSON.stringify({id: t.id, data: strToB64(lines.concat(done).join("\r") + "\r")})});

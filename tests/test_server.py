@@ -378,7 +378,7 @@ def test_claude_kind_never_falls_back_to_a_shell(monkeypatch):
     """Regression: `+ claude` used to open a plain shell when the binary was
     off-PATH, instead of reporting that it wasn't found."""
     srv._env_cache["claude"] = None
-    srv._env_cache["path"] = "/usr/bin:/bin"
+    srv._env_cache["path_raw"] = ["/usr/bin", "/bin"]
     try:
         with pytest.raises(FileNotFoundError) as e:
             srv.start_term("claude", None)
@@ -389,7 +389,7 @@ def test_claude_kind_never_falls_back_to_a_shell(monkeypatch):
 
 def test_terminal_env_carries_login_path(monkeypatch):
     srv._env_cache["claude"] = "/nonexistent/claude"
-    srv._env_cache["path"] = "/usr/bin:/bin"
+    srv._env_cache["path_raw"] = ["/usr/bin", "/bin"]
     try:
         captured = {}
 
@@ -982,3 +982,33 @@ def test_improve_is_skipped_when_the_command_is_not_installed(tmp_path, monkeypa
     monkeypatch.setattr(srv, "find_claude", lambda: called.append(1) or "/bin/true")
     assert srv.spawn_improve(str(tmp_path)) is None
     assert called == []                   # bailed out before looking for claude
+
+
+def _joined_install_lines(plat):
+    data = json.loads((HERE.parent / "addons.json").read_text())
+    return {a["id"]: " && ".join(a["install"][plat]) for a in data["addons"]}
+
+
+@pytest.mark.parametrize("shell", ["sh", "bash", "zsh"])
+def test_posix_install_lines_parse_in_real_shells(shell):
+    """The pane chains an add-on's commands into one line. `echo (x)` once
+    broke ponytail/codex/frontend-design with a syntax error: parse them all."""
+    import shutil
+    import subprocess
+    if not shutil.which(shell):
+        pytest.skip(f"{shell} not installed")
+    for aid, line in _joined_install_lines("posix").items():
+        r = subprocess.run([shell, "-n", "-c", line], capture_output=True, text=True)
+        assert r.returncode == 0, f"{aid}: {r.stderr.strip()}"
+
+
+def test_windows_install_lines_are_safe_to_chain_in_cmd():
+    """cmd.exe can't be run here, so lint the two traps that bit us: an `if`
+    swallows every `&& …` after it (so /improve never downloaded), and an
+    npm-installed `claude` is a .cmd that must be CALLed or it ends the line."""
+    import re
+    for aid, line in _joined_install_lines("windows").items():
+        assert not re.search(r"(^|&&|\(|\|\|)\s*if\s", line), f"{aid}: bare if"
+        for m in re.finditer(r"(^|&&|\(|\|\|)\s*(\S+)", line):
+            assert m.group(2) != "claude", f"{aid}: `claude` without `call`"
+        assert line.count("(") == line.count(")"), aid

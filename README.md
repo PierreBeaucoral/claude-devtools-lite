@@ -173,7 +173,13 @@ It also opens by itself at launch while something is missing; tick
   in the pane first. Nothing installs without that click
 - An add-on whose prerequisite is missing (`uv`, `git`, the `codex` CLI…) says so and
   can't be ticked, rather than failing halfway
-- Statuses refresh on their own while the pane is open
+- Statuses refresh on their own while the pane is open. Claude sessions already running
+  don't pick up a new skill or plugin: start a new session afterwards
+- graphify needs [uv](https://docs.astral.sh/uv/) first. On Windows:
+  `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`
+- graphify reads the whole project folder. On a big data folder (or Dropbox online-only
+  files) the first step can take minutes: list data folders in a `.graphifyignore`
+  (same syntax as `.gitignore`), or run `/graphify <code-subfolder>`
 - The list also suggests ponytail, frontend-design, codex, crossref and dream, which the
   dashboard doesn't use. Edit `addons.json` to change what it offers. The app only ever
   runs commands written in that file

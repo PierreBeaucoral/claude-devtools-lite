@@ -2009,8 +2009,8 @@ def login_path():
     ~/.local/bin, Homebrew, nvm, volta … i.e. exactly where `claude` lives.
     Ask the shell once, cache it, and always append the usual suspects.
     """
-    if "path" in _env_cache:
-        return _env_cache["path"]
+    if "path_raw" in _env_cache:
+        return _existing_dirs(_env_cache["path_raw"])
     parts = []
     if os.name != "nt":
         shell = default_shell()
@@ -2027,14 +2027,22 @@ def login_path():
                 continue
     parts += (os.environ.get("PATH") or "").split(os.pathsep)
     parts += [str(Path(p).expanduser().parent) for p in CLAUDE_CANDIDATES]
-    parts += ["/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin"]
+    parts += ["/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin",
+              str(Path("~/.local/bin").expanduser())]   # uv / pipx tools
+    # cache the (slow) shell query, but re-check which folders exist on every
+    # call: `uv tool install` creates ~/.local/bin after the app started, and
+    # a cached list would hide it from new terminals until a restart
+    _env_cache["path_raw"] = parts
+    return _existing_dirs(parts)
+
+
+def _existing_dirs(parts):
     seen, ordered = set(), []
     for p in parts:
         if p and p not in seen and os.path.isdir(p):
             seen.add(p)
             ordered.append(p)
-    _env_cache["path"] = os.pathsep.join(ordered)
-    return _env_cache["path"]
+    return os.pathsep.join(ordered)
 
 
 # --- child session hygiene -------------------------------------------------
