@@ -19,3 +19,6 @@ __pycache__/
 # logs
 *.log
 .DS_Store
+
+# live working plan for the PLAN pane (per-machine)
+.claude/plan.md

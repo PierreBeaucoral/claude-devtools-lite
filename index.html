@@ -11,7 +11,11 @@
     --bg: #0d1117; --panel: #161b22; --panel2: #1c2129; --border: #2d333b;
     --fg: #d6dde5; --dim: #8b949e; --accent: #58a6ff; --user: #3b82f6;
     --think: #b18cff; --tool: #d29922; --ok: #3fb950; --err: #f85149;
+    /* derived colours a theme may override (see THEMES in the script) */
+    --termbg: #0a0d12; --bar: #2f5c8f; --addfg: #7ee787; --delfg: #ffa198;
+    --stripe: rgba(255,255,255,.02); --shadow: rgba(0,0,0,.55);
     --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+    color-scheme: dark;
   }
   * { box-sizing: border-box; }
   html, body { height:100%; overflow:hidden; }
@@ -51,7 +55,7 @@
   #workspace.maxed .col:has(.cell.maxed) { flex:1; width:auto !important; }
   #workspace.maxed .col:has(.cell.maxed) > *:not(.maxed) { display:none; }
   #workspace.maxed .cell.maxed { flex:1; height:auto !important; }
-  .qhead { padding:6px 10px; font-size:12px; font-weight:700; letter-spacing:.5px;
+  .qhead { padding:6px 10px; font-size:12px; font-weight:600;
            color:var(--dim); border-bottom:1px solid var(--border); flex:none;
            display:flex; align-items:center; gap:8px; background:var(--panel); }
   .qbody { flex:1; overflow-y:auto; padding:10px 12px; font-size:12.5px; min-height:0; }
@@ -60,7 +64,11 @@
 
   #topbar { padding:10px 12px; border-bottom:1px solid var(--border); }
   #topbar h1 { font-size:14px; margin:0 0 8px; letter-spacing:.4px; }
-  #topbar h1 span { color:var(--dim); font-weight:400; }
+  #topbar h1 { display:flex; align-items:center; gap:4px; white-space:nowrap; }
+  #topbar h1 .ttl { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+  #topbar h1 .ttl span { color:var(--dim); font-weight:400; }
+  .topbtns { margin-left:auto; display:flex; gap:5px; flex:none; }
+  .topbtns .copy { margin-left:0; }
   #search { width:100%; padding:6px 9px; background:var(--bg); color:var(--fg);
             border:1px solid var(--border); border-radius:6px; font-size:13px; }
   #search:focus { outline:none; border-color:var(--accent); }
@@ -87,7 +95,7 @@
   #sheadbox:empty, #sheadbox:empty + #headgrip { display:none; }
   #headgrip { flex:none; }
   #cell-main.headcollapsed #sheadbox { max-height:64px; }
-  #shead { z-index:5; background:rgba(13,17,23,.95);
+  #shead { z-index:5; background:var(--bg);
            border-bottom:1px solid var(--border); padding:12px 20px; }
   #shead h2 { margin:0 0 4px; font-size:16px; }
   #shead .meta { color:var(--dim); font-size:12px; }
@@ -104,7 +112,7 @@
   /* chart */
   #chart { padding:10px 20px 0; }
   #chart svg { width:100%; height:110px; display:block; }
-  .cbar { fill:#2f5c8f; } .cbar:hover { fill:var(--accent); }
+  .cbar { fill:var(--bar); } .cbar:hover { fill:var(--accent); }
   .cbar.compact { fill:var(--err); }
   #chartlabel { color:var(--dim); font-size:11px; padding:2px 20px 0; }
 
@@ -149,7 +157,7 @@
   .md table { border-collapse:collapse; font-size:12.5px; }
   .md td,.md th { border:1px solid var(--border); padding:4px 9px; vertical-align:top; }
   .md th { background:var(--panel); font-weight:600; white-space:nowrap; }
-  .md tbody tr:nth-child(even) { background:rgba(255,255,255,.02); }
+  .md tbody tr:nth-child(even) { background:var(--stripe); }
 
   /* KaTeX: inherit the panel's colour, and let a wide display equation scroll
      inside its own box instead of stretching the timeline. */
@@ -160,8 +168,8 @@
   .diff { font:12px/1.5 var(--mono); background:var(--bg); border:1px solid var(--border);
           border-radius:6px; margin:8px 0; overflow-x:auto; }
   .diff .ln { white-space:pre; padding:0 10px; }
-  .diff .add { background:rgba(63,185,80,.14); color:#7ee787; }
-  .diff .del { background:rgba(248,81,73,.14); color:#ffa198; }
+  .diff .add { background:color-mix(in srgb, var(--ok) 14%, transparent); color:var(--addfg); }
+  .diff .del { background:color-mix(in srgb, var(--err) 14%, transparent); color:var(--delfg); }
   .diff .hunk { color:var(--accent); background:var(--panel2); padding:1px 10px; }
 
   .copy { margin-left:auto; background:none; border:1px solid var(--border);
@@ -174,14 +182,14 @@
              padding:8px 14px; margin:8px 0; cursor:pointer; }
   .sresult:hover { border-color:var(--accent); }
   .sresult .where { font-size:11.5px; color:var(--dim); margin-bottom:3px; }
-  mark { background:var(--tool); color:#000; border-radius:2px; padding:0 1px; }
+  mark { background:var(--tool); color:var(--bg); border-radius:2px; padding:0 1px; }
   /* subagent card, rendered under the Task call that launched it */
-  .agentcard { margin:6px 0 8px 14px; border:1px solid #3a3050; border-left:3px solid var(--think);
-               border-radius:0 7px 7px 0; background:linear-gradient(180deg,rgba(177,140,255,.06),transparent); }
-  .agentcard.failed { border-color:#5a2f2f; border-left-color:var(--err); }
+  .agentcard { margin:6px 0 8px 14px; border:1px solid color-mix(in srgb, var(--think) 30%, var(--border)); border-left:3px solid var(--think);
+               border-radius:0 7px 7px 0; background:color-mix(in srgb, var(--think) 5%, transparent); }
+  .agentcard.failed { border-color:color-mix(in srgb, var(--err) 35%, var(--border)); border-left-color:var(--err); }
   .achead { display:flex; align-items:center; gap:7px; flex-wrap:wrap;
             padding:6px 11px; cursor:pointer; font-size:12px; }
-  .achead:hover { background:rgba(177,140,255,.06); }
+  .achead:hover { background:color-mix(in srgb, var(--think) 8%, transparent); }
   .agentcard .atag { color:var(--think); font-weight:600; }
   .agentcard .adesc { color:var(--dim); overflow:hidden; text-overflow:ellipsis;
                       white-space:nowrap; flex:1; min-width:60px; }
@@ -191,7 +199,7 @@
   .adot.ok { background:var(--ok); } .adot.err { background:var(--err); }
   .astats { display:flex; gap:11px; flex:none; color:var(--dim); font-size:11px; }
   .astats .cost { color:var(--tool); }
-  .acbody { display:none; padding:2px 11px 10px; border-top:1px solid #3a3050; }
+  .acbody { display:none; padding:2px 11px 10px; border-top:1px solid color-mix(in srgb, var(--think) 30%, var(--border)); }
   .agentcard.openx .acbody { display:block; }
   .acnote { font-size:11.5px; color:var(--dim); padding:6px 0; }
   .agentbox { display:inline-block; margin:4px 8px 4px 0; padding:4px 10px; font-size:12px;
@@ -213,6 +221,52 @@
              display:flex; justify-content:space-between; gap:6px; color:var(--dim); }
   .vizfile:hover, .vizfile.active { background:var(--panel2); color:var(--fg); }
   .vizempty { color:var(--dim); font-size:12px; padding:14px 4px; line-height:1.6; }
+
+  /* ---------- figure review (click a point / drag a region, comment) ---- */
+  #reviewview { flex:1; min-height:0; flex-direction:column; }
+  #rvbar { flex:none; display:flex; align-items:center; gap:8px; padding:5px 10px;
+           border-bottom:1px solid var(--border); font-size:11.5px; color:var(--dim); }
+  #rvname { font-family:var(--mono); color:var(--fg); overflow:hidden;
+            text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+  #rvstale { color:var(--tool); border:1px solid var(--tool); border-radius:10px;
+             padding:0 7px; flex:none; }
+  #rvsaved { margin-left:auto; flex:none; }
+  #rvbar .copy { margin-left:0; }
+  #rvstage { flex:1; min-height:120px; overflow:auto; display:flex;
+             align-items:center; justify-content:center; padding:8px;
+             background:var(--panel); }
+  #rvwrap { position:relative; line-height:0; }
+  #rvimg { display:block; max-width:100%; background:#fff; user-select:none; }
+  #rvlayer { position:absolute; inset:0; cursor:crosshair; touch-action:none; }
+  .rvmark { position:absolute; pointer-events:auto; cursor:pointer; }
+  .rvmark.region { border:2px solid var(--err); border-radius:3px;
+                   background:color-mix(in srgb, var(--err) 8%, transparent); }
+  .rvmark.point { width:0; height:0; }
+  .rvmark .num { position:absolute; left:-10px; top:-10px; min-width:20px; height:20px;
+                 padding:0 5px; border-radius:10px; background:var(--err); color:#fff;
+                 font:600 11px/20px -apple-system, "Segoe UI", sans-serif;
+                 text-align:center; box-shadow:0 1px 4px var(--shadow); }
+  .rvmark.resolved, .rvmark.wontfix { opacity:.35; }
+  .rvmark.sel .num { outline:2px solid var(--accent); outline-offset:1px; }
+  .rvmark.sel.region { border-color:var(--accent); }
+  .rvdraft { position:absolute; border:2px dashed var(--accent); pointer-events:none; }
+  #rvhint { flex:none; padding:4px 10px; font-size:11px; color:var(--dim);
+            border-top:1px solid var(--border); }
+  #rvlist { flex:none; max-height:38%; overflow-y:auto; padding:4px 8px 8px; }
+  .rvitem { display:flex; gap:8px; align-items:flex-start; padding:5px 4px;
+            border-radius:6px; }
+  .rvitem.sel { background:var(--panel2); }
+  .rvitem .n { flex:none; min-width:20px; height:20px; border-radius:10px; margin-top:3px;
+               background:var(--err); color:#fff; font-size:11px; font-weight:600;
+               line-height:20px; text-align:center; }
+  .rvitem.resolved .n, .rvitem.wontfix .n { background:var(--dim); }
+  .rvitem textarea { flex:1; min-width:0; resize:vertical; min-height:30px;
+                     background:var(--bg); color:var(--fg); border:1px solid var(--border);
+                     border-radius:5px; padding:4px 7px; font-family:inherit;
+                     font-size:12.5px; line-height:1.45; }
+  .rvitem textarea:focus { outline:none; border-color:var(--accent); }
+  .rvitem select { flex:none; background:var(--panel); color:var(--fg); font-size:11px;
+                   border:1px solid var(--border); border-radius:5px; padding:2px; }
 
   /* ---------- plan pane (markdown checklist, ticks write back to the file) */
   #planbody { padding:8px 10px; }
@@ -283,14 +337,16 @@
   .menu { position:fixed; z-index:60; min-width:240px; max-width:min(430px,92vw);
           max-height:62vh; overflow-y:auto; background:var(--panel2);
           border:1px solid var(--border); border-radius:7px; padding:4px;
-          box-shadow:0 10px 28px #000b; }
+          box-shadow:0 10px 28px var(--shadow); }
   .menu .mi { padding:5px 9px; border-radius:5px; font-size:12.5px; cursor:pointer;
               white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .menu .mi:hover { background:var(--panel); color:var(--accent); }
   .menu .mi.mono { font-family:var(--mono); font-size:12px; }
-  .menu .hdr { padding:5px 9px 3px; color:var(--dim); font-size:10.5px;
-               text-transform:uppercase; letter-spacing:.5px; }
+  .menu .hdr { padding:5px 9px 3px; color:var(--dim); font-size:11px; font-weight:600; }
   .menu .sep { height:1px; background:var(--border); margin:4px 2px; }
+  .swatch { display:inline-flex; gap:2px; align-items:center; vertical-align:-2px;
+            padding:2px 3px; margin-right:7px; border:1px solid; border-radius:4px; }
+  .swatch i { width:7px; height:9px; border-radius:2px; display:block; }
   /* viz/files tabs + file explorer */
   .vtab { padding:2px 9px; font-size:11.5px; font-weight:400; border:1px solid var(--border);
           border-radius:6px; cursor:pointer; color:var(--dim); }
@@ -320,7 +376,7 @@
   .dotnew { width:8px; height:8px; border-radius:50%; background:var(--ok); flex:none;
             box-shadow:0 0 6px var(--ok); }
   /* embedded terminal cell */
-  #cell-term { background:#0a0d12; }
+  #cell-term { background:var(--termbg); }
   #ttablist { display:flex; gap:4px; flex-wrap:wrap; min-width:0; overflow:hidden; }
   .ttab { display:flex; align-items:center; gap:7px; padding:2px 9px; font-size:11.5px;
           font-weight:400; letter-spacing:0;
@@ -338,6 +394,12 @@
                   font-size:11px; padding:0 6px; color:var(--tool); flex:none; }
   .proj:hover .cli { visibility:visible; }
   .proj .grow { flex:1; min-width:0; }
+  /* keyboard users see where they are; mouse clicks stay unringed */
+  :focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  .copy:focus-visible, .ptab:focus-visible, .vtab:focus-visible { outline-offset:2px; }
+  @media (prefers-reduced-motion: reduce){
+    *, *::before, *::after { transition:none !important; animation:none !important; }
+  }
   @media (max-width: 900px){ #sidebar{ width:240px; min-width:200px; } }
   @media (max-width: 560px){ #app{ flex-direction:column; } #sidebar{ width:100%; max-height:45vh; border-right:none; border-bottom:1px solid var(--border); } }
 </style>
@@ -346,12 +408,15 @@
 <div id="app">
   <div id="sidebar">
     <div id="topbar">
-      <h1>claude-devtools <span>lite</span>
-        <button class="copy termbtn" style="float:right" id="btnQuit" title="stop the devtools server">⏻</button>
-        <button class="copy termbtn" style="float:right;margin-right:6px" id="btnTerm" title="open a terminal">⌨ CLI</button>
-        <button class="copy termbtn" style="float:right;margin-right:6px" id="btnRight" title="toggle usage/viz panels">◫</button>
+      <h1><span class="ttl">claude-devtools <span>lite</span></span>
+        <span class="topbtns">
+          <button class="copy termbtn" id="btnTheme" title="change theme">◐</button>
+          <button class="copy termbtn" id="btnRight" title="toggle usage/viz panels">◫</button>
+          <button class="copy termbtn" id="btnTerm" title="open a terminal">⌨ CLI</button>
+          <button class="copy termbtn" id="btnQuit" title="stop the devtools server">⏻</button>
+        </span>
       </h1>
-      <input id="search" placeholder="Search all sessions…  (Enter)" autocomplete="off">
+      <input id="search" placeholder="Filter projects · Enter searches transcripts" autocomplete="off">
     </div>
     <div id="tree"><div class="placeholder">loading projects…</div></div>
   </div>
@@ -359,7 +424,7 @@
   <div id="workspace">
    <div class="col" id="colL">
     <div class="cell" id="cell-main">
-      <div class="qhead">📄 SESSION
+      <div class="qhead">📄 Session
         <span style="margin-left:auto"></span>
         <button class="copy" id="headToggle" title="collapse / expand the header">▲</button>
         <button class="copy maxbtn" data-cell="cell-main" title="maximize / restore">⛶</button>
@@ -375,7 +440,7 @@
 
     <div id="hsplitL" class="split hsplit" title="drag to resize rows"></div>
     <div class="cell" id="cell-term">
-      <div class="qhead">⌨ TERMINAL
+      <div class="qhead">⌨ Terminal
         <span id="ttablist"></span>
         <span style="margin-left:auto;display:flex;gap:6px">
           <button class="copy termbtn" id="btnShell" title="plain shell in $HOME">+ shell</button>
@@ -394,7 +459,7 @@
    <div id="vsplit" class="split" title="drag to resize columns"></div>
    <div class="col" id="colR">
     <div class="cell" id="cell-usage">
-      <div class="qhead">⚡ TOKEN USE
+      <div class="qhead">⚡ Token use
         <span id="blockreset" style="margin-left:auto;font-weight:400"></span>
         <button class="copy maxbtn" data-cell="cell-usage" title="maximize / restore">⛶</button>
       </div>
@@ -403,8 +468,8 @@
     <div id="hsplitR" class="split hsplit" title="drag to resize rows"></div>
     <div class="cell" id="cell-plan">
       <div class="qhead" style="gap:4px">
-        <span class="ptab active" data-view="plan">✅ Plan</span>
-        <span class="ptab" data-view="config">⚙ Config</span>
+        <span class="ptab active" data-view="plan" role="tab" tabindex="0">✅ Plan</span>
+        <span class="ptab" data-view="config" role="tab" tabindex="0">⚙ Config</span>
         <span id="plancount" style="margin-left:auto;font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></span>
         <button class="copy" id="planimprove" style="display:none"
                 title="open the latest end-of-session retrospective">🔎</button>
@@ -422,9 +487,11 @@
     <div id="hsplitR2" class="split hsplit" title="drag to resize rows"></div>
     <div class="cell" id="cell-viz">
       <div class="qhead" style="gap:4px">
-        <span class="vtab active" data-view="viz">📊 Viz</span>
-        <span class="vtab" data-view="files">🗂 Files</span>
-        <button class="copy" id="vizPath" style="margin-left:auto" title="copy watched folder path">copy path</button>
+        <span class="vtab active" data-view="viz" role="tab" tabindex="0">📊 Viz</span>
+        <span class="vtab" data-view="files" role="tab" tabindex="0">🗂 Files</span>
+        <button class="copy" id="vizReview" style="margin-left:auto;display:none"
+                title="point at parts of this figure and write what should change">💬 Comment</button>
+        <button class="copy" id="vizPath" style="margin-left:0" title="copy watched folder path">copy path</button>
         <button class="copy maxbtn" data-cell="cell-viz" title="maximize / restore">⛶</button>
       </div>
       <div id="vizview" style="display:flex;flex-direction:column;flex:1;min-height:0">
@@ -434,6 +501,19 @@
           <embed id="vizpdf" class="pdfview" type="application/pdf" title="pdf preview">
           <div class="shield" data-cell="cell-viz" title="click to expand"><span>⛶ click to expand</span></div>
         </div>
+      </div>
+      <div id="reviewview" style="display:none">
+        <div id="rvbar">
+          <span id="rvname"></span>
+          <span id="rvstale" title="the image changed since these comments were saved — marks may no longer line up"
+                style="display:none">figure regenerated</span>
+          <span id="rvsaved"></span>
+          <button class="copy" id="rvsend" title="hand the open comments to Claude Code">Send to Claude</button>
+          <button class="copy" id="rvclose" title="back to the viz list">Done</button>
+        </div>
+        <div id="rvstage"><div id="rvwrap"><img id="rvimg" alt="figure under review" draggable="false"><div id="rvlayer"></div></div></div>
+        <div id="rvhint">Click a spot or drag a box on the figure, then write what should change.</div>
+        <div id="rvlist"></div>
       </div>
       <div id="filesview" style="display:none;flex-direction:column;flex:1;min-height:0">
         <div id="fscrumb"></div>
@@ -633,9 +713,26 @@ function projName(slug){
   return path.split("/").pop() || null;
 }
 
+/* live filter: typing narrows the tree to projects whose path matches, and to
+   sessions whose title matches in projects already opened (their titles are
+   loaded). Enter still runs the full-text search over every transcript. */
+function treeFilter(p){
+  const f = (state.filter || "").toLowerCase();
+  if(!f) return {show: true, sessions: state.sessions[p.slug] || []};
+  const all = state.sessions[p.slug] || [];
+  const hit = all.filter(s => (s.title || "").toLowerCase().includes(f));
+  const pathHit = p.path.toLowerCase().includes(f);
+  return {show: pathHit || hit.length > 0, sessions: pathHit ? all : hit,
+          expand: hit.length > 0};
+}
+
 function renderTree(){
   const tree = $("#tree"); tree.innerHTML = "";
+  let shown = 0;
   for(const p of state.projects){
+    const vis = treeFilter(p);
+    if(!vis.show) continue;
+    shown++;
     const div = document.createElement("div");
     div.className = "proj" + (state.openProject===p.slug ? " open":"");
     const shortPath = p.path.split("/").slice(-2).join("/") || p.path;
@@ -647,14 +744,14 @@ function renderTree(){
     div.querySelector(".cli").onclick = e => { e.stopPropagation();
       openTerm("claude", {project: p.slug, label: "claude · " + shortPath.split("/").pop()}); };
     tree.appendChild(div);
-    if(state.openProject===p.slug){
-      if(p.has_memory){
+    if(state.openProject===p.slug || vis.expand){
+      if(p.has_memory && state.openProject===p.slug){
         const m = document.createElement("div");
         m.className = "memlink"; m.textContent = "🧠 project memory";
         m.onclick = e => { e.stopPropagation(); showMemory(p.slug); };
         tree.appendChild(m);
       }
-      for(const s of (state.sessions[p.slug]||[])){
+      for(const s of vis.sessions){
         const el = document.createElement("div");
         el.className = "sess" + (state.active===p.slug+"/"+s.id ? " active":"");
         el.innerHTML = `<div class="t" title="${esc(s.title)}">${esc(s.title)}</div>
@@ -664,6 +761,10 @@ function renderTree(){
       }
     }
   }
+  if(!shown && state.filter)
+    tree.innerHTML = `<div class="vizempty" style="padding:14px 12px">No project or
+      opened session matches “${esc(state.filter)}”. Press Enter to search inside
+      every transcript.</div>`;
 }
 /* ---------- "new activity" badges (localStorage watermark per project) ---------- */
 function seenKey(slug){ return "cdl-seen:" + slug; }
@@ -1097,7 +1198,7 @@ function renderChart(series){
       width="${bw}" height="${h.toFixed(1)}"><title>req ${i+1} — ${fmtTok(p.context)} ctx (${fmtTok(p.cache_read)} cached, ${fmtTok(p.cache_creation)} new cache, out ${fmtTok(p.output)})${p.compaction?" — COMPACTION":""}</title></rect>`;
   });
   wrap.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
-    <text x="4" y="12" fill="#8b949e" font-size="11">peak ${fmtTok(max)} tokens</text>${bars}</svg>`;
+    <text x="4" y="12" style="fill:var(--dim)" font-size="11">peak ${fmtTok(max)} tokens</text>${bars}</svg>`;
   return wrap;
 }
 
@@ -1126,7 +1227,12 @@ async function showMemory(slug){
 }
 
 /* ---------- search ---------- */
+$("#search").addEventListener("input", ev => {
+  state.filter = ev.target.value.trim();
+  renderTree();
+});
 $("#search").addEventListener("keydown", async ev=>{
+  if(ev.key === "Escape"){ ev.target.value = ""; state.filter = ""; renderTree(); return; }
   if(ev.key !== "Enter") return;
   const q = ev.target.value.trim();
   if(q.length < 2) return;
@@ -1227,6 +1333,91 @@ function openMenu(anchor, build){
                     document.removeEventListener("keydown", onKey); };
 }
 
+/* ---------- themes (RStudio's Tools → Global Options → Appearance) ---------
+   One palette drives the panes, the transcript and every xterm tab. Light
+   themes also carry an ANSI palette: xterm's default "white" text is invisible
+   on a white background. Claude Code picks its own colours from /theme, so
+   pair a light theme here with /theme light there. */
+const LIGHT_ANSI = {black:"#24292f", red:"#cf222e", green:"#116329", yellow:"#7d4e00",
+  blue:"#0969da", magenta:"#8250df", cyan:"#1b7c83", white:"#6e7781",
+  brightBlack:"#57606a", brightRed:"#a40e26", brightGreen:"#1a7f37",
+  brightYellow:"#633c01", brightBlue:"#218bff", brightMagenta:"#a475f9",
+  brightCyan:"#3192aa", brightWhite:"#8c959f"};
+const THEMES = {
+  "GitHub Dark": {bg:"#0d1117", panel:"#161b22", panel2:"#1c2129", border:"#2d333b",
+    fg:"#d6dde5", dim:"#8b949e", accent:"#58a6ff", user:"#3b82f6", think:"#b18cff",
+    tool:"#d29922", ok:"#3fb950", err:"#f85149", termbg:"#0a0d12", bar:"#2f5c8f",
+    addfg:"#7ee787", delfg:"#ffa198"},
+  "GitHub Light": {light:true, bg:"#ffffff", panel:"#f6f8fa", panel2:"#eaeef2",
+    border:"#d0d7de", fg:"#1f2328", dim:"#59636e", accent:"#0969da", user:"#0969da",
+    think:"#8250df", tool:"#9a6700", ok:"#1a7f37", err:"#cf222e", termbg:"#ffffff",
+    bar:"#54aeff", addfg:"#116329", delfg:"#82071e"},
+  "Solarized Dark": {bg:"#002b36", panel:"#073642", panel2:"#0d3f4c", border:"#1f4f5c",
+    fg:"#a3b3b3", dim:"#7a8d91", accent:"#268bd2", user:"#268bd2", think:"#8b8fd8",
+    tool:"#b58900", ok:"#859900", err:"#dc322f", termbg:"#002b36", bar:"#2a6f97",
+    addfg:"#a4b830", delfg:"#ec6b64"},
+  "Solarized Light": {light:true, bg:"#fdf6e3", panel:"#eee8d5", panel2:"#e6dfc8",
+    border:"#d6cfb8", fg:"#4a5d63", dim:"#76878c", accent:"#1f6fb2", user:"#1f6fb2",
+    think:"#5b5fb5", tool:"#8a6800", ok:"#5f6f00", err:"#c02a27", termbg:"#fdf6e3",
+    bar:"#7fb2d9", addfg:"#4f5d00", delfg:"#a3201d"},
+  "Dracula": {bg:"#282a36", panel:"#21222c", panel2:"#343746", border:"#44475a",
+    fg:"#f8f8f2", dim:"#9ea3c4", accent:"#8be9fd", user:"#bd93f9", think:"#ff79c6",
+    tool:"#ffb86c", ok:"#50fa7b", err:"#ff5555", termbg:"#282a36", bar:"#6272a4",
+    addfg:"#50fa7b", delfg:"#ff8080"},
+  "Monokai": {bg:"#272822", panel:"#1e1f1c", panel2:"#34352f", border:"#49483e",
+    fg:"#f8f8f2", dim:"#a8a28a", accent:"#66d9ef", user:"#66d9ef", think:"#ae81ff",
+    tool:"#e6db74", ok:"#a6e22e", err:"#f92672", termbg:"#272822", bar:"#5a7d8c",
+    addfg:"#a6e22e", delfg:"#ff6188"},
+  "Tomorrow Night": {bg:"#1d1f21", panel:"#232528", panel2:"#2c2e32", border:"#373b41",
+    fg:"#c5c8c6", dim:"#969896", accent:"#81a2be", user:"#81a2be", think:"#b294bb",
+    tool:"#f0c674", ok:"#b5bd68", err:"#cc6666", termbg:"#1d1f21", bar:"#4f6a80",
+    addfg:"#b5bd68", delfg:"#d98a8a"},
+  "Cobalt": {bg:"#002240", panel:"#001b33", panel2:"#0d3a58", border:"#1f4662",
+    fg:"#ffffff", dim:"#9db4c8", accent:"#ffc600", user:"#2ea8ff", think:"#ff7fa3",
+    tool:"#ff9d00", ok:"#3ad900", err:"#ff2c70", termbg:"#002240", bar:"#0088ff",
+    addfg:"#3ad900", delfg:"#ff6f9a"},
+};
+const DEFAULT_THEME = "GitHub Dark";
+function themeName(){
+  const n = localStorage.getItem("cdl-theme");
+  return THEMES[n] ? n : DEFAULT_THEME;
+}
+function termTheme(){
+  const t = THEMES[themeName()];
+  return Object.assign({background: t.termbg, foreground: t.fg, cursor: t.accent,
+                        cursorAccent: t.termbg, selectionBackground: t.accent + "55"},
+                       t.light ? LIGHT_ANSI : {});
+}
+function applyTheme(name){
+  if(!THEMES[name]) name = DEFAULT_THEME;
+  const t = THEMES[name], root = document.documentElement.style;
+  for(const k of ["bg","panel","panel2","border","fg","dim","accent","user","think",
+                  "tool","ok","err","termbg","bar","addfg","delfg"])
+    root.setProperty("--" + k, t[k]);
+  root.setProperty("--stripe", t.light ? "rgba(0,0,0,.03)" : "rgba(255,255,255,.02)");
+  root.setProperty("--shadow", t.light ? "rgba(31,35,40,.18)" : "rgba(0,0,0,.55)");
+  root.setProperty("color-scheme", t.light ? "light" : "dark");
+  localStorage.setItem("cdl-theme", name);
+  const tt = termTheme();
+  for(const [, x] of (typeof TM !== "undefined" ? TM.terms : [])) x.term.options.theme = tt;
+}
+function pickTheme(anchor){
+  openMenu(anchor, m => {
+    const h = document.createElement("div");
+    h.className = "hdr"; h.textContent = "Theme";
+    m.appendChild(h);
+    for(const name of Object.keys(THEMES)){
+      const t = THEMES[name];
+      const it = menuItem(m, "", t.light ? "light theme" : "dark theme",
+                          () => applyTheme(name));
+      it.innerHTML = `<span class="swatch" style="background:${t.bg};border-color:${t.border}">
+          <i style="background:${t.accent}"></i><i style="background:${t.ok}"></i><i style="background:${t.think}"></i></span>
+        ${esc(name)}${name === themeName() ? ' <span style="color:var(--ok)">✓</span>' : ""}`;
+    }
+  });
+}
+applyTheme(themeName());
+
 function menuItem(m, text, title, fn, mono){
   const it = document.createElement("div");
   it.className = "mi" + (mono ? " mono" : "");
@@ -1276,12 +1467,11 @@ async function openTerm(kind, opts = {}){
   const term = new Terminal({
     fontSize: 13, fontFamily: "ui-monospace, Menlo, monospace",
     cursorBlink: true, allowProposedApi: true, scrollback: 5000,
-    theme: { background: "#0a0d12", foreground: "#d6dde5", cursor: "#58a6ff",
-             selectionBackground: "#2d4a6d" }
+    theme: termTheme()
   });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
-  const t = { id: null, label: opts.label, term, fit, container,
+  const t = { id: null, kind, label: opts.label, term, fit, container,
               dead: false, pos: 0, abort: null,
               sentCols: null, sentRows: null, pendingSize: null,
               sizeInFlight: false };
@@ -1452,6 +1642,10 @@ $("#btnTerm").onclick = () => {
   else openTerm("claude", {label: "claude · ~"});
 };
 $("#btnShell").onclick = () => openTerm("shell", {label: "shell · ~"});
+$("#btnTheme").onclick = () => {
+  if(document.getElementById("menu")) closeMenu();
+  else pickTheme($("#btnTheme"));
+};
 $("#btnClaudeHome").onclick = () => {
   if(document.getElementById("menu")) closeMenu();      // second click: toggle shut
   else pickClaudeFolder($("#btnClaudeHome"));
@@ -1634,7 +1828,7 @@ async function refreshUsage(){
     const max = Math.max(...u.hourly, 1);
     const W=300, H=44, bw = W/24;
     const bars = u.hourly.map((v,i)=>
-      `<rect x="${(i*bw+1).toFixed(1)}" y="${(H - v/max*(H-4)).toFixed(1)}" width="${(bw-2).toFixed(1)}" height="${(v/max*(H-4)).toFixed(1)}" fill="#2f5c8f"><title>${fmtTok(v)} output tokens</title></rect>`).join("");
+      `<rect x="${(i*bw+1).toFixed(1)}" y="${(H - v/max*(H-4)).toFixed(1)}" width="${(bw-2).toFixed(1)}" height="${(v/max*(H-4)).toFixed(1)}" style="fill:var(--bar)"><title>${fmtTok(v)} output tokens</title></rect>`).join("");
     body.innerHTML = blockPart + `
       <div class="urow"><span>today (output)</span><b>${fmtTok(u.today.output)}</b></div>
       <div class="urow"><span>last 7 days</span><b>${fmtTok(u.week.output)}</b></div>
@@ -1673,10 +1867,12 @@ const isPdfName = n => /\.pdf(\?|$)/i.test(n || "");
 
 /* ---------- viz inbox ---------- */
 let vizDir = "", vizActive = null, vizNewest = 0, vizPinned = null, vizGraphOffer = null;
+let vizImage = null;          // full path of the image on show, if it is one
 function vizOverride(){ return localStorage.getItem("cdl-vizdir") || ""; }
 function showPinned(){
   if(!vizPinned) return;
   vizActive = "::pinned";
+  vizImage = null; $("#vizReview").style.display = "none";
   ensureCookie();
   setPreview("#vizframe", "#vizpdf",
              "/api/fs/file?path=" + encodeURIComponent(vizPinned.path),
@@ -1733,6 +1929,8 @@ async function refreshViz(){
 }
 function showViz(f){
   vizActive = f.name;
+  vizImage = /^image\//.test(f.kind || "") ? vizDir + "/" + f.name : null;
+  $("#vizReview").style.display = vizImage ? "" : "none";
   ensureCookie();
   setPreview("#vizframe", "#vizpdf",
              "/api/fs/file?path=" + encodeURIComponent(vizDir + "/" + f.name)
@@ -1744,6 +1942,191 @@ function showViz(f){
 $("#vizPath").onclick = () => navigator.clipboard.writeText(vizDir)
   .then(() => { $("#vizPath").textContent = "✓"; setTimeout(()=>$("#vizPath").textContent="copy path", 900); });
 
+
+/* ---------- figure review ---------------------------------------------------
+   Inspired by paulgp/exhibit-review, without its tldraw/npm stack: click a
+   point or drag a box on a figure, write what should change. Comments are
+   saved as JSON beside the figure (.review/<name>.json, see review_write in
+   server.py), so "Send to Claude" only has to point a session at that file.
+   Coordinates are fractions of the image, so marks survive a re-render. */
+const RV = {path: null, rev: 0, comments: [], sel: null, saveTimer: null,
+            file: null, busy: false};
+
+function rvStatus(msg){ $("#rvsaved").textContent = msg; }
+
+async function openReview(path){
+  RV.path = path; RV.sel = null;
+  let d;
+  try{ d = await api("/api/review?path=" + encodeURIComponent(path)); }
+  catch(e){ toast("cannot review this figure: " + e.message); return; }
+  RV.rev = d.revision; RV.comments = d.comments; RV.file = d.file;
+  $("#vizview").style.display = "none";
+  $("#reviewview").style.display = "flex";
+  $("#rvname").textContent = path.split("/").pop();
+  $("#rvname").title = path;
+  $("#rvstale").style.display = d.stale ? "" : "none";
+  rvStatus(d.revision ? "saved" : "");
+  ensureCookie();
+  const img = $("#rvimg");
+  img.onload = rvFit;
+  img.src = "/api/fs/file?path=" + encodeURIComponent(path) + "&t=" + Date.now();
+  if(maxedCell !== "cell-viz") toggleMax("cell-viz");     // room to point at things
+  rvRender();
+}
+function closeReview(){
+  rvFlush();
+  RV.path = null;
+  $("#reviewview").style.display = "none";
+  $("#vizview").style.display = "flex";
+  if(maxedCell === "cell-viz") toggleMax("cell-viz");
+}
+// the image scales to the stage; the marks layer sits exactly on top of it
+function rvFit(){
+  const st = $("#rvstage"), img = $("#rvimg");
+  if(!RV.path || !st.clientHeight) return;
+  img.style.maxHeight = Math.max(80, st.clientHeight - 16) + "px";
+}
+window.addEventListener("resize", rvFit);
+
+function rvRender(){
+  const layer = $("#rvlayer"); layer.innerHTML = "";
+  const list = $("#rvlist"); list.innerHTML = "";
+  RV.comments.forEach((c, i) => {
+    const n = i + 1;
+    const mk = document.createElement("div");
+    mk.className = `rvmark ${c.type} ${c.status}` + (RV.sel === c.id ? " sel" : "");
+    mk.style.left = (c.x * 100) + "%"; mk.style.top = (c.y * 100) + "%";
+    if(c.type === "region"){
+      mk.style.width = (c.w * 100) + "%"; mk.style.height = (c.h * 100) + "%";
+    }
+    mk.innerHTML = `<span class="num">${n}</span>`;
+    mk.title = c.text || "(no text yet)";
+    mk.onpointerdown = e => { e.stopPropagation(); rvSelect(c.id, true); };
+    layer.appendChild(mk);
+
+    const it = document.createElement("div");
+    it.className = `rvitem ${c.status}` + (RV.sel === c.id ? " sel" : "");
+    it.dataset.id = c.id;
+    it.innerHTML = `<span class="n">${n}</span><textarea rows="1"
+        placeholder="What should change here?"></textarea>
+      <select title="status">${["open","resolved","wontfix"].map(s =>
+        `<option${s === c.status ? " selected" : ""}>${s}</option>`).join("")}</select>
+      <button class="copy" title="delete this comment">✕</button>`;
+    const ta = it.querySelector("textarea");
+    ta.value = c.text || "";
+    ta.onfocus = () => rvSelect(c.id, false);
+    ta.oninput = () => { c.text = ta.value; mk.title = c.text; rvDirty(); };
+    it.querySelector("select").onchange = e => { c.status = e.target.value; rvDirty(); rvRender(); };
+    it.querySelector("button").onclick = () => {
+      if(c.text && !confirm(`Delete comment ${n}?`)) return;
+      RV.comments = RV.comments.filter(x => x !== c); rvDirty(); rvRender();
+    };
+    list.appendChild(it);
+  });
+  rvFit();                       // the list grew or shrank: refit the figure
+  const open = RV.comments.filter(c => c.status === "open").length;
+  $("#rvsend").disabled = !open;
+  $("#rvsend").textContent = open ? `Send ${open} to Claude` : "Send to Claude";
+}
+function rvSelect(id, focus){
+  RV.sel = id;
+  document.querySelectorAll(".rvmark, .rvitem").forEach(el => el.classList.remove("sel"));
+  const i = RV.comments.findIndex(c => c.id === id);
+  if(i < 0) return;
+  $("#rvlayer").children[i].classList.add("sel");
+  const it = $("#rvlist").children[i];
+  it.classList.add("sel");
+  if(focus){ it.scrollIntoView({block: "nearest"}); it.querySelector("textarea").focus(); }
+}
+
+function rvDirty(){
+  rvStatus("unsaved");
+  clearTimeout(RV.saveTimer);
+  RV.saveTimer = setTimeout(rvFlush, 700);
+}
+async function rvFlush(){
+  clearTimeout(RV.saveTimer); RV.saveTimer = null;
+  if(!RV.path || $("#rvsaved").textContent !== "unsaved" || RV.busy) return;
+  RV.busy = true; rvStatus("saving…");
+  try{
+    const d = await api("/api/review", {path: RV.path, revision: RV.rev,
+                                        comments: RV.comments});
+    RV.rev = d.revision; RV.file = d.file;
+    // keep the local objects (a textarea may still be typing into them)
+    RV.comments.forEach((c, i) => { if(d.comments[i]) c.id = d.comments[i].id; });
+    rvStatus("saved");
+    $("#rvstale").style.display = "none";
+  }catch(e){
+    rvStatus("not saved");
+    toast(e.message + " — your text is still here; copy it before reloading.");
+  }finally{ RV.busy = false; }
+}
+
+// click = point, drag = region (a few pixels of wobble still count as a click)
+(function rvDrawing(){
+  const layer = $("#rvlayer");
+  let start = null, draft = null;
+  const frac = e => {
+    const r = layer.getBoundingClientRect();
+    return {x: clamp((e.clientX - r.left) / r.width, 0, 1),
+            y: clamp((e.clientY - r.top) / r.height, 0, 1), px: e.clientX, py: e.clientY};
+  };
+  layer.addEventListener("pointerdown", e => {
+    if(e.button !== 0) return;
+    start = frac(e);
+    try{ layer.setPointerCapture(e.pointerId); }catch(_){}
+  });
+  layer.addEventListener("pointermove", e => {
+    if(!start) return;
+    const p = frac(e);
+    if(Math.hypot(p.px - start.px, p.py - start.py) < 6) return;
+    if(!draft){ draft = document.createElement("div"); draft.className = "rvdraft";
+                layer.appendChild(draft); }
+    draft.style.left = Math.min(p.x, start.x) * 100 + "%";
+    draft.style.top = Math.min(p.y, start.y) * 100 + "%";
+    draft.style.width = Math.abs(p.x - start.x) * 100 + "%";
+    draft.style.height = Math.abs(p.y - start.y) * 100 + "%";
+  });
+  layer.addEventListener("pointerup", e => {
+    if(!start) return;
+    const p = frac(e), s0 = start;
+    start = null;
+    if(draft){ draft.remove(); draft = null; }
+    const id = "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const c = Math.hypot(p.px - s0.px, p.py - s0.py) < 6
+      ? {id, type: "point", x: s0.x, y: s0.y, text: "", status: "open"}
+      : {id, type: "region", x: Math.min(p.x, s0.x), y: Math.min(p.y, s0.y),
+         w: Math.abs(p.x - s0.x), h: Math.abs(p.y - s0.y), text: "", status: "open"};
+    RV.comments.push(c);
+    rvRender(); rvSelect(id, true); rvDirty();
+  });
+})();
+
+/* Point a Claude session at the review file. A live claude tab gets the text
+   typed in (not submitted: you read it, then press Enter); otherwise a new
+   session starts in the current project with it as the first prompt. */
+async function rvSend(){
+  await rvFlush();
+  if(!RV.file) return;
+  const open = RV.comments.filter(c => c.status === "open").length;
+  const prompt = `Figure feedback: ${open} open comment(s) on ${RV.path} are in ${RV.file} `
+    + `(x, y, w, h are fractions of the image, origin top-left). Find the script that `
+    + `generates this figure, apply each open comment, re-render it to the same path, `
+    + `then set each addressed comment's status to "resolved" in that JSON.`;
+  const t = TM.terms.get(TM.active);
+  if(t && !t.dead && (t.kind === "claude" || t.kind === "resume")){
+    closeReview();
+    termInsert(prompt);
+    return;
+  }
+  const cwd = planCwd || RV.path.replace(/\/[^\/]+$/, "");
+  closeReview();
+  openTerm("claude", {cwd, prompt, label: "claude · figure feedback"});
+}
+
+$("#vizReview").onclick = () => { if(vizImage) openReview(vizImage); };
+$("#rvclose").onclick = closeReview;
+$("#rvsend").onclick = rvSend;
 
 /* ---------- plan pane ----------------------------------------------------
    Reads a markdown checklist out of the selected project (.claude/plan.md,
@@ -2023,6 +2406,10 @@ function vizTab(view){
   if(view === "files") loadFs(fsPath);
 }
 document.querySelectorAll(".vtab").forEach(v => v.onclick = () => vizTab(v.dataset.view));
+// span tabs answer Enter/Space like buttons do
+document.querySelectorAll('[role="tab"]').forEach(t => t.addEventListener("keydown", e => {
+  if(e.key === "Enter" || e.key === " "){ e.preventDefault(); t.click(); }
+}));
 
 async function loadFs(path){
   let d;
@@ -2093,7 +2480,7 @@ function toast(msg, onclick){
   }
   const t = document.createElement("div");
   t.style.cssText = "background:var(--panel);border:1px solid var(--ok);border-radius:8px;"+
-    "padding:8px 14px;font-size:12.5px;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.5)";
+    "padding:8px 14px;font-size:12.5px;cursor:pointer;box-shadow:0 4px 16px var(--shadow)";
   t.textContent = msg;
   t.onclick = () => { if(onclick) onclick(); t.remove(); };
   box.appendChild(t);

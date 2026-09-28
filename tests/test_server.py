@@ -851,3 +851,64 @@ def test_helper_scripts_in_hooks_are_not_flagged_as_orphans(tmp_path):
     assert got["guard"]["orphan"] is True         # consumes a hook payload
     assert got["declared"]["orphan"] is True
     assert "PreCompact" in got["declared"]["description"]
+
+
+def test_config_inventory_counts_nested_rules(tmp_path):
+    """Claude Code loads rules/ recursively, so a subfolder is resident too."""
+    root = tmp_path / ".claude"
+    (root / "rules" / "pipeline").mkdir(parents=True)
+    (root / "rules" / "top.md").write_text("# Top\n" + "x" * 400)
+    (root / "rules" / "pipeline" / "workflow.md").write_text("# Flow\n" + "y" * 4000)
+    mem = [g for g in srv.config_inventory(root)["groups"] if g["key"] == "memory"][0]
+    names = {i["name"]: i for i in mem["items"]}
+    assert set(names) == {"top", "pipeline/workflow"}
+    assert names["pipeline/workflow"]["always"] is True
+    assert names["pipeline/workflow"]["resident"] > names["top"]["resident"]
+
+
+# ---------------------------------------------------------------- figure review
+
+@pytest.fixture
+def figure(plan_project):
+    img = plan_project / "fig.png"
+    img.write_bytes(b"\x89PNG fake v1")
+    return img
+
+
+def test_review_roundtrip_clamps_and_numbers(figure):
+    d = srv.review_write(str(figure), [
+        {"type": "point", "x": 0.25, "y": 1.7, "text": "bigger label"},
+        {"type": "region", "x": -1, "y": 0.1, "w": 0.5, "h": 0.2,
+         "status": "bogus", "text": "drop this band"}], 0)
+    assert d["revision"] == 1 and not d["stale"]
+    a, b = d["comments"]
+    assert (a["n"], a["y"], a["status"]) == (1, 1.0, "open")
+    assert (b["n"], b["x"], b["w"], b["status"]) == (2, 0.0, 0.5, "open")
+    saved = json.loads((figure.parent / ".review" / "fig.png.json").read_text())
+    assert saved["figure"]["content_hash"] == d["content_hash"]
+    assert figure.read_bytes() == b"\x89PNG fake v1"          # never rewritten
+
+
+def test_review_flags_a_regenerated_figure(figure):
+    srv.review_write(str(figure), [{"type": "point", "x": .5, "y": .5}], 0)
+    figure.write_bytes(b"\x89PNG fake v2")
+    assert srv.review_read(str(figure))["stale"] is True
+
+
+def test_review_refuses_a_stale_revision(figure):
+    srv.review_write(str(figure), [], 0)
+    with pytest.raises(ValueError, match="changed on disk"):
+        srv.review_write(str(figure), [], 0)
+
+
+def test_review_rejects_bad_input(figure, plan_project):
+    with pytest.raises(ValueError):
+        srv.review_write(str(figure), [{"type": "arrow", "x": 0, "y": 0}], 0)
+    with pytest.raises(ValueError):
+        srv.review_write(str(figure), [{"type": "point", "x": "a", "y": 0}], 0)
+    notes = plan_project / "notes.md"
+    notes.write_text("x")
+    with pytest.raises(ValueError):
+        srv.review_read(str(notes))                           # not an image
+    with pytest.raises(ValueError):
+        srv.review_read("/etc/hosts.png")                     # outside $HOME

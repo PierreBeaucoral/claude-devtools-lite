@@ -118,7 +118,7 @@ const TM = { terms: new Map(), active: null };
 const app = (0, eval)("(TM)=>{" +
   "let fsPath = null; const loaded = [];" +
   "function loadFs(p){ loaded.push(p); fsPath = p; }" +
-  "function renderTabs(){} function fitActive(){}" +
+  "function renderTabs(){} function fitActive(){} function setPlanProject(){}" +
   "function $(s){ return {style:{display:'flex'}}; }" +   // Files tab visible
   slice("/* Switching terminal tabs moves the file explorer",
         "function fitActive(force)") +

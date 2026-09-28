@@ -58,7 +58,9 @@ into any session in an embedded terminal.
 - Token totals per session, deduplicated by request ID, plus a tool-call histogram
 - **Subagent transcripts** open in the same viewer, and the header chips are named by
   agent type rather than uuid
-- **Full-text search** across every session; results jump to the matching entry
+- **The sidebar filters as you type** (project paths, and session titles in opened
+  projects); **Enter** runs the full-text search across every session, and results jump
+  to the matching entry. Esc clears the filter
 - Project **memory** files rendered in place
 - Big transcripts (20 MB+, thousands of entries) load lazily and stay responsive
 
@@ -94,7 +96,8 @@ into any session in an embedded terminal.
 **Config inventory (⚙ Config tab)**
 - What is actually installed in `~/.claude` — agents, skills, commands, rules, hooks,
   plugins, MCP servers — with the project's own `.claude/` alongside it when it has one
-- Splits **resident** from **on demand**: `CLAUDE.md` and `rules/` are pasted into every
+- Splits **resident** from **on demand**: `CLAUDE.md` and `rules/` (subfolders included,
+  as Claude Code loads them) are pasted into every
   request, and so is one description line per agent/skill/command — their bodies are not.
   So a 45 kB command is nearly free until you invoke it, while a 10 kB rules file is a tax
   on every turn. The pane totals both and sorts each group heaviest-first
@@ -134,6 +137,26 @@ into any session in an embedded terminal.
   browsed to in it
 - **Click a preview to expand it**: the pane goes full-screen (Esc, or ⛶, restores it),
   which is where a knowledge graph or a wide figure is actually usable
+
+**Figure comments** (after [exhibit-review](https://github.com/paulgp/exhibit-review))
+- On any image in the Viz pane, **💬 Comment** opens it full-size: click a spot or drag a
+  box, then write what should change. Marks are numbered, and each comment is *open*,
+  *resolved* or *wontfix*
+- Comments save automatically to `.review/<figure>.json` next to the figure, with
+  coordinates as fractions of the image (so they survive a re-render at another size) and
+  the image's sha256. The figure itself is never written
+- **Send to Claude** types a prompt into the active Claude tab (you press Enter), or starts
+  a session in the project: find the script behind the figure, apply the open comments,
+  re-render, mark them resolved in the JSON
+- When the image changes after comments were saved, a **figure regenerated** badge warns
+  that old marks may no longer line up. Saves refuse to overwrite a newer revision (for
+  example one Claude just wrote)
+
+**Themes**
+- **◐** in the sidebar switches the whole app, terminal included: GitHub Dark (default),
+  GitHub Light, Solarized Dark / Light, Dracula, Monokai, Tomorrow Night, Cobalt — the
+  editor themes RStudio users know. The choice is remembered per browser
+- Claude Code picks its own colours: with a light theme here, run `/theme light` there
 
 ## Install and run
 
@@ -194,11 +217,14 @@ pane, and everything else keeps working.
 | Browse a project | Click it in the sidebar; sessions expand underneath |
 | Inspect a session | Click a session — timeline, chart, and token totals load |
 | Hide noise | Toggle **thinking** / **tool calls** / **system** above the timeline |
+| Filter the sidebar | Type in the search box — the tree narrows as you type |
 | Search everything | Type in the search box, press Enter, click a result to jump to it |
 | Open the CLI in a project | Hover a project → **⌨** |
 | Start a session anywhere | **+ claude** → pick a project, `~`, or **browse…** for any folder |
 | Resume a session | Open it → **⌨ resume in CLI** |
 | Show a figure from a session | Have it write into `$CLAUDE_DEVTOOLS_VIZ_DIR` |
+| Comment on a figure | Show it in the Viz pane → **💬 Comment** → click or drag, type, **Send to Claude** |
+| Change the theme | **◐** in the sidebar |
 | Tick off a plan step | Click it in the **PLAN** pane — the markdown file is updated |
 | Point the plan pane elsewhere | Use its file picker, or **＋ create `.claude/plan.md`** |
 | Read the last retrospective | **🔎** in the PLAN pane header |
@@ -227,6 +253,10 @@ Viz pane. Prefer inline-only `.html`, `.png`, or `.svg`, with descriptive filena
 Keep the working plan in `.claude/plan.md` as markdown checkboxes (`- [ ] step`). The
 dashboard's PLAN pane renders it and writes ticks back into it, so re-read it before
 planning and update it as steps complete.
+
+Figure feedback lives in `.review/<figure>.json` next to a figure (coordinates are
+fractions of the image, origin top-left). Before regenerating a figure, read its open
+comments; after applying one, set its `status` to `"resolved"` in that file.
 ```
 
 ## Security

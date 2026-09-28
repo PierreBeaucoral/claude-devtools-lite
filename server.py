@@ -13,6 +13,7 @@ Usage:
 """
 import argparse
 import base64
+import hashlib
 import json
 import os
 import re
@@ -27,6 +28,7 @@ import sys
 import threading
 import time
 import urllib.parse
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -1083,6 +1085,98 @@ def plan_create(cwd):
     return plan_read(cwd, str(f))
 
 
+# ---------------------------------------------------------------- figure review
+#
+# Spatial comments on a rendered figure, after paulgp/exhibit-review: click a
+# point or drag a region on an image in the Viz pane, type what should change.
+# The review lives next to the figure as plain JSON so a Claude Code session
+# can read it, regenerate the figure from its script, and mark comments
+# resolved — the figure itself is never written.
+#
+#   <dir>/wealth.png
+#   <dir>/.review/wealth.png.json   {schema_version, figure{file,content_hash},
+#                                    revision, updated_at, comments[...]}
+#
+# Coordinates are fractions of the image (0–1, origin top-left), so they
+# survive a re-render at a different size. content_hash is the sha256 of the
+# image bytes when the review was saved: a mismatch means the figure was
+# regenerated since, and the UI says so.
+
+REVIEW_TYPES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
+REVIEW_MAX_COMMENTS = 200
+REVIEW_STATUSES = ("open", "resolved", "wontfix")
+
+
+def review_paths(raw):
+    img = safe_home_path(raw)
+    if img.suffix.lower() not in REVIEW_TYPES or is_sensitive(img.name):
+        raise ValueError("not a reviewable image")
+    if not img.is_file():
+        raise FileNotFoundError(raw)
+    return img, img.parent / ".review" / (img.name + ".json")
+
+
+def _sha256(path):
+    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def review_read(raw):
+    img, f = review_paths(raw)
+    cur = _sha256(img)
+    try:
+        doc = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        doc = {"revision": 0, "comments": [], "figure": {}}
+    saved = (doc.get("figure") or {}).get("content_hash")
+    return {"image": str(img), "file": str(f), "revision": doc.get("revision", 0),
+            "comments": doc.get("comments") or [], "content_hash": cur,
+            "stale": bool(saved and saved != cur and doc.get("comments"))}
+
+
+def _unit(v):
+    if not isinstance(v, (int, float)) or v != v:        # rejects NaN
+        raise ValueError("coordinate must be a number")
+    return round(min(1.0, max(0.0, float(v))), 5)
+
+
+def review_clean(c, n):
+    kind = c.get("type")
+    if kind not in ("point", "region"):
+        raise ValueError("comment type must be point or region")
+    out = {"id": str(c.get("id") or uuid.uuid4())[:64], "n": n, "type": kind,
+           "x": _unit(c.get("x")), "y": _unit(c.get("y")),
+           "text": str(c.get("text") or "")[:4000],
+           "status": c.get("status") if c.get("status") in REVIEW_STATUSES else "open"}
+    if kind == "region":
+        out["w"] = _unit(c.get("w"))
+        out["h"] = _unit(c.get("h"))
+    return out
+
+
+def review_write(raw, comments, expect_revision):
+    """Replace the review. Refuses when someone (e.g. Claude) saved a newer
+    revision since the page loaded it, so neither side silently loses edits."""
+    img, f = review_paths(raw)
+    if not isinstance(comments, list) or len(comments) > REVIEW_MAX_COMMENTS:
+        raise ValueError("comments must be a list of at most %d" % REVIEW_MAX_COMMENTS)
+    cur = review_read(raw)
+    if expect_revision is not None and expect_revision != cur["revision"]:
+        raise ValueError("review changed on disk — reload the figure and try again")
+    clean = [review_clean(c, i + 1) for i, c in enumerate(comments)
+             if isinstance(c, dict)]
+    doc = {"schema_version": 1,
+           "figure": {"file": img.name, "content_hash": cur["content_hash"]},
+           "revision": cur["revision"] + 1,
+           "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+           "coordinates": "fractions of the image, origin top-left",
+           "comments": clean}
+    f.parent.mkdir(exist_ok=True)
+    tmp = f.with_name(f.name + ".cdl-tmp")
+    tmp.write_text(json.dumps(doc, indent=2, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, f)
+    return review_read(raw)
+
+
 # ---------------------------------------------------------------- config inventory
 #
 # What is actually installed in ~/.claude — agents, skills, commands, rules,
@@ -1170,8 +1264,12 @@ def _md_group(root, sub, always, glob="*.md", nested=None):
         if not f.is_file():
             continue
         fm = read_frontmatter(f)
+        # nested files keep their subfolder so pipeline/workflow ≠ workflow
+        rel = f.relative_to(d).with_suffix("")
         items.append(config_item(f, always,
-                                 fm.get("description") or first_heading(f)))
+                                 fm.get("description") or first_heading(f),
+                                 {"name": str(rel)} if len(rel.parts) > 1
+                                 and f.name != "SKILL.md" else None))
     return items
 
 
@@ -1292,7 +1390,8 @@ def config_inventory(root, scope=None):
         f = root / name
         if f.is_file():
             memory.append(config_item(f, True, "project/global instructions"))
-    memory += _md_group(root, "rules", True)
+    # rules/ is loaded recursively — a flat glob hid whole subfolders
+    memory += _md_group(root, "rules", True, nested="**/*.md")
     if memory:
         groups.append({"key": "memory", "label": "Instructions (every turn)",
                        "always": True, "items": memory})
@@ -1880,6 +1979,7 @@ SESSION_MARKER_EXACT = {"CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT",
 # genuine user configuration that must survive the scrub
 SESSION_MARKER_KEEP = {"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX",
                        "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+                       "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
                        "CLAUDE_CODE_GIT_BASH_PATH", "CLAUDE_CONFIG_DIR",
                        "CLAUDE_BIN"}
 
@@ -1990,7 +2090,7 @@ def start_term(kind, cwd, session_id=None, prompt=None, cols=100, rows=30):
 # ---------------------------------------------------------------- HTTP
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "claude-devtools-lite/0.6.1"
+    server_version = "claude-devtools-lite/0.8.0"
     root = CLAUDE_ROOT  # overridden in main()
 
     def log_message(self, fmt, *args):
@@ -2113,6 +2213,10 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/viz":
                 files, d = viz_list(qs.get("dir", [None])[0])
                 self._json({"dir": str(d), "default_dir": str(VIZ_DIR), "files": files})
+                return
+
+            if p == "/api/review":
+                self._json(review_read(qs.get("path", [""])[0]))
                 return
 
             if p == "/api/fs":
@@ -2314,6 +2418,12 @@ class Handler(BaseHTTPRequestHandler):
                                            body.get("line"),
                                            body.get("expect"),
                                            body.get("state", "done")))
+                return
+
+            if p == "/api/review":
+                self._json(review_write(body.get("path") or "",
+                                        body.get("comments"),
+                                        body.get("revision")))
                 return
 
             if p == "/api/shutdown":
