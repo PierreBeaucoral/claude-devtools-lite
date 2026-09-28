@@ -1557,7 +1557,20 @@ def addons_status(root=None, manifest=None):
                                       if not program_on_path(n)],
                     "commands": [str(c) for c in cmds],
                     "reinstall": [str(c) for c in redo]})
-    return {"platform": plat, "addons": out}
+    osname = ("windows" if os.name == "nt"
+              else "mac" if sys.platform == "darwin" else "linux")
+    prereqs = {}
+    for key, pr in (data.get("prerequisites") or {}).items():
+        if not ADDON_ID_RE.fullmatch(str(key)):
+            continue
+        prereqs[key] = {"name": pr.get("name", key), "url": pr.get("url", ""),
+                        "installed": program_on_path(key),
+                        "needs": [n for n in pr.get("needs", [])],
+                        "commands": [str(c) for c in
+                                     (pr.get("install") or {}).get(osname) or []],
+                        "note": (pr.get("note") or {}).get(osname, "")}
+    return {"platform": plat, "os": osname, "addons": out,
+            "prerequisites": prereqs}
 
 
 # ---------------------------------------------------------------- improve reports
@@ -2005,6 +2018,27 @@ CLAUDE_CANDIDATES = (
 )
 
 
+def _windows_registry_path():
+    """PATH as Windows will give the NEXT process: machine + user values read
+    from the registry. Our own os.environ PATH is frozen at launch, so without
+    this a `winget install` done from the add-ons pane stays invisible."""
+    try:
+        import winreg
+    except ImportError:
+        return []
+    out = []
+    for hive, key in ((winreg.HKEY_LOCAL_MACHINE,
+                       r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+                      (winreg.HKEY_CURRENT_USER, "Environment")):
+        try:
+            with winreg.OpenKey(hive, key) as k:
+                val, _ = winreg.QueryValueEx(k, "Path")
+            out += os.path.expandvars(str(val)).split(os.pathsep)
+        except OSError:
+            continue
+    return out
+
+
 def login_path():
     """PATH as the user's *login shell* sees it.
 
@@ -2014,7 +2048,7 @@ def login_path():
     Ask the shell once, cache it, and always append the usual suspects.
     """
     if "path_raw" in _env_cache:
-        return _existing_dirs(_env_cache["path_raw"])
+        return _existing_dirs(_windows_registry_path() + _env_cache["path_raw"])
     parts = []
     if os.name != "nt":
         shell = default_shell()
@@ -2037,7 +2071,7 @@ def login_path():
     # call: `uv tool install` creates ~/.local/bin after the app started, and
     # a cached list would hide it from new terminals until a restart
     _env_cache["path_raw"] = parts
-    return _existing_dirs(parts)
+    return _existing_dirs(_windows_registry_path() + parts)
 
 
 def _existing_dirs(parts):
@@ -2097,7 +2131,14 @@ def child_environment(environ=None, extra=None):
 def find_claude():
     """Locate the Claude Code CLI regardless of how this server was started."""
     if "claude" in _env_cache:
-        return _env_cache["claude"]
+        hit = _env_cache["claude"]
+        if hit is None:
+            # re-check a miss (cheap PATH lookup only): the add-ons pane may
+            # have just installed Claude Code
+            hit = shutil.which("claude", path=login_path())
+            if hit:
+                _env_cache["claude"] = hit
+        return hit
     found = None
     override = os.environ.get("CLAUDE_BIN")
     if override and os.path.exists(os.path.expanduser(override)):

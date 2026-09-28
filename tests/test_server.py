@@ -985,9 +985,14 @@ def test_improve_is_skipped_when_the_command_is_not_installed(tmp_path, monkeypa
 
 
 def _joined_install_lines(plat):
-    """Every line the pane can send: install, and reinstall where defined."""
+    """Every line the pane can send: install, reinstall, and prerequisites."""
     data = json.loads((HERE.parent / "addons.json").read_text())
     out = {}
+    oses = ("windows",) if plat == "windows" else ("mac", "linux")
+    for key, pr in data.get("prerequisites", {}).items():
+        for o in oses:
+            if pr["install"].get(o):
+                out[f"prereq {key}:{o}"] = " && ".join(pr["install"][o])
     for a in data["addons"]:
         for key in ("install", "reinstall"):
             if a.get(key):
@@ -1016,7 +1021,9 @@ def test_windows_install_lines_are_safe_to_chain_in_cmd():
     for aid, line in _joined_install_lines("windows").items():
         assert not re.search(r"(^|&&|\(|\|\|)\s*if\s", line), f"{aid}: bare if"
         for m in re.finditer(r"(^|&&|\(|\|\|)\s*(\S+)", line):
-            assert m.group(2) != "claude", f"{aid}: `claude` without `call`"
+            # npm-installed CLIs are .cmd wrappers too
+            assert m.group(2) not in ("claude", "npm", "codex"), \
+                f"{aid}: `{m.group(2)}` without `call`"
         assert line.count("(") == line.count(")"), aid
 
 
@@ -1033,3 +1040,30 @@ def test_reinstall_falls_back_to_install_and_node_hooks_need_node(tmp_path):
     shipped = {a["id"]: a for a in json.loads((HERE.parent / "addons.json").read_text())["addons"]}
     for aid in ("ponytail", "codex"):          # their hooks are `node …`
         assert "node" in shipped[aid]["needs"], aid
+
+
+def test_every_need_has_a_prerequisite_recipe():
+    data = json.loads((HERE.parent / "addons.json").read_text())
+    pre = data["prerequisites"]
+    for a in data["addons"]:
+        for n in a.get("needs", []):
+            assert n in pre, f"{a['id']} needs {n}, but addons.json has no recipe"
+    for key, pr in pre.items():
+        for n in pr.get("needs", []):
+            assert n in pre, f"prerequisite {key} needs unknown {n}"
+        for o in ("mac", "linux", "windows"):
+            assert pr["install"].get(o) or pr.get("note", {}).get(o), \
+                f"{key}: no command and no note for {o}"
+
+
+def test_addons_status_lists_prerequisites_for_this_os(tmp_path):
+    manifest = tmp_path / "addons.json"
+    manifest.write_text(json.dumps({"addons": [], "prerequisites": {
+        "definitely-not-a-real-program-cdl": {
+            "name": "X", "install": {"mac": ["m"], "linux": ["l"], "windows": ["w"]},
+            "needs": ["node"]}}}))
+    st = srv.addons_status(root=tmp_path, manifest=manifest)
+    x = st["prerequisites"]["definitely-not-a-real-program-cdl"]
+    want = {"windows": "w", "mac": "m", "linux": "l"}[st["os"]]
+    assert x["installed"] is False and x["commands"] == [want]
+    assert x["needs"] == ["node"]

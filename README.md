@@ -176,12 +176,17 @@ It also opens by itself at launch while something is missing; tick
   when an install was interrupted, e.g. by closing the app mid-way
 - ponytail and codex need **Node.js**: their hooks run `node` on every prompt, so without
   it Claude shows a "UserPromptSubmit hook error" (typical on a fresh Windows PC)
-- An add-on whose prerequisite is missing (`uv`, `git`, the `codex` CLI…) says so and
-  can't be ticked, rather than failing halfway
+- **Prerequisites are part of the install.** When an add-on needs a program you don't
+  have (Node.js, uv, Git, the Codex CLI…), its row says "Also installs: …" with the command
+  for *your* OS (Homebrew or the official script on macOS, apt on Debian/Ubuntu, winget
+  on Windows), and Install runs it first. A freshly installed program usually isn't on
+  PATH in the same window, so the installer works in rounds: prerequisites, then — once
+  the app actually sees them — the add-ons, in a fresh terminal. winget, brew and sudo
+  may ask a question in that terminal; answer it there
+- Only when there is no automatic route for your OS does a row say what to install and
+  link to it, and can't be ticked
 - Statuses refresh on their own while the pane is open. Claude sessions already running
   don't pick up a new skill or plugin: start a new session afterwards
-- graphify needs [uv](https://docs.astral.sh/uv/) first. On Windows:
-  `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`
 - graphify reads the whole project folder. On a big data folder (or Dropbox online-only
   files) the first step can take minutes: list data folders in a `.graphifyignore`
   (same syntax as `.gitignore`), or run `/graphify <code-subfolder>`

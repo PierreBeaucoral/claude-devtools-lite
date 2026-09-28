@@ -1,5 +1,5 @@
 {
-  "_comment": "Optional Claude Code add-ons offered by the Add-ons pane (🧩). The app only ever runs the install commands written here: edit this list to change what it proposes. check.kind: skill = ~/.claude/skills/<name>/SKILL.md, command = ~/.claude/commands/<name>.md, plugin = <name>@<marketplace> in ~/.claude/plugins/installed_plugins.json. needs = programs that must be on PATH first. install.posix runs in the login shell (macOS/Linux), install.windows in cmd.exe; an add-on's lines are joined with && into ONE line, so each must be safe to chain: group any a || b in parentheses, never use cmd's `if` (it swallows the rest of the line), and prefix `claude` with `call` on Windows (npm installs it as a .cmd). reinstall (optional, same shape as install) is what the pane runs when an installed add-on is ticked again; without it, install is re-run.",
+  "_comment": "Optional Claude Code add-ons offered by the Add-ons pane (🧩). The app only ever runs the install commands written here: edit this list to change what it proposes. check.kind: skill = ~/.claude/skills/<name>/SKILL.md, command = ~/.claude/commands/<name>.md, plugin = <name>@<marketplace> in ~/.claude/plugins/installed_plugins.json. needs = programs that must be on PATH first. install.posix runs in the login shell (macOS/Linux), install.windows in cmd.exe; an add-on's lines are joined with && into ONE line, so each must be safe to chain: group any a || b in parentheses, never use cmd's `if` (it swallows the rest of the line), and prefix `claude` with `call` on Windows (npm installs it as a .cmd). reinstall (optional, same shape as install) is what the pane runs when an installed add-on is ticked again; without it, install is re-run. prerequisites: how to install each program listed in needs, per OS (mac / linux / windows); the pane shows the command and can run it in the visible terminal.",
   "addons": [
     {
       "id": "graphify",
@@ -236,5 +236,109 @@
         ]
       }
     }
-  ]
+  ],
+  "prerequisites": {
+    "node": {
+      "name": "Node.js",
+      "url": "https://nodejs.org/",
+      "install": {
+        "mac": [
+          "brew install node"
+        ],
+        "linux": [
+          "sudo apt-get install -y nodejs npm"
+        ],
+        "windows": [
+          "winget install -e --id OpenJS.NodeJS.LTS"
+        ]
+      },
+      "note": {
+        "mac": "Needs Homebrew (brew.sh); otherwise use the installer from nodejs.org.",
+        "linux": "Debian/Ubuntu; other distributions: use your package manager."
+      }
+    },
+    "uv": {
+      "name": "uv",
+      "url": "https://docs.astral.sh/uv/",
+      "install": {
+        "mac": [
+          "curl -LsSf https://astral.sh/uv/install.sh | sh"
+        ],
+        "linux": [
+          "curl -LsSf https://astral.sh/uv/install.sh | sh"
+        ],
+        "windows": [
+          "winget install -e --id astral-sh.uv"
+        ]
+      }
+    },
+    "git": {
+      "name": "Git",
+      "url": "https://git-scm.com/",
+      "install": {
+        "mac": [
+          "xcode-select --install"
+        ],
+        "linux": [
+          "sudo apt-get install -y git"
+        ],
+        "windows": [
+          "winget install -e --id Git.Git"
+        ]
+      }
+    },
+    "curl": {
+      "name": "curl",
+      "url": "https://curl.se/",
+      "install": {
+        "mac": [],
+        "linux": [
+          "sudo apt-get install -y curl"
+        ],
+        "windows": []
+      },
+      "note": {
+        "mac": "Ships with macOS.",
+        "windows": "Ships with Windows 10 1803 and later."
+      }
+    },
+    "claude": {
+      "name": "Claude Code",
+      "url": "https://docs.claude.com/en/docs/claude-code",
+      "install": {
+        "mac": [
+          "curl -fsSL https://claude.ai/install.sh | bash"
+        ],
+        "linux": [
+          "curl -fsSL https://claude.ai/install.sh | bash"
+        ],
+        "windows": [
+          "powershell -NoProfile -ExecutionPolicy Bypass -Command \"irm https://claude.ai/install.ps1 | iex\""
+        ]
+      }
+    },
+    "codex": {
+      "name": "Codex CLI",
+      "url": "https://github.com/openai/codex",
+      "install": {
+        "mac": [
+          "npm install -g @openai/codex"
+        ],
+        "linux": [
+          "npm install -g @openai/codex"
+        ],
+        "windows": [
+          "call npm install -g @openai/codex"
+        ]
+      },
+      "note": {
+        "mac": "Needs Node.js first.",
+        "linux": "Needs Node.js first.",
+        "windows": "Needs Node.js first."
+      },
+      "needs": [
+        "node"
+      ]
+    }
+  }
 }
