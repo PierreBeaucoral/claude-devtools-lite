@@ -12,10 +12,13 @@
 <style>
   :root {
     --bg: #0d1117; --panel: #161b22; --panel2: #1c2129; --border: #2d333b;
-    --fg: #d6dde5; --dim: #8b949e; --accent: #58a6ff; --user: #3b82f6;
+    --fg: #d6dde5; --dim: #8b949e; --accent: #58a6ff; --user: #4186f6;
     --think: #b18cff; --tool: #d29922; --ok: #3fb950; --err: #f85149;
+    /* controls (inputs, buttons) need 3:1 against the page: --border is only
+       a divider. --on-err is text on an --err fill. */
+    --border-strong: #64686e; --on-err: #0b0b0b; --focus: var(--accent);
     /* derived colours a theme may override (see THEMES in the script) */
-    --termbg: #0a0d12; --bar: #2f5c8f; --addfg: #7ee787; --delfg: #ffa198;
+    --termbg: #0a0d12; --bar: #376393; --addfg: #7ee787; --delfg: #ffa198;
     --stripe: rgba(255,255,255,.02); --shadow: rgba(0,0,0,.55);
     --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
     color-scheme: dark;
@@ -26,7 +29,7 @@
          font:14px/1.55 -apple-system, "Segoe UI", sans-serif; }
   a { color: var(--accent); text-decoration: none; }
 
-  #app { display:flex; height:100vh; }
+  #app { display:flex; height:calc(100vh - 22px); }
   #sidebar { width:300px; min-width:170px; border-right:1px solid var(--border);
              background:var(--panel); display:flex; flex-direction:column; }
 
@@ -43,12 +46,12 @@
   #cell-viz  { height: var(--rowR, 45%); flex:none; }
   .split { background: var(--border); z-index: 5; transition: background .12s;
            touch-action: none; flex:none; }
-  .split:hover, .split.dragging { background: var(--accent); }
+  .split:hover, .split.dragging, .split:focus-visible { background: var(--focus); outline:none; }
   .hsplit { height:5px; cursor: row-resize; }
   #vsplit { width:5px; cursor: col-resize; }
   #sideHandle { width:5px; flex:none; background:var(--border); cursor:col-resize;
                 transition:background .12s; touch-action:none; }
-  #sideHandle:hover, #sideHandle.dragging { background:var(--accent); }
+  #sideHandle:hover, #sideHandle.dragging, #sideHandle:focus-visible { background:var(--focus); outline:none; }
   #workspace.noright #colR, #workspace.noright #vsplit { display:none; }
   .cell { display:flex; flex-direction:column; min-width:0; min-height:0;
           background:var(--bg); overflow:hidden; }
@@ -58,23 +61,25 @@
   #workspace.maxed .col:has(.cell.maxed) { flex:1; width:auto !important; }
   #workspace.maxed .col:has(.cell.maxed) > *:not(.maxed) { display:none; }
   #workspace.maxed .cell.maxed { flex:1; height:auto !important; }
-  .qhead { padding:6px 10px; font-size:12px; font-weight:600;
-           color:var(--dim); border-bottom:1px solid var(--border); flex:none;
+  .qhead { padding:6px 10px; font-size:12px; font-weight:600; letter-spacing:.2px;
+           color:var(--fg); border-bottom:1px solid var(--border); flex:none;
            display:flex; align-items:center; gap:8px; background:var(--panel); }
+  .cell:focus-within > .qhead { box-shadow: inset 0 -2px 0 var(--focus); }
+  .tabs { display:flex; gap:4px; align-items:center; flex:none; }
   .qbody { flex:1; overflow-y:auto; padding:10px 12px; font-size:12.5px; min-height:0; }
   .maxbtn { flex:none; }
   #main { flex:1; overflow-y:auto; min-height:0; padding:0 0 30px 0; }
 
   #topbar { padding:10px 12px; border-bottom:1px solid var(--border); }
   #topbar h1 { font-size:14px; margin:0 0 8px; letter-spacing:.4px; }
-  #topbar h1 { display:flex; align-items:center; gap:4px; white-space:nowrap; }
-  #topbar h1 .ttl { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+  #topbar h1 { display:flex; align-items:center; gap:4px 6px; white-space:nowrap; flex-wrap:wrap; }
+  #topbar h1 .ttl { flex:none; }
   #topbar h1 .ttl span { color:var(--dim); font-weight:400; }
   .topbtns { margin-left:auto; display:flex; gap:5px; flex:none; }
   .topbtns .copy { margin-left:0; }
   #search { width:100%; padding:6px 9px; background:var(--bg); color:var(--fg);
-            border:1px solid var(--border); border-radius:6px; font-size:13px; }
-  #search:focus { outline:none; border-color:var(--accent); }
+            border:1px solid var(--border-strong); border-radius:6px; font-size:13px; }
+  #search:focus { outline:2px solid var(--focus); outline-offset:1px; border-color:var(--accent); }
 
   #tree { overflow-y:auto; flex:1; padding:6px 0; }
   .proj { padding:7px 12px; cursor:pointer; border-left:3px solid transparent; }
@@ -109,6 +114,7 @@
   .chips { margin-top:8px; display:flex; gap:6px; flex-wrap:wrap; }
   .chip { font-size:11px; background:var(--panel); border:1px solid var(--border);
           border-radius:10px; padding:1px 8px; color:var(--dim); }
+  #shead .live { color:var(--ok); margin-left:6px; }
   .toggles { margin-top:8px; font-size:12px; color:var(--dim); display:flex; gap:14px; }
   .toggles label { cursor:pointer; user-select:none; }
 
@@ -138,9 +144,13 @@
   .entry.tool .tag { color:var(--tool); }
   .entry.tool .head { cursor:pointer; }
   .entry.tool.error { border-left-color:var(--err); }
-  .entry.command, .entry.system { border-left:3px solid var(--dim); opacity:.85; }
+  .entry.command, .entry.system { border-left:3px solid var(--dim); }
   .entry.compact { border:1px dashed var(--err); color:var(--err); text-align:center;
                    padding:6px; font-size:12px; background:transparent; }
+  /* timeline filters flip one class on #timeline (no per-entry loops) */
+  #timeline.hideThink .entry.thinking, #timeline.hideTools .entry.tool,
+  #timeline.hideSys .entry.command, #timeline.hideSys .entry.system,
+  #timeline.hideAgents .agentcard { display:none; }
   .collapsible > .body { display:none; }
   .collapsible.openx > .body { display:block; }
   .caret { transition:transform .12s; display:inline-block; }
@@ -171,13 +181,23 @@
   .diff { font:12px/1.5 var(--mono); background:var(--bg); border:1px solid var(--border);
           border-radius:6px; margin:8px 0; overflow-x:auto; }
   .diff .ln { white-space:pre; padding:0 10px; }
-  .diff .add { background:color-mix(in srgb, var(--ok) 14%, transparent); color:var(--addfg); }
-  .diff .del { background:color-mix(in srgb, var(--err) 14%, transparent); color:var(--delfg); }
+  /* context lines never inherit a dim parent colour; a 3px left marker says
+     "changed" without relying on the tint's hue */
+  .diff .ln { color:var(--fg); }
+  .diff .add { background:color-mix(in srgb, var(--ok) 14%, transparent); color:var(--addfg);
+               box-shadow:inset 3px 0 0 var(--ok); }
+  .diff .del { background:color-mix(in srgb, var(--err) 14%, transparent); color:var(--delfg);
+               box-shadow:inset 3px 0 0 var(--err); }
   .diff .hunk { color:var(--accent); background:var(--panel2); padding:1px 10px; }
 
-  .copy { margin-left:auto; background:none; border:1px solid var(--border);
+  .copy { margin-left:auto; background:none; border:1px solid var(--border-strong);
           color:var(--dim); border-radius:5px; font-size:11px; padding:1px 8px; cursor:pointer; }
   .copy:hover { color:var(--fg); border-color:var(--dim); }
+  .copy.danger { color:var(--err); border-color:var(--border-strong); }
+  .copy.danger:hover { border-color:var(--err); }
+  /* icon-only buttons: a 24px target at least (WCAG 2.5.8) */
+  .ibtn { min-width:24px; height:24px; padding:0 5px; display:inline-flex;
+          align-items:center; justify-content:center; }
 
   .ts { font-family:var(--mono); font-size:11px; }
   .placeholder { color:var(--dim); padding:60px 30px; text-align:center; }
@@ -216,9 +236,15 @@
   .ubar { height:6px; background:var(--panel2); border-radius:3px; margin:6px 0 10px;
           overflow:hidden; }
   .ubar > div { height:100%; background:var(--accent); }
+  .uhead { font-size:11px; font-weight:600; letter-spacing:.3px; color:var(--fg); margin:4px 0 2px; }
+  .uhead:not(:first-child) { margin-top:12px; padding-top:8px; border-top:1px solid var(--border); }
+  .ureset { color:var(--dim); font-size:11px; margin-top:-8px; }
+  #uLive { cursor:pointer; }
   #sparkline { width:100%; height:44px; margin-top:4px; }
   .modelrow { font-size:11.5px; color:var(--dim); display:flex; justify-content:space-between; }
-  #vizframe { flex:1; min-height:0; border:none; width:100%; background:#fff; }
+  #vizframe { flex:1; min-height:0; border:none; width:100%; background:#fff; display:none; }
+  /* an empty preview must never show a blank white frame in a dark theme */
+  .previewwrap.empty iframe, .previewwrap.empty embed, .previewwrap.empty img { display:none !important; }
   #vizframe.darkbg { background:transparent; }
   .vizfile { padding:4px 8px; font-size:11.5px; cursor:pointer; border-radius:5px;
              display:flex; justify-content:space-between; gap:6px; color:var(--dim); }
@@ -256,7 +282,7 @@
                    background:color-mix(in srgb, var(--err) 8%, transparent); }
   .rvmark.point { width:0; height:0; }
   .rvmark .num { position:absolute; left:-10px; top:-10px; min-width:20px; height:20px;
-                 padding:0 5px; border-radius:10px; background:var(--err); color:#fff;
+                 padding:0 5px; border-radius:10px; background:var(--err); color:var(--on-err);
                  font:600 11px/20px -apple-system, "Segoe UI", sans-serif;
                  text-align:center; box-shadow:0 1px 4px var(--shadow); }
   .rvmark.resolved, .rvmark.wontfix { opacity:.35; }
@@ -270,16 +296,16 @@
             border-radius:6px; }
   .rvitem.sel { background:var(--panel2); }
   .rvitem .n { flex:none; min-width:20px; height:20px; border-radius:10px; margin-top:3px;
-               background:var(--err); color:#fff; font-size:11px; font-weight:600;
+               background:var(--err); color:var(--on-err); font-size:11px; font-weight:600;
                line-height:20px; text-align:center; }
   .rvitem.resolved .n, .rvitem.wontfix .n { background:var(--dim); }
   .rvitem textarea { flex:1; min-width:0; resize:vertical; min-height:30px;
-                     background:var(--bg); color:var(--fg); border:1px solid var(--border);
+                     background:var(--bg); color:var(--fg); border:1px solid var(--border-strong);
                      border-radius:5px; padding:4px 7px; font-family:inherit;
                      font-size:12.5px; line-height:1.45; }
-  .rvitem textarea:focus { outline:none; border-color:var(--accent); }
+  .rvitem textarea:focus { outline:2px solid var(--focus); outline-offset:1px; border-color:var(--accent); }
   .rvitem select { flex:none; background:var(--panel); color:var(--fg); font-size:11px;
-                   border:1px solid var(--border); border-radius:5px; padding:2px; }
+                   border:1px solid var(--border-strong); border-radius:5px; padding:2px; }
 
   /* ---------- plan pane (markdown checklist, ticks write back to the file) */
   #planbody { padding:8px 10px; }
@@ -305,7 +331,7 @@
              padding:5px 10px; border-bottom:1px solid var(--border);
              font-size:11px; color:var(--dim); background:var(--bg); }
   #planbar select { background:var(--panel); color:var(--fg);
-                    border:1px solid var(--border); border-radius:5px;
+                    border:1px solid var(--border-strong); border-radius:5px;
                     font-size:11px; padding:2px 4px; max-width:180px; }
   .planprog { flex:1; height:4px; border-radius:3px; background:var(--panel2);
               overflow:hidden; min-width:30px; }
@@ -374,9 +400,10 @@
   .fsrow .fname { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis;
                   white-space:nowrap; }
   .fsrow .fmeta { color:var(--dim); font-size:10.5px; flex:none; }
-  .fsrow .fact { visibility:hidden; border:1px solid var(--border); border-radius:4px;
-                 font-size:10px; padding:0 5px; color:var(--dim); flex:none; }
-  .fsrow:hover .fact { visibility:visible; }
+  .fsrow .fact { visibility:hidden; border:1px solid var(--border-strong); border-radius:4px;
+                 font:10px/1.5 inherit; padding:0 5px; color:var(--dim); flex:none;
+                 background:none; cursor:pointer; }
+  .fsrow:hover .fact, .fsrow:focus-within .fact { visibility:visible; }
   .fsrow .fact:hover { color:var(--fg); border-color:var(--dim); }
   #fsframe { flex:1; min-height:0; border:none; width:100%;
              border-top:1px solid var(--border); background:#fff; display:none; }
@@ -395,8 +422,9 @@
           font-weight:400; letter-spacing:0;
           border:1px solid var(--border); border-radius:6px; cursor:pointer; color:var(--dim); }
   .ttab.active { color:var(--fg); border-color:var(--tool); }
-  .ttab.dead { opacity:.55; text-decoration:line-through; }
-  .ttab .x { color:var(--dim); font-size:13px; padding:0 2px; }
+  .ttab.dead { color:var(--dim); text-decoration:line-through; }
+  .ttab .x { color:var(--dim); font-size:13px; padding:0 2px; background:none; border:none;
+             cursor:pointer; font-family:inherit; line-height:1; }
   .ttab .x:hover { color:var(--err); }
   #termbtns { margin-left:auto; display:flex; gap:6px; }
   #termbody { flex:1; min-height:0; padding:4px 8px 8px; }
@@ -405,15 +433,22 @@
   .projrow { display:flex; align-items:center; gap:6px; }
   .projrow .cli { visibility:hidden; border:1px solid var(--border); border-radius:5px;
                   font-size:11px; padding:0 6px; color:var(--tool); flex:none; }
-  .proj:hover .cli { visibility:visible; }
+  .proj:hover .cli, .proj:focus .cli { visibility:visible; }
   .proj .grow { flex:1; min-width:0; }
+  .nowchip { flex:none; max-width:90px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+             font:11px/1.5 var(--mono); color:var(--tool); border:1px solid var(--tool);
+             border-radius:9px; padding:0 6px; }
   /* ---------- add-ons pane (modal) ---------- */
-  #addons { position:fixed; inset:0; z-index:80; display:none; align-items:center;
-            justify-content:center; background:color-mix(in srgb, var(--bg) 70%, transparent); }
-  #addons.open { display:flex; }
+  dialog.adbox { padding:0; color:var(--fg); }
+  dialog.adbox[open] { display:flex; }
+  dialog.adbox:not([open]) { display:none; }   /* .adbox sets display: keep closed ones out of the layout */
+  dialog.adbox::backdrop { background:rgba(0,0,0,.45);
+                           background:color-mix(in srgb, var(--bg) 70%, transparent); }
   .adbox { width:min(720px, 94vw); max-height:88vh; display:flex; flex-direction:column;
-           background:var(--panel); border:1px solid var(--border); border-radius:10px;
+           background:var(--panel); border:1px solid var(--border-strong); border-radius:10px;
            box-shadow:0 18px 50px var(--shadow); }
+  #ask { width:min(440px, 92vw); }
+  #askbody { white-space:pre-line; }
   .adhead { padding:14px 18px 8px; }
   .adhead h2 { margin:0 0 4px; font-size:15px; }
   .adhead p { margin:0; color:var(--dim); font-size:12.5px; line-height:1.5; }
@@ -444,8 +479,83 @@
   .adfoot .go:disabled { opacity:.45; cursor:default; }
 
   /* keyboard users see where they are; mouse clicks stay unringed */
-  :focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
-  .copy:focus-visible, .ptab:focus-visible, .vtab:focus-visible { outline-offset:2px; }
+  :focus-visible { outline:2px solid var(--focus); outline-offset:1px; }
+  .copy:focus-visible, .ptab:focus-visible, .vtab:focus-visible, .ttab:focus-visible { outline-offset:2px; }
+  /* rows sit flush against their neighbours: ring them inside */
+  .proj:focus-visible, .sess:focus-visible, .memlink:focus-visible, .entry .head:focus-visible,
+  .achead:focus-visible, .cfgrow:focus-visible, .cfggroup:focus-visible, .plan-task:focus-visible,
+  .fname:focus-visible, .vizfile:focus-visible, .menu .mi:focus-visible, .sresult:focus-visible { outline:2px solid var(--focus); outline-offset:-2px; }
+  .menu .mi:focus { background:var(--panel); color:var(--accent); outline-offset:-2px; }
+  .fsrow .fact:focus-visible { outline-offset:1px; }
+  .sr-only { position:absolute; width:1px; height:1px; overflow:hidden;
+             clip:rect(0 0 0 0); white-space:nowrap; }
+
+  /* ---------- status bar (DES-5): glanceable, every segment a jump ---------- */
+  #statusbar { height:22px; display:flex; align-items:stretch; overflow:hidden;
+               background:var(--panel); border-top:1px solid var(--border);
+               font:11px/21px var(--mono); color:var(--dim); }
+  .sbseg { background:none; border:none; border-right:1px solid var(--border); color:inherit;
+           font:inherit; padding:0 9px; white-space:nowrap; cursor:pointer; min-width:0;
+           max-width:300px; overflow:hidden; text-overflow:ellipsis; flex:none; }
+  .sbseg:hover { background:var(--panel2); color:var(--fg); }
+  .sbseg:focus-visible { outline-offset:-2px; }
+  .sbseg.r { margin-left:auto; border-right:none; border-left:1px solid var(--border); }
+  .sbdot { color:var(--ok); }
+  #statusbar.off #sbConn, #statusbar.off .sbdot { color:var(--err); }
+  #statusbar .sbshrink { flex:0 1 auto; }
+  /* ---------- command palette (DES-3) ---------- */
+  dialog.cp { margin:12vh auto auto; width:min(640px, 92vw); max-height:70vh; }
+  #cpin { width:100%; border:none; border-bottom:1px solid var(--border-strong); background:transparent;
+          color:var(--fg); padding:12px 14px; font-size:14px; flex:none; }
+  #cpin:focus { outline:none; border-bottom-color:var(--focus); }
+  #cplist { list-style:none; margin:0; padding:4px; overflow-y:auto; min-height:0; flex:1; }
+  .cpi { display:flex; align-items:center; gap:10px; padding:0 10px; min-height:32px;
+         border-radius:6px; font-size:13px; cursor:pointer; }
+  .cpi[aria-selected="true"] { background:var(--panel2); box-shadow:inset 2px 0 0 var(--accent); }
+  .cpi .x { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .cpi .g { color:var(--dim); font-size:11px; flex:none; max-width:40%; overflow:hidden;
+            text-overflow:ellipsis; white-space:nowrap; }
+  .cpi mark { background:none; color:var(--accent); font-weight:700; padding:0; }
+  .cpempty { padding:10px 12px; color:var(--dim); font-size:12px; }
+  .cphint { flex:none; padding:6px 12px; border-top:1px solid var(--border); color:var(--dim); font-size:11px; }
+  kbd { font:600 10.5px/1 var(--mono); padding:2px 5px; border-radius:4px; flex:none;
+        border:1px solid var(--border-strong); color:var(--dim); background:var(--panel); }
+  #keys table { border-collapse:collapse; font-size:12.5px; margin:0 18px 6px; }
+  #keys td { padding:4px 14px 4px 0; vertical-align:top; }
+  #keys .keyscol { overflow-y:auto; min-height:0; }
+
+  /* ---------- toasts ---------- */
+  #toasts { position:fixed; right:14px; bottom:14px; z-index:99; display:flex;
+            flex-direction:column; gap:8px; max-width:min(420px, 92vw); }
+  .toast { display:flex; align-items:flex-start; gap:8px; background:var(--panel);
+           color:var(--fg); border:1px solid var(--border-strong);
+           border-left:3px solid var(--accent); border-radius:8px; padding:8px 8px 8px 12px;
+           font-size:12.5px; line-height:1.45; box-shadow:0 4px 16px var(--shadow);
+           animation:toastin .12s ease-out; }
+  .toast[data-kind="ok"] { border-left-color:var(--ok); }
+  .toast[data-kind="warn"] { border-left-color:var(--tool); }
+  .toast[data-kind="err"] { border-left-color:var(--err); }
+  .toast .tmsg { flex:1; min-width:0; word-break:break-word; padding-top:1px; }
+  .toast.click .tmsg { cursor:pointer; }
+  .toast .copy { margin-left:0; flex:none; }
+  .toast .tx { border-color:transparent; }
+  @keyframes toastin { from { opacity:0; transform:translateY(6px); } }
+
+  /* ---------- one empty / loading / error state ---------- */
+  .state { color:var(--dim); padding:40px 24px; text-align:center; line-height:1.6; }
+  .qbody .state, #fslist .state { padding:14px 4px; text-align:left; font-size:12px; }
+  .state[data-kind="error"] .state-title { color:var(--err); }
+  .state-title { margin:0; }
+  .state-actions { margin-top:8px; display:flex; gap:8px; justify-content:center; }
+  .qbody .state .state-actions, #fslist .state .state-actions { justify-content:flex-start; }
+  #main:focus-visible, #usagebody:focus-visible { outline-offset:-2px; }
+  .state .copy { margin-left:0; }
+  /* the usage pane scrolls: a shadow at the edge says there is more */
+  #usagebody { background:
+      linear-gradient(var(--bg) 30%, transparent) top / 100% 24px no-repeat local,
+      linear-gradient(transparent, var(--bg) 70%) bottom / 100% 24px no-repeat local,
+      radial-gradient(farthest-side at 50% 0, var(--shadow), transparent) top / 100% 8px no-repeat scroll,
+      radial-gradient(farthest-side at 50% 100%, var(--shadow), transparent) bottom / 100% 8px no-repeat scroll; }
   @media (prefers-reduced-motion: reduce){
     *, *::before, *::after { transition:none !important; animation:none !important; }
   }
@@ -459,43 +569,44 @@
     <div id="topbar">
       <h1><span class="ttl">claude-devtools <span>lite</span></span>
         <span class="topbtns">
-          <button class="copy termbtn" id="btnAddons" title="optional add-ons (graphify, /improve, …)">🧩</button>
-          <button class="copy termbtn" id="btnTheme" title="change theme">◐</button>
-          <button class="copy termbtn" id="btnRight" title="toggle usage/viz panels">◫</button>
-          <button class="copy termbtn" id="btnTerm" title="open a terminal">⌨ CLI</button>
-          <button class="copy termbtn" id="btnQuit" title="stop the devtools server">⏻</button>
+          <button class="copy termbtn ibtn" id="btnAddons" title="optional add-ons (graphify, /improve, …)" aria-label="Optional add-ons">🧩</button>
+          <button class="copy termbtn ibtn" id="btnTheme" title="change theme" aria-label="Change theme" aria-haspopup="menu">◐</button>
+          <button class="copy termbtn ibtn" id="btnRight" title="toggle usage/viz panels" aria-label="Toggle the right column" aria-pressed="true">◫</button>
+          <button class="copy termbtn" id="btnTerm" title="open a terminal (Ctrl+2 focuses it)">⌨ CLI</button>
+          <button class="copy termbtn ibtn" id="btnQuit" title="stop the devtools server" aria-label="Quit: stop the devtools server">⏻</button>
         </span>
       </h1>
-      <input id="search" placeholder="Filter projects · Enter searches transcripts" autocomplete="off">
+      <input id="search" placeholder="Filter projects · Enter searches transcripts" autocomplete="off"
+             aria-label="Filter projects; Enter searches every transcript">
     </div>
-    <div id="tree"><div class="placeholder">loading projects…</div></div>
+    <div id="tree" role="tree" aria-label="Projects and sessions"><div class="placeholder">loading projects…</div></div>
   </div>
-  <div id="sideHandle" title="drag to resize the sidebar"></div>
+  <div id="sideHandle" title="drag to resize the sidebar" aria-label="Resize sidebar" aria-controls="sidebar"></div>
   <div id="workspace">
    <div class="col" id="colL">
     <div class="cell" id="cell-main">
       <div class="qhead">📄 Session
         <span style="margin-left:auto"></span>
-        <button class="copy" id="headToggle" title="collapse / expand the header">▲</button>
-        <button class="copy maxbtn" data-cell="cell-main" title="maximize / restore">⛶</button>
+        <button class="copy ibtn" id="headToggle" title="collapse / expand the header" aria-label="Collapse the session header" aria-expanded="true">▲</button>
+        <button class="copy maxbtn ibtn" data-cell="cell-main" title="maximize / restore (Ctrl+Shift+M)" aria-label="Maximize the session pane" aria-pressed="false">⛶</button>
       </div>
       <div id="sheadbox"></div>
-      <div id="headgrip" class="split hsplit" title="drag to resize the header (double-click to collapse)"></div>
-      <div id="main"><div class="placeholder">
+      <div id="headgrip" class="split hsplit" title="drag to resize the header (double-click to collapse)" aria-label="Resize session header" aria-controls="sheadbox"></div>
+      <div id="main" tabindex="-1" aria-label="Session timeline"><div class="placeholder">
         ← Pick a project and session.<br><br>
         This dashboard reads <code>~/.claude</code> read-only:<br>
         timelines, thinking, tool calls, diffs, token usage,<br>subagents, memory, and full-text search.
       </div></div>
     </div>
 
-    <div id="hsplitL" class="split hsplit" title="drag to resize rows"></div>
+    <div id="hsplitL" class="split hsplit" title="drag to resize rows" aria-label="Resize terminal pane" aria-controls="cell-term"></div>
     <div class="cell" id="cell-term">
       <div class="qhead">⌨ Terminal
-        <span id="ttablist"></span>
+        <span id="ttablist" role="tablist" aria-label="Terminals"></span>
         <span style="margin-left:auto;display:flex;gap:6px">
           <button class="copy termbtn" id="btnShell" title="plain shell in $HOME">+ shell</button>
-          <button class="copy termbtn" id="btnClaudeHome" title="start claude in a folder…">+ claude</button>
-          <button class="copy maxbtn" data-cell="cell-term" title="maximize / restore">⛶</button>
+          <button class="copy termbtn" id="btnClaudeHome" title="start claude in a folder…" aria-haspopup="menu">+ claude</button>
+          <button class="copy maxbtn ibtn" data-cell="cell-term" title="maximize / restore (Ctrl+Shift+M)" aria-label="Maximize the terminal pane" aria-pressed="false">⛶</button>
         </span>
       </div>
       <div id="termbody">
@@ -506,50 +617,54 @@
     </div>
 
    </div>
-   <div id="vsplit" class="split" title="drag to resize columns"></div>
+   <div id="vsplit" class="split" title="drag to resize columns" aria-label="Resize right column" aria-controls="colR"></div>
    <div class="col" id="colR">
     <div class="cell" id="cell-usage">
       <div class="qhead">⚡ Token use
         <span id="blockreset" style="margin-left:auto;font-weight:400"></span>
-        <button class="copy maxbtn" data-cell="cell-usage" title="maximize / restore">⛶</button>
+        <button class="copy maxbtn ibtn" data-cell="cell-usage" title="maximize / restore (Ctrl+Shift+M)" aria-label="Maximize the token-use pane" aria-pressed="false">⛶</button>
       </div>
-      <div class="qbody" id="usagebody"><div class="vizempty">computing…</div></div>
+      <div class="qbody" id="usagebody" tabindex="-1" aria-label="Token use"><div class="vizempty">computing…</div></div>
     </div>
-    <div id="hsplitR" class="split hsplit" title="drag to resize rows"></div>
+    <div id="hsplitR" class="split hsplit" title="drag to resize rows" aria-label="Resize plan pane" aria-controls="cell-plan"></div>
     <div class="cell" id="cell-plan">
       <div class="qhead" style="gap:4px">
-        <span class="ptab active" data-view="plan" role="tab" tabindex="0">✅ Plan</span>
-        <span class="ptab" data-view="config" role="tab" tabindex="0">⚙ Config</span>
+        <span class="tabs" role="tablist" aria-label="Plan and config" data-auto="1">
+          <span class="ptab active" id="ptab-plan" data-view="plan" role="tab" tabindex="0" aria-selected="true" aria-controls="planbody">✅ Plan</span>
+          <span class="ptab" id="ptab-config" data-view="config" role="tab" tabindex="-1" aria-selected="false" aria-controls="configbody">⚙ Config</span>
+        </span>
         <span id="plancount" style="margin-left:auto;font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></span>
-        <button class="copy" id="planimprove" style="display:none"
-                title="open the latest end-of-session retrospective">🔎</button>
-        <button class="copy" id="planrefresh" title="re-read the plan file">⟳</button>
-        <button class="copy maxbtn" data-cell="cell-plan" title="maximize / restore">⛶</button>
+        <button class="copy ibtn" id="planimprove" style="display:none"
+                title="open the latest end-of-session retrospective" aria-label="Open the latest retrospective">🔎</button>
+        <button class="copy ibtn" id="planrefresh" title="re-read the plan file" aria-label="Refresh">⟳</button>
+        <button class="copy maxbtn ibtn" data-cell="cell-plan" title="maximize / restore (Ctrl+Shift+M)" aria-label="Maximize the plan pane" aria-pressed="false">⛶</button>
       </div>
       <div id="planbar" style="display:none">
-        <select id="planpick" title="which plan file this pane shows"></select>
+        <select id="planpick" title="which plan file this pane shows" aria-label="Plan file"></select>
         <div class="planprog"><i id="planbarfill" style="width:0%"></i></div>
-        <a id="planopen" title="open this plan in the Files preview">open</a>
+        <a id="planopen" tabindex="0" role="button" title="open this plan in the Files preview">open</a>
       </div>
-      <div class="qbody" id="planbody"><div class="vizempty">Pick a project.</div></div>
-      <div class="qbody" id="configbody" style="display:none"></div>
+      <div class="qbody" id="planbody" role="tabpanel" aria-labelledby="ptab-plan"><div class="vizempty">Pick a project.</div></div>
+      <div class="qbody" id="configbody" role="tabpanel" aria-labelledby="ptab-config" style="display:none"></div>
     </div>
-    <div id="hsplitR2" class="split hsplit" title="drag to resize rows"></div>
+    <div id="hsplitR2" class="split hsplit" title="drag to resize rows" aria-label="Resize viz pane" aria-controls="cell-viz"></div>
     <div class="cell" id="cell-viz">
       <div class="qhead" style="gap:4px">
-        <span class="vtab active" data-view="viz" role="tab" tabindex="0">📊 Viz</span>
-        <span class="vtab" data-view="files" role="tab" tabindex="0">🗂 Files</span>
+        <span class="tabs" role="tablist" aria-label="Viz and files" data-auto="1">
+          <span class="vtab active" id="vtab-viz" data-view="viz" role="tab" tabindex="0" aria-selected="true" aria-controls="vizview">📊 Viz</span>
+          <span class="vtab" id="vtab-files" data-view="files" role="tab" tabindex="-1" aria-selected="false" aria-controls="filesview">🗂 Files</span>
+        </span>
         <button class="copy" id="vizReview" style="margin-left:auto;display:none"
                 title="point at parts of this figure and write what should change">💬 Comment</button>
         <button class="copy" id="vizPath" style="margin-left:0" title="copy watched folder path">copy path</button>
-        <button class="copy maxbtn" data-cell="cell-viz" title="maximize / restore">⛶</button>
+        <button class="copy maxbtn ibtn" data-cell="cell-viz" title="maximize / restore (Ctrl+Shift+M)" aria-label="Maximize the viz pane" aria-pressed="false">⛶</button>
       </div>
-      <div id="vizview" style="display:flex;flex-direction:column;flex:1;min-height:0">
+      <div id="vizview" role="tabpanel" aria-labelledby="vtab-viz" style="display:flex;flex-direction:column;flex:1;min-height:0">
         <div class="qbody" id="vizlist" style="flex:none;max-height:160px"></div>
         <div class="previewwrap empty">
           <iframe id="vizframe" sandbox="allow-scripts" title="viz preview"></iframe>
           <embed id="vizpdf" class="pdfview" type="application/pdf" title="pdf preview">
-          <div class="shield" data-cell="cell-viz" title="click to expand"><span>⛶ click to expand</span></div>
+          <div class="shield" data-cell="cell-viz" title="click to expand" aria-hidden="true"><span>⛶ click to expand</span></div>
         </div>
       </div>
       <div id="reviewview" style="display:none">
@@ -565,13 +680,13 @@
         <div id="rvhint">Click a spot or drag a box on the figure, then write what should change.</div>
         <div id="rvlist"></div>
       </div>
-      <div id="filesview" style="display:none;flex-direction:column;flex:1;min-height:0">
+      <div id="filesview" role="tabpanel" aria-labelledby="vtab-files" style="display:none;flex-direction:column;flex:1;min-height:0">
         <div id="fscrumb"></div>
         <div class="qbody" id="fslist" style="flex:1"></div>
         <div class="previewwrap empty">
           <iframe id="fsframe" sandbox="allow-scripts" title="file preview"></iframe>
           <embed id="fspdf" class="pdfview" type="application/pdf" title="pdf preview">
-          <div class="shield" data-cell="cell-viz" title="click to expand"><span>⛶ click to expand</span></div>
+          <div class="shield" data-cell="cell-viz" title="click to expand" aria-hidden="true"><span>⛶ click to expand</span></div>
         </div>
       </div>
     </div>
@@ -579,8 +694,31 @@
   </div>
 </div>
 
-<div id="addons" role="dialog" aria-modal="true" aria-labelledby="adtitle">
-  <div class="adbox">
+<footer id="statusbar" role="status" aria-live="off" aria-label="Status bar">
+  <button class="sbseg" id="sbConn" title="server connection · click for diagnostics"><span class="sbdot" aria-hidden="true">●</span> <span id="sbConnT">connecting</span></button>
+  <button class="sbseg sbshrink" id="sbProj" title="active project · click to go to the sidebar"></button>
+  <button class="sbseg sbshrink" id="sbTerm" title="active terminal · click to focus it"></button>
+  <button class="sbseg" id="sbPlan" title="plan progress · click for the Plan pane"></button>
+  <button class="sbseg" id="sbUsage" title="5-hour usage · click for the Token use pane"></button>
+  <button class="sbseg sbshrink" id="sbViz" title="folder the Viz pane watches · click to browse it"></button>
+  <button class="sbseg r" id="sbKeys" title="command palette"></button>
+</footer>
+
+<dialog id="cp" class="adbox cp" aria-label="Command palette">
+  <input id="cpin" role="combobox" aria-expanded="true" aria-controls="cplist" aria-autocomplete="list"
+         autocomplete="off" spellcheck="false"
+         aria-label="Command palette. Type to filter; start with &gt; for actions, @ for sessions, # to search transcripts, / for files">
+  <ul id="cplist" role="listbox" aria-label="Results"></ul>
+  <div class="cphint" aria-hidden="true"><b>&gt;</b> actions · <b>@</b> sessions · <b>#</b> search transcripts · <b>/</b> files · ↑↓ ↵ · Esc</div>
+</dialog>
+
+<dialog id="keys" class="adbox" aria-labelledby="keystitle">
+  <div class="adhead"><h2 id="keystitle">Keyboard shortcuts</h2></div>
+  <div class="keyscol"><table id="keystable"></table></div>
+  <div class="adfoot"><button class="copy" id="keysclose">Close</button></div>
+</dialog>
+
+<dialog id="addons" class="adbox" aria-labelledby="adtitle">
     <div class="adhead">
       <h2 id="adtitle">Optional add-ons</h2>
       <p>Claude Code extras this dashboard works with. Tick what you want, check the
@@ -595,8 +733,18 @@
       <button class="copy" id="adclose">Close</button>
       <label style="margin-left:auto"><input type="checkbox" id="adquiet"> Don't show at launch</label>
     </div>
+</dialog>
+
+<!-- in-app confirm (replaces window.confirm): see ask() -->
+<dialog id="ask" class="adbox" aria-labelledby="asktitle" aria-describedby="askbody">
+  <div class="adhead"><h2 id="asktitle"></h2><p id="askbody"></p></div>
+  <div class="adfoot">
+    <button class="copy" id="askcancel">Cancel</button>
+    <button class="copy" id="askok">OK</button>
   </div>
-</div>
+</dialog>
+<div id="toasts" aria-label="Notifications"></div>
+<div id="sr-live" class="sr-only" aria-live="polite"></div>
 
 <script src="/vendor/katex.min.js"></script>
 <script src="/vendor/xterm.min.js"></script>
@@ -643,15 +791,44 @@ const fmtTok = n => n >= 1e6 ? (n/1e6).toFixed(2)+"M" : n >= 1e3 ? (n/1e3).toFix
 const fmtDate = ts => { if(!ts) return ""; const d = new Date(typeof ts==="number"? ts*1000 : ts);
   return d.toLocaleDateString(undefined,{month:"short",day:"numeric"})+" "+
          d.toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"}); };
-const esc = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+// attribute-safe: output lands in title="…"/href="…" as well as text
+const esc = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+  .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+// paths come from the server's OS: "/Users/x/p" or "C:\\Users\\x\\p"
+const isAbsPath = p => typeof p === "string" && /^(\/|[A-Za-z]:[\\/]|\\\\)/.test(p);
+const pathParts = p => String(p || "").split(/[\\/]/).filter(Boolean);
+const baseName = p => pathParts(p).pop() || "";
+const joinPath = (dir, name) =>
+  dir + ((/[\\/]$/.test(dir)) ? "" : (dir.includes("\\") && !dir.includes("/") ? "\\" : "/")) + name;
+// a path typed into a shell: plain if safe, else quoted for the path's OS
+const shQuote = p => /^[\w@%+=:,.\/-]+$/.test(p) ? p
+  : (/\\/.test(p) && !p.includes("/")) ? '"' + p.replace(/"/g, '""') + '"'
+  : "'" + p.replace(/'/g, "'\\''") + "'";
 const shortHome = p => (p && fsHome && p.startsWith(fsHome)) ? "~" + p.slice(fsHome.length) : (p || "");
+/* A session started by a slash command is titled with Claude Code's raw
+   wrapper: "<command-message>graphify</command-message> <command-name>/graphify
+   </command-name> <command-args>…". Show "/graphify …" instead. Returns plain
+   text (callers still escape it); "" when there is nothing to show. */
+function cleanTitle(t){
+  t = String(t || "");
+  const tag = n => (t.match(new RegExp("<" + n + ">([\\s\\S]*?)(?:</" + n + ">|$)")) || [])[1];
+  const name = (tag("command-name") || "").trim(), msg = (tag("command-message") || "").trim();
+  const cmd = name || (/^[\w:.-]+$/.test(msg) ? msg : "");
+  if(cmd) t = (cmd.startsWith("/") ? cmd : "/" + cmd) + " " + (tag("command-args") || "");
+  // any other hyphenated XML-ish tag (<system-reminder>, <local-command-stdout>…)
+  return t.replace(/<\/?[a-z]+(?:-[a-z]+)+>/gi, " ").replace(/\s+/g, " ").trim();
+}
 
 async function api(path, body){
-  const r = body === undefined
-    ? await fetch(path, {headers: authHeaders()})
-    : await fetch(path, {method: "POST",
-        headers: authHeaders({"Content-Type": "application/json"}),
-        body: JSON.stringify(body)});
+  let r;
+  try{
+    r = body === undefined
+      ? await fetch(path, {headers: authHeaders()})
+      : await fetch(path, {method: "POST",
+          headers: authHeaders({"Content-Type": "application/json"}),
+          body: JSON.stringify(body)});
+  }catch(e){ setConn(false); throw e; }   // the status bar dot goes red
+  setConn(true);
   const j = await r.json();
   if(r.status === 401){
     $("#main").innerHTML = `<div class="placeholder">🔒 ${esc(j.error)}<br><br>
@@ -759,7 +936,7 @@ function md(src){
     .replace(/^#{1,4} *(.+)$/gm, "<h3>$1</h3>")
     .replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>")
     .replace(/(^|\s)\*([^*\n]+)\*(?=\s|[.,;:]|$)/g, "$1<i>$2</i>")
-    .replace(/\[([^\]\n]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>')
+    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s\x00]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>')
     .replace(/^[-*] (.+)$/gm, "•&nbsp;$1");
   h = tables(h, hole);            // after inline markup, before the <br> pass
   h = "<p>" + h.replace(/\n\n+/g, "</p><p>").replace(/\n/g, "<br>") + "</p>";
@@ -767,6 +944,192 @@ function md(src){
   for(let pass = 0; pass < 5 && h.includes("\x00F"); pass++)
     h = h.replace(/\x00F(\d+)\x00/g, (_,i)=> holes[+i]);
   return h;
+}
+
+/* ---------- keyboard ------------------------------------------------------
+   Rows, heads and tabs stay <div>/<span> (their look is tuned); ctl() gives
+   them a role and a tab stop, and they answer Enter/Space like a <button>. */
+function ctl(el, role, label){
+  el.tabIndex = 0;
+  el.setAttribute("role", role || "button");
+  if(label) el.setAttribute("aria-label", label);
+  return el;
+}
+const ACTIVATES = '[role="button"],[role="tab"],[role="treeitem"],[role="menuitem"],'
+                + '[role="menuitemradio"],[role="checkbox"]';
+document.addEventListener("keydown", e => {
+  if(e.key !== "Enter" && e.key !== " ") return;
+  const el = e.target;
+  if(!el.matches || !el.matches(ACTIVATES) || el.matches("button,input,select,textarea")) return;
+  e.preventDefault();
+  if(!e.repeat) el.click();
+});
+// focus the previous/next/first/last of a set of items (tree rows, menu, tabs)
+function stepFocus(items, cur, dir){
+  if(!items.length) return null;
+  const i = items.indexOf(cur);
+  const j = dir === "first" ? 0 : dir === "last" ? items.length - 1
+          : Math.max(0, Math.min(items.length - 1, i + dir));
+  items[j].focus();
+  return items[j];
+}
+// roving tabindex: only the current item of a composite widget is a tab stop
+function roving(box, sel, cur){
+  box.querySelectorAll(sel).forEach(x => x.tabIndex = x === cur ? 0 : -1);
+}
+// re-renders wipe the DOM: remember which item had focus by its data-fk
+const focusedFk = box => box.contains(document.activeElement)
+  ? (document.activeElement.dataset.fk || "") : null;
+const byFk = (box, k) => k ? [...box.querySelectorAll("[data-fk]")].find(x => x.dataset.fk === k) : null;
+// tabs: arrows move, Home/End jump; data-auto tablists follow focus
+document.addEventListener("keydown", e => {
+  const t = e.target;
+  if(!t.matches || !t.matches('[role="tab"]')) return;
+  const list = t.closest('[role="tablist"]');
+  if(!list) return;
+  if(e.key === "Delete" && list.id === "ttablist"){ e.preventDefault(); closeTermAsk(t.dataset.id); return; }
+  const dir = {ArrowRight: 1, ArrowLeft: -1, Home: "first", End: "last"}[e.key];
+  if(dir === undefined) return;
+  e.preventDefault();
+  const n = stepFocus([...list.querySelectorAll('[role="tab"]')], t, dir);
+  if(n && list.dataset.auto) n.click();
+});
+function setTabs(sel, view){
+  document.querySelectorAll(sel).forEach(t => {
+    const on = t.dataset.view === view;
+    t.classList.toggle("active", on);
+    t.setAttribute("aria-selected", on);
+    t.tabIndex = on ? 0 : -1;
+  });
+}
+// screen-reader announcements that have no toast (plan ticks, theme…)
+function announce(msg){
+  const l = $("#sr-live");
+  l.textContent = "";
+  requestAnimationFrame(() => l.textContent = msg);
+}
+
+/* ---------- polling ----------------------------------------------------
+   Every timer goes through poll(): it skips while the tab is hidden, and one
+   catch-up round runs when the tab comes back into view. */
+const POLLS = [];
+function poll(fn, ms){
+  POLLS.push(fn);
+  return setInterval(() => { if(!document.hidden) fn(); }, ms);
+}
+document.addEventListener("visibilitychange", () => {
+  if(!document.hidden) for(const f of POLLS) Promise.resolve().then(f).catch(() => {});
+});
+
+/* ---------- toasts ---------------------------------------------------------
+   kind: info | ok | warn | err. Errors stay until dismissed; the others leave
+   after 8 s, and hovering or focusing one holds it. opts: {kind, onclick,
+   action: {label, run}}; a bare function is the old onclick signature. */
+function toast(msg, opts){
+  if(typeof opts === "function") opts = {onclick: opts};
+  opts = opts || {};
+  const kind = opts.kind || "info", box = $("#toasts");
+  const t = document.createElement("div");
+  t.className = "toast" + (opts.onclick ? " click" : "");
+  t.dataset.kind = kind;
+  t.setAttribute("role", kind === "err" ? "alert" : "status");
+  let timer = null;
+  const close = () => { clearTimeout(timer); t.remove(); };
+  const arm = () => { clearTimeout(timer); if(kind !== "err") timer = setTimeout(close, 8000); };
+  const m = document.createElement("div");
+  m.className = "tmsg"; m.textContent = msg;
+  if(opts.onclick) m.onclick = () => { close(); opts.onclick(); };
+  t.appendChild(m);
+  if(opts.action){
+    const b = document.createElement("button");
+    b.className = "copy"; b.textContent = opts.action.label;
+    b.onclick = () => { close(); opts.action.run(); };
+    t.appendChild(b);
+  }
+  const x = document.createElement("button");
+  x.className = "copy tx"; x.textContent = "✕";
+  x.setAttribute("aria-label", "Dismiss notification");
+  x.onclick = close;
+  t.appendChild(x);
+  t.addEventListener("mouseenter", () => clearTimeout(timer));
+  t.addEventListener("focusin", () => clearTimeout(timer));
+  t.addEventListener("mouseleave", () => { if(!t.contains(document.activeElement)) arm(); });
+  t.addEventListener("focusout", e => { if(!t.contains(e.relatedTarget) && !t.matches(":hover")) arm(); });
+  while(box.children.length >= 4) box.firstElementChild.remove();   // oldest goes
+  box.appendChild(t);
+  arm();
+  return t;
+}
+function copyText(text, what){
+  const w = navigator.clipboard ? navigator.clipboard.writeText(text)
+                                : Promise.reject(new Error("clipboard unavailable"));
+  return w.then(() => { if(what) toast("Copied " + what, {kind: "ok"}); },
+                e => { toast("Could not copy: " + e.message, {kind: "err"}); throw e; });
+}
+
+/* ---------- in-app confirm (window.confirm is unstyled, and native in the
+   macOS app). Resolves true only on the OK button; Esc and the backdrop
+   cancel, and Cancel has the focus, so Enter never destroys by accident. */
+function ask(title, body, okLabel, danger){
+  const d = $("#ask"), ok = $("#askok"), cancel = $("#askcancel");
+  $("#asktitle").textContent = title;
+  $("#askbody").textContent = body || "";
+  ok.textContent = okLabel || "OK";
+  ok.classList.toggle("danger", !!danger);
+  return new Promise(res => {
+    d.returnValue = "";
+    d.onclose = () => res(d.returnValue === "ok");
+    ok.onclick = () => d.close("ok");
+    cancel.onclick = () => d.close("");
+    showDialog(d);
+    cancel.focus();
+  });
+}
+function showDialog(d){
+  if(d.open) return;
+  if(d.showModal) d.showModal(); else d.setAttribute("open", "");
+}
+/* Modal behaviour for a <dialog>: Esc closes (older WebKit has no native
+   cancel), Tab wraps inside it (showModal alone lets focus leave for the
+   browser UI), and a click on the backdrop — which lands on the <dialog>
+   itself, outside its box — closes it. */
+function modal(d){
+  d.addEventListener("keydown", e => {
+    if(e.key === "Escape"){ e.preventDefault(); d.close(); return; }
+    if(e.key !== "Tab") return;
+    const f = [...d.querySelectorAll("button, input, select, textarea, a[href], [tabindex]")]
+      .filter(x => !x.disabled && x.tabIndex >= 0 && x.offsetParent !== null);
+    if(!f.length) return;
+    const first = f[0], last = f[f.length - 1];
+    if(e.shiftKey ? document.activeElement === first : document.activeElement === last){
+      e.preventDefault(); (e.shiftKey ? last : first).focus();
+    }
+  });
+  d.addEventListener("mousedown", e => {
+    if(e.target !== d) return;
+    const r = d.getBoundingClientRect();
+    if(e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) d.close();
+  });
+}
+modal($("#ask"));
+
+/* ---------- one empty / loading / error state ---------- */
+function showState(el, kind, title, action){
+  const d = document.createElement("div");
+  d.className = "state"; d.dataset.kind = kind;
+  if(kind === "error") d.setAttribute("role", "alert");
+  const p = document.createElement("p");
+  p.className = "state-title"; p.textContent = title;
+  d.appendChild(p);
+  if(action){
+    const a = document.createElement("div"), b = document.createElement("button");
+    a.className = "state-actions"; b.className = "copy";
+    b.textContent = action.label; b.onclick = action.run;
+    a.appendChild(b); d.appendChild(a);
+  }
+  el.innerHTML = "";
+  el.appendChild(d);
+  return d;
 }
 
 /* ---------- sidebar ---------- */
@@ -779,7 +1142,7 @@ async function loadProjects(){
 function projName(slug){
   const p = (state.projects || []).find(x => x.slug === slug);
   const path = p && p.path ? p.path.replace(/\/+$/, "") : "";
-  return path.split("/").pop() || null;
+  return baseName(path) || null;
 }
 
 /* live filter: typing narrows the tree to projects whose path matches, and to
@@ -789,44 +1152,105 @@ function treeFilter(p){
   const f = (state.filter || "").toLowerCase();
   if(!f) return {show: true, sessions: state.sessions[p.slug] || []};
   const all = state.sessions[p.slug] || [];
-  const hit = all.filter(s => (s.title || "").toLowerCase().includes(f));
+  const hit = all.filter(s => cleanTitle(s.title).toLowerCase().includes(f));
   const pathHit = p.path.toLowerCase().includes(f);
   return {show: pathHit || hit.length > 0, sessions: pathHit ? all : hit,
           expand: hit.length > 0};
 }
 
+/* ---------- "now doing" per project (hook events, ENG-17) ----------------
+   EV.now maps a session's cwd to the tool it is running: set on PreToolUse,
+   cleared on PostToolUse, Stop and SessionEnd. Events carry metadata only
+   (never tool inputs), and nothing here would show them anyway. */
+const EV = {offset: -1, enabled: false, now: {}, alerted: {}};
+const normPath = p => String(p || "").replace(/[\\/]+$/, "");
+// the deepest project whose folder is the cwd or contains it
+function projectForCwd(projects, cwd){
+  const c = normPath(cwd);
+  let best = null;
+  for(const p of projects || []){
+    const pp = normPath(p.path);
+    if(!pp || !(c === pp || c.startsWith(pp + "/") || c.startsWith(pp + "\\"))) continue;
+    if(!best || pp.length > normPath(best.path).length) best = p;
+  }
+  return best;
+}
+const isWaitingEvent = e => e.hook_event_name === "PermissionRequest"
+  || (e.hook_event_name === "Notification" && /permission|idle/i.test(e.notification_type || ""));
+function applyEvents(now, events){
+  const next = Object.assign({}, now), alerts = [];
+  for(const e of events || []){
+    if(!e || !e.cwd) continue;
+    const n = e.hook_event_name;
+    if(n === "PreToolUse" && e.tool_name) next[e.cwd] = e.tool_name;
+    else if(n === "PostToolUse" || n === "PostToolUseFailure" || n === "Stop" || n === "SessionEnd")
+      delete next[e.cwd];
+    if(isWaitingEvent(e)) alerts.push(e);
+  }
+  return {now: next, alerts};
+}
+// slug -> tool running there now
+function nowMap(projects, now){
+  const out = {};
+  for(const [cwd, tool] of Object.entries(now || {})){
+    const p = projectForCwd(projects, cwd);
+    if(p) out[p.slug] = tool;
+  }
+  return out;
+}
+
+/* The tree is one tab stop (roving tabindex): ↑/↓ move, → expands or steps
+   in, ← collapses or steps out, Enter/Space opens, c starts claude there. */
 function renderTree(){
-  const tree = $("#tree"); tree.innerHTML = "";
+  const tree = $("#tree");
+  const fk = focusedFk(tree);            // survive the rebuild with focus intact
+  tree.innerHTML = "";
   let shown = 0;
+  const nowBy = nowMap(state.projects, EV.now);
   for(const p of state.projects){
     const vis = treeFilter(p);
     if(!vis.show) continue;
     shown++;
     const div = document.createElement("div");
     div.className = "proj" + (state.openProject===p.slug ? " open":"");
-    const shortPath = p.path.split("/").slice(-2).join("/") || p.path;
+    const pk = "p:" + p.slug, expanded = state.openProject===p.slug || !!vis.expand;
+    div.dataset.fk = pk; div.dataset.slug = p.slug;
+    div.setAttribute("role", "treeitem"); div.tabIndex = -1;
+    div.setAttribute("aria-level", "1");
+    div.setAttribute("aria-expanded", expanded);
+    div.setAttribute("aria-keyshortcuts", "c");
+    const shortPath = pathParts(p.path).slice(-2).join("/") || p.path;
     div.innerHTML = `<div class="projrow"><div class="grow">
         <div class="name" title="${esc(p.path)}">${esc(shortPath)}</div>
         <div class="sub">${p.sessions} session${p.sessions===1?"":"s"} · ${fmtDate(p.mtime)}</div>
-      </div>${isNew(p) ? '<span class="dotnew" title="new activity since you last opened this project"></span>' : ''}<span class="cli" title="open claude CLI in ${esc(p.path)}">⌨</span></div>`;
+      </div>${nowBy[p.slug] ? `<span class="nowchip" title="running now">${esc(nowBy[p.slug])}</span>` : ""}${isNew(p) ? '<span class="dotnew" title="new activity since you last opened this project"></span>' : ''}<span class="cli" title="open claude CLI in ${esc(p.path)}">⌨</span></div>`;
     div.onclick = () => toggleProject(p.slug);
     div.querySelector(".cli").onclick = e => { e.stopPropagation();
-      openTerm("claude", {project: p.slug, label: "claude · " + shortPath.split("/").pop()}); };
+      openTerm("claude", {project: p.slug, label: "claude · " + baseName(shortPath)}); };
     tree.appendChild(div);
-    if(state.openProject===p.slug || vis.expand){
+    if(expanded){
+      const child = (el, key) => {
+        el.dataset.fk = key; el.dataset.parent = pk;
+        el.setAttribute("role", "treeitem"); el.tabIndex = -1;
+        el.setAttribute("aria-level", "2");
+        tree.appendChild(el);
+      };
       if(p.has_memory && state.openProject===p.slug){
         const m = document.createElement("div");
         m.className = "memlink"; m.textContent = "🧠 project memory";
         m.onclick = e => { e.stopPropagation(); showMemory(p.slug); };
-        tree.appendChild(m);
+        child(m, "m:" + p.slug);
       }
       for(const s of vis.sessions){
         const el = document.createElement("div");
-        el.className = "sess" + (state.active===p.slug+"/"+s.id ? " active":"");
-        el.innerHTML = `<div class="t" title="${esc(s.title)}">${esc(s.title)}</div>
+        const on = state.active===p.slug+"/"+s.id;
+        el.className = "sess" + (on ? " active":"");
+        el.setAttribute("aria-selected", on);
+        const title = cleanTitle(s.title) || "(untitled session)";
+        el.innerHTML = `<div class="t" title="${esc(title)}">${esc(title)}</div>
           <div class="m">${fmtDate(s.mtime)} · ${fmtBytes(s.size)}${s.has_subagents?" · 🤖":""}</div>`;
         el.onclick = e => { e.stopPropagation(); openSession(p.slug, s.id); };
-        tree.appendChild(el);
+        child(el, "s:" + p.slug + "/" + s.id);
       }
     }
   }
@@ -834,7 +1258,33 @@ function renderTree(){
     tree.innerHTML = `<div class="vizempty" style="padding:14px 12px">No project or
       opened session matches “${esc(state.filter)}”. Press Enter to search inside
       every transcript.</div>`;
+  const cur = byFk(tree, fk) || tree.querySelector(".sess.active")
+           || tree.querySelector(".proj.open") || tree.querySelector('[role="treeitem"]');
+  if(cur){ cur.tabIndex = 0; if(fk !== null) cur.focus(); }
+  renderStatus();
 }
+$("#tree").addEventListener("focusin", e => {
+  if(e.target.matches('[role="treeitem"]')) roving($("#tree"), '[role="treeitem"]', e.target);
+});
+$("#tree").addEventListener("keydown", e => {
+  const cur = e.target;
+  if(!cur.matches('[role="treeitem"]') || e.altKey || e.ctrlKey || e.metaKey) return;
+  const items = [...$("#tree").querySelectorAll('[role="treeitem"]')];
+  const open = cur.getAttribute("aria-expanded");
+  if(e.key === "ArrowDown") stepFocus(items, cur, 1);
+  else if(e.key === "ArrowUp") stepFocus(items, cur, -1);
+  else if(e.key === "Home") stepFocus(items, cur, "first");
+  else if(e.key === "End") stepFocus(items, cur, "last");
+  else if(e.key === "ArrowRight"){
+    if(open === "false") cur.click();
+    else if(open === "true") stepFocus(items, cur, 1);
+  } else if(e.key === "ArrowLeft"){
+    if(open === "true" && state.openProject === cur.dataset.slug) cur.click();
+    else if(cur.dataset.parent){ const up = byFk($("#tree"), cur.dataset.parent); if(up) up.focus(); }
+  } else if(e.key === "c" && cur.dataset.slug) cur.querySelector(".cli").click();
+  else return;
+  e.preventDefault();
+});
 /* ---------- "new activity" badges (localStorage watermark per project) ---------- */
 function seenKey(slug){ return "cdl-seen:" + slug; }
 function isNew(p){
@@ -853,7 +1303,7 @@ async function toggleProject(slug){
   state.openProject = slug;
   // file explorer follows the selected project
   const p = state.projects.find(x => x.slug === slug);
-  if(p && p.path.startsWith("/")){
+  if(p && isAbsPath(p.path)){
     fsPath = p.path;
     setPlanProject(p.path);
     if($("#filesview").style.display !== "none") loadFs(fsPath);
@@ -862,7 +1312,7 @@ async function toggleProject(slug){
   // default; those without get a button to build one
   if(p && p.graph){
     vizPinned = {path: p.graph,
-                 label: "🕸 " + (p.path.split("/").pop() || "project") + " · knowledge graph"};
+                 label: "🕸 " + (baseName(p.path) || "project") + " · knowledge graph"};
     vizGraphOffer = null;
     vizTab("viz");
     showPinned();
@@ -875,12 +1325,13 @@ async function toggleProject(slug){
       vizActive = null; vizNewest = 0;
     }
     vizPinned = null;
-    vizGraphOffer = (p && p.path.startsWith("/"))
-      ? {cwd: p.path, name: p.path.split("/").pop() || "project"} : null;
+    vizGraphOffer = (p && isAbsPath(p.path))
+      ? {cwd: p.path, name: baseName(p.path) || "project"} : null;
     refreshViz();
   }
   renderTree(); updateHash();
-  state.sessions[slug] = await api("/api/sessions?project="+encodeURIComponent(slug));
+  try{ state.sessions[slug] = await api("/api/sessions?project="+encodeURIComponent(slug)); }
+  catch(e){ toast("Could not list the sessions: " + e.message, {kind: "err"}); }
   renderTree();
 }
 
@@ -902,21 +1353,34 @@ async function restoreFromHash(){
 }
 
 /* ---------- session view ---------- */
+// a slow reply must never paint over a newer click: each loader keeps a
+// sequence number and drops replies that are no longer the latest
+let openSeq = 0, fsSeq = 0;
 async function openSession(slug, id, findText){
+  const my = ++openSeq;
   state.active = slug+"/"+id; renderTree(); updateHash();
-  $("#main").innerHTML = `<div class="placeholder">parsing session…</div>`;
+  showState($("#main"), "loading", "Parsing session…");
   try{
     const s = await api(`/api/session?project=${encodeURIComponent(slug)}&id=${encodeURIComponent(id)}`);
+    if(my !== openSeq) return;
     renderSession(s, {slug, id, find: findText});
-  }catch(e){ $("#main").innerHTML = `<div class="placeholder">error: ${esc(e.message)}</div>`; }
+  }catch(e){
+    if(my === openSeq) showState($("#main"), "error", "Could not open this session: " + e.message,
+                                 {label: "Retry", run: () => openSession(slug, id, findText)});
+  }
 }
-async function openSubagent(slug, session, agent){
-  $("#main").innerHTML = `<div class="placeholder">parsing subagent…</div>`;
+async function openSubagent(slug, session, agent, findText){
+  const my = ++openSeq;
+  showState($("#main"), "loading", "Parsing subagent…");
   try{
     const s = await api(`/api/subagent?project=${encodeURIComponent(slug)}&session=${encodeURIComponent(session)}&agent=${encodeURIComponent(agent)}`);
+    if(my !== openSeq) return;
     s.title = "Subagent " + agent.replace(/\.jsonl$/,"");
-    renderSession(s, {slug, id:session, isAgent:true, back:()=>openSession(slug,session)});
-  }catch(e){ $("#main").innerHTML = `<div class="placeholder">error: ${esc(e.message)}</div>`; }
+    renderSession(s, {slug, id:session, isAgent:true, find: findText, back:()=>openSession(slug,session)});
+  }catch(e){
+    if(my === openSeq) showState($("#main"), "error", "Could not open this subagent: " + e.message,
+                                 {label: "Retry", run: () => openSubagent(slug, session, agent, findText)});
+  }
 }
 
 /* the session header lives in its own resizable strip above the timeline */
@@ -927,28 +1391,32 @@ function mountHeader(el){
   return box;
 }
 
+const statsHtml = t => `
+      <div class="stat">requests <b>${t.requests||0}</b></div>
+      <div class="stat">output <b>${fmtTok(t.output_tokens)}</b></div>
+      <div class="stat">cache read <b>${fmtTok(t.cache_read)}</b></div>
+      <div class="stat">cache write <b>${fmtTok(t.cache_creation)}</b></div>
+      <div class="stat">peak context <b>${fmtTok(t.peak_context)}</b></div>`;
+const chipsHtml = tc => Object.entries(tc||{}).sort((a,b)=>b[1]-a[1])
+  .map(([k,v])=>`<span class="chip">${esc(k)} ×${v}</span>`).join("");
+
 function renderSession(s, ctx){
+  LIVE = null;
   const main = $("#main"); main.innerHTML = "";
   if(ctx.back){
-    const b = document.createElement("div"); b.className="backlink";
+    const b = ctl(document.createElement("div")); b.className="backlink";
     b.textContent = "← back to session"; b.onclick = ctx.back; main.appendChild(b);
   }
   const head = document.createElement("div"); head.id = "shead";
   const t = s.totals || {};
   head.innerHTML = `
-    <h2>${esc(s.title || s.id)}
+    <h2>${esc(cleanTitle(s.title) || s.id)}
       ${!ctx.isAgent ? '<button class="copy termbtn" id="btnResume" style="font-size:12px;vertical-align:middle" title="claude --resume '+esc(s.id)+'">⌨ resume in CLI</button>' : ''}</h2>
-    <div class="meta">${esc(s.model||"")} · ${s.entries.length} timeline entries
-      ${s.sidechain_msgs? " · "+s.sidechain_msgs+" sidechain msgs":""}</div>
-    <div class="stats">
-      <div class="stat">requests <b>${t.requests||0}</b></div>
-      <div class="stat">output <b>${fmtTok(t.output_tokens)}</b></div>
-      <div class="stat">cache read <b>${fmtTok(t.cache_read)}</b></div>
-      <div class="stat">cache write <b>${fmtTok(t.cache_creation)}</b></div>
-      <div class="stat">peak context <b>${fmtTok(t.peak_context)}</b></div>
-    </div>
-    <div class="chips">${Object.entries(s.tool_counts||{}).sort((a,b)=>b[1]-a[1])
-      .map(([k,v])=>`<span class="chip">${esc(k)} ×${v}</span>`).join("")}</div>
+    <div class="meta">${esc(s.model||"")} · <span class="nent">${s.entries.length}</span> timeline entries
+      ${s.sidechain_msgs? " · "+s.sidechain_msgs+" sidechain msgs":""}
+      <span class="live" hidden title="following this session: new entries appear as they are written">● live</span></div>
+    <div class="stats">${statsHtml(t)}</div>
+    <div class="chips">${chipsHtml(s.tool_counts)}</div>
     <div class="toggles">
       <label><input type="checkbox" id="tgThink" checked> thinking</label>
       <label><input type="checkbox" id="tgTools" checked> tool calls</label>
@@ -980,7 +1448,7 @@ function renderSession(s, ctx){
     for(const a of s.subagents){
       const id = a.file.replace(/^agent-|\.jsonl$/g, "");
       const lab = byId[id];
-      const el = document.createElement("span");
+      const el = ctl(document.createElement("span"));
       el.className = "agentbox";
       el.textContent = `🤖 ${lab ? lab.type : id} (${fmtBytes(a.size)})`;
       el.title = lab ? lab.desc : a.file;
@@ -1006,7 +1474,6 @@ function renderSession(s, ctx){
     tl.appendChild(frag);
     moreBtn.textContent = `show more (${s.entries.length - rendered} remaining)`;
     moreBtn.style.display = rendered >= s.entries.length ? "none" : "block";
-    applyToggles();
   };
   moreBtn.onclick = renderChunk;
   main.appendChild(moreBtn);
@@ -1022,14 +1489,18 @@ function renderSession(s, ctx){
 
   const applyToggles = () => {
     tl.classList.toggle("hideThink", !$("#tgThink").checked);
-    tl.querySelectorAll(".entry.thinking").forEach(el=>el.style.display = $("#tgThink").checked?"":"none");
-    tl.querySelectorAll(".entry.tool").forEach(el=>el.style.display = $("#tgTools").checked?"":"none");
-    tl.querySelectorAll(".entry.command,.entry.system").forEach(el=>el.style.display = $("#tgSys").checked?"":"none");
-    tl.querySelectorAll(".agentcard").forEach(el=>el.style.display = $("#tgAgents").checked?"":"none");
+    tl.classList.toggle("hideTools", !$("#tgTools").checked);
+    tl.classList.toggle("hideSys", !$("#tgSys").checked);
+    tl.classList.toggle("hideAgents", !$("#tgAgents").checked);
   };
   ["tgThink","tgTools","tgSys","tgAgents"].forEach(id=>$("#"+id).onchange=applyToggles);
+  applyToggles();
   renderChunk();
   main.scrollTop = 0;
+  if(!ctx.isAgent)
+    LIVE = {s, ctx, tl, head, more: moreBtn, my: openSeq, key: "", busy: false,
+            primed: false, lastChange: 0,
+            get rendered(){ return rendered; }, set rendered(v){ rendered = v; }};
 
   // search deep-link: render up to the first matching entry, scroll, flash it
   if(ctx.find){
@@ -1042,6 +1513,8 @@ function renderSession(s, ctx){
       const el = tl.children[idx];
       if(el){
         el.classList.add("openx");
+        const h = el.querySelector(".head[aria-expanded]");
+        if(h) h.setAttribute("aria-expanded", "true");
         setTimeout(() => {
           el.scrollIntoView({block: "center"});
           el.style.outline = "2px solid var(--tool)";
@@ -1052,11 +1525,88 @@ function renderSession(s, ctx){
   }
 }
 
+/* ---------- live-follow (ENG-16) -----------------------------------------
+   While the open session was written to in the last 10 minutes (and the tab
+   is visible), poll /api/session/tail every 3 s. The server re-sends the
+   last few entries (their tool results can land late) from `start`: splice
+   them in, repaint only the rows that changed, append the new ones. */
+let LIVE = null;
+const LIVE_WINDOW = 600;
+const spliceTail = (entries, r) => entries.slice(0, r.start).concat(r.entries);
+// rendered rows to repaint (changed in the overlap), and rows that vanished
+function tailDiff(old, next, start, rendered){
+  const replace = [], upto = Math.min(rendered, old.length, next.length);
+  for(let i = start; i < upto; i++)
+    if(JSON.stringify(old[i]) !== JSON.stringify(next[i])) replace.push(i);
+  return {replace, drop: Math.max(0, Math.min(rendered, old.length) - next.length)};
+}
+const sessMtime = (slug, id) => ((state.sessions[slug] || []).find(x => x.id === id) || {}).mtime || 0;
+async function liveTick(){
+  const L = LIVE;
+  if(!L) return;
+  if(L.my !== openSeq){ LIVE = null; return; }
+  const now = Date.now() / 1000;
+  const on = Math.max(sessMtime(L.ctx.slug, L.ctx.id), L.lastChange) > now - LIVE_WINDOW;
+  L.head.querySelector(".live").hidden = !on;
+  if(!on || L.busy) return;
+  L.busy = true;
+  try{
+    const r = await api(`/api/session/tail?project=${encodeURIComponent(L.ctx.slug)}`
+      + `&id=${encodeURIComponent(L.ctx.id)}&key=${encodeURIComponent(L.key)}&since=${L.s.entries.length}`);
+    if(L !== LIVE || L.my !== openSeq) return;
+    L.key = r.key;
+    if(r.unchanged) return;
+    if(L.primed) L.lastChange = now;       // the first call only learns the key
+    L.primed = true;
+    applyTail(L, r);
+  }catch(e){ /* next tick retries */ }
+  finally{ L.busy = false; }
+}
+function applyTail(L, r){
+  const main = $("#main"), tl = L.tl, s = L.s;
+  const atBottom = main.scrollTop + main.clientHeight >= main.scrollHeight - 40;
+  const old = s.entries;
+  s.entries = spliceTail(old, r);
+  const d = tailDiff(old, s.entries, r.start, L.rendered);
+  for(const i of d.replace){
+    const was = tl.children[i];
+    if(!was) continue;
+    const el = renderEntry(s.entries[i], L.ctx, 0);
+    if(was.classList.contains("openx")){           // keep an expanded row expanded
+      el.classList.add("openx");
+      const h = el.querySelector(".head[aria-expanded]");
+      if(h) h.setAttribute("aria-expanded", "true");
+    }
+    was.replaceWith(el);
+  }
+  for(let k = 0; k < d.drop; k++) tl.lastElementChild.remove();
+  const allShown = L.rendered >= old.length;
+  L.rendered = Math.min(L.rendered, s.entries.length);
+  if(allShown){                                    // follow the tail
+    const frag = document.createDocumentFragment();
+    for(let i = L.rendered; i < s.entries.length; i++) frag.appendChild(renderEntry(s.entries[i], L.ctx, 0));
+    tl.appendChild(frag);
+    L.rendered = s.entries.length;
+  } else {
+    L.more.textContent = `show more (${s.entries.length - L.rendered} remaining)`;
+  }
+  s.totals = r.totals; s.tool_counts = r.tool_counts; s.context_series = r.context_series;
+  L.head.querySelector(".nent").textContent = s.entries.length;
+  L.head.querySelector(".stats").innerHTML = statsHtml(r.totals || {});
+  L.head.querySelector(".chips").innerHTML = chipsHtml(r.tool_counts);
+  if((r.context_series || []).length){
+    const c = renderChart(r.context_series), was = main.querySelector("#chart");
+    if(was) was.replaceWith(c); else main.insertBefore(c, main.firstChild);
+  }
+  if(atBottom) main.scrollTop = main.scrollHeight;
+}
+poll(liveTick, 3000);
+
 function copyBtn(text){
   const b = document.createElement("button");
   b.className = "copy"; b.textContent = "copy";
   b.onclick = ev => { ev.stopPropagation();
-    navigator.clipboard.writeText(text).then(()=>{ b.textContent="✓"; setTimeout(()=>b.textContent="copy",900); }); };
+    copyText(text).then(()=>{ b.textContent="✓"; setTimeout(()=>b.textContent="copy",900); }, ()=>{}); };
   return b;
 }
 
@@ -1086,8 +1636,9 @@ function agentCard(e, ctx, depth){
   const {type, desc} = agentLabel(e);
   const card = document.createElement("div");
   card.className = "agentcard" + (e.is_error ? " failed" : "");
-  const head = document.createElement("div");
+  const head = ctl(document.createElement("div"));
   head.className = "achead";
+  head.setAttribute("aria-expanded", "false");
   head.innerHTML = `<span class="caret">▸</span>
     <span class="atag">🤖 ${esc(type)}</span>
     <span class="adot ${e.is_error ? "err" : "ok"}"></span>
@@ -1102,7 +1653,7 @@ function agentCard(e, ctx, depth){
   let loaded = false;
   head.onclick = async (ev) => {
     ev.stopPropagation();                       // don't collapse the parent tool entry
-    card.classList.toggle("openx");
+    head.setAttribute("aria-expanded", card.classList.toggle("openx"));
     if(loaded || !card.classList.contains("openx")) return;
     loaded = true;
     body.innerHTML = `<div class="acnote">reading agent transcript…</div>`;
@@ -1173,7 +1724,8 @@ function renderEntry(e, ctx, depth){
       <span class="toolsum">${esc(toolSummary(e))}</span>
       ${e.is_error?'<span style="color:var(--err)">error</span>':""} ${ts}`;
     head.appendChild(copyBtn(e.result || JSON.stringify(e.input,null,2)));
-    head.onclick = () => div.classList.toggle("openx");
+    ctl(head).setAttribute("aria-expanded", "false");
+    head.onclick = () => head.setAttribute("aria-expanded", div.classList.toggle("openx"));
     div.appendChild(head);
     const body = document.createElement("div"); body.className = "body";
     const inp = document.createElement("pre");
@@ -1205,7 +1757,7 @@ function renderEntry(e, ctx, depth){
   const label = {user:"USER", assistant:"CLAUDE", thinking:"THINKING",
                  command:"COMMAND", system:"SYSTEM"}[e.kind] || e.kind.toUpperCase();
   const head = document.createElement("div"); head.className = "head";
-  head.innerHTML = `<span class="tag">${label}</span>
+  head.innerHTML = `<span class="tag">${esc(label)}</span>
     ${e.system_reminder?'<span class="chip">system-reminder</span>':""} ${ts}`;
   head.appendChild(copyBtn(e.text||""));
   div.appendChild(head);
@@ -1218,7 +1770,8 @@ function renderEntry(e, ctx, depth){
       div.classList.add("collapsible");
       head.style.cursor = "pointer";
       head.insertAdjacentHTML("afterbegin", '<span class="caret">▸</span>');
-      head.onclick = () => div.classList.toggle("openx");
+      ctl(head).setAttribute("aria-expanded", "false");
+      head.onclick = () => head.setAttribute("aria-expanded", div.classList.toggle("openx"));
     }
   } else {
     body.innerHTML = md(e.text || "");
@@ -1274,8 +1827,16 @@ function renderChart(series){
 /* ---------- memory ---------- */
 async function showMemory(slug){
   state.active = null; renderTree();
-  $("#main").innerHTML = `<div class="placeholder">loading memory…</div>`;
-  const m = await api("/api/memory?project="+encodeURIComponent(slug));
+  const my = ++openSeq;
+  showState($("#main"), "loading", "Loading memory…");
+  let m;
+  try{ m = await api("/api/memory?project="+encodeURIComponent(slug)); }
+  catch(e){
+    if(my === openSeq) showState($("#main"), "error", "Could not read the project memory: " + e.message,
+                                 {label: "Retry", run: () => showMemory(slug)});
+    return;
+  }
+  if(my !== openSeq) return;
   const main = $("#main"); main.innerHTML = "";
   const head = document.createElement("div"); head.id = "shead";
   head.innerHTML = `<h2>🧠 Project memory</h2><div class="meta">${m.files.length} file(s)</div>`;
@@ -1287,7 +1848,8 @@ async function showMemory(slug){
     const h = document.createElement("div"); h.className = "head"; h.style.cursor="pointer";
     h.innerHTML = `<span class="caret">▸</span><span class="tag">${esc(f.name)}</span>`;
     h.appendChild(copyBtn(f.content));
-    h.onclick = () => div.classList.toggle("openx");
+    ctl(h).setAttribute("aria-expanded", div.classList.contains("openx"));
+    h.onclick = () => h.setAttribute("aria-expanded", div.classList.toggle("openx"));
     const b = document.createElement("div"); b.className = "body md";
     b.innerHTML = md(f.content);
     div.append(h,b); tl.appendChild(div);
@@ -1300,36 +1862,59 @@ $("#search").addEventListener("input", ev => {
   state.filter = ev.target.value.trim();
   renderTree();
 });
-$("#search").addEventListener("keydown", async ev=>{
-  if(ev.key === "Escape"){ ev.target.value = ""; state.filter = ""; renderTree(); return; }
+$("#search").addEventListener("keydown", ev=>{
+  if(ev.key === "Escape"){ ev.preventDefault(); ev.target.value = ""; state.filter = ""; renderTree(); return; }
   if(ev.key !== "Enter") return;
   const q = ev.target.value.trim();
-  if(q.length < 2) return;
+  if(q.length >= 2) runSearch(q, state.openProject);
+});
+/* Full-text search. With a project open it searches that project first
+   (fast); the results offer "search all projects". Hits inside a subagent
+   transcript carry `agent` and open that transcript, with a way back. */
+let lastSearch = null;
+async function runSearch(q, project){
+  lastSearch = {q, project: project || null};
   state.active = null; renderTree();
-  $("#main").innerHTML = `<div class="placeholder">searching all sessions…</div>`;
+  const my = ++openSeq;
+  const where = project ? (projName(project) || project) : null;
+  showState($("#main"), "loading", where ? `Searching ${where}…` : "Searching all projects (a few seconds)…");
   try{
-    const res = await api("/api/search?q="+encodeURIComponent(q));
+    const res = await api("/api/search?q=" + encodeURIComponent(q)
+                          + (project ? "&project=" + encodeURIComponent(project) : ""));
+    if(my !== openSeq) return;
     const main = $("#main"); main.innerHTML = "";
     const head = document.createElement("div"); head.id = "shead";
-    head.innerHTML = `<h2>🔍 “${esc(q)}”</h2><div class="meta">${res.length} match(es)${res.length>=300?" (capped)":""}</div>`;
+    head.innerHTML = `<h2>🔍 “${esc(q)}”</h2><div class="meta">${res.length} match(es)${res.length>=300?" (capped)":""}
+      ${where ? ` in ${esc(where)} <button class="copy" id="searchAll">search all projects</button>` : " in all projects"}</div>`;
     mountHeader(head);
+    const all = head.querySelector("#searchAll");
+    if(all) all.onclick = () => runSearch(q, null);
     const tl = document.createElement("div"); tl.id = "timeline";
     const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"),"gi");
     for(const r of res){
-      const div = document.createElement("div"); div.className = "sresult";
-      div.innerHTML = `<div class="where">${esc(r.project)} / ${r.session.slice(0,8)} · ${r.type} · ${fmtDate(r.ts)}</div>
+      const div = ctl(document.createElement("div")); div.className = "sresult";
+      const agent = r.agent ? `<span class="chip" title="${esc(r.agent)}">🤖 ${esc(r.agent.replace(/^agent-|\.jsonl$/g, ""))}</span> ` : "";
+      div.innerHTML = `<div class="where">${agent}${esc(projName(r.project) || r.project)} / ${esc(r.session.slice(0,8))} · ${esc(r.type)} · ${fmtDate(r.ts)}</div>
         <div>${esc(r.snippet).replace(rx, m=>`<mark>${m}</mark>`)}</div>`;
-      div.onclick = async () => {
-        state.openProject = r.project;
-        if(!state.sessions[r.project])
-          state.sessions[r.project] = await api("/api/sessions?project="+encodeURIComponent(r.project));
-        openSession(r.project, r.session, q);   // jump straight to the match
-      };
+      div.onclick = () => openSearchHit(r, q);
       tl.appendChild(div);
     }
     main.appendChild(tl);
-  }catch(e){ $("#main").innerHTML = `<div class="placeholder">error: ${esc(e.message)}</div>`; }
-});
+  }catch(e){ if(my === openSeq) showState($("#main"), "error", "Search failed: " + e.message,
+                                          {label: "Retry", run: () => runSearch(q, project)}); }
+}
+async function openSearchHit(r, q){
+  state.openProject = r.project;
+  if(!state.sessions[r.project])
+    try{ state.sessions[r.project] = await api("/api/sessions?project="+encodeURIComponent(r.project)); }
+    catch(e){ /* the session itself may still open */ }
+  if(r.agent){
+    // the parent session is selected in the tree; the agent's transcript
+    // shows, with "← back to session" leading to the parent
+    state.active = r.project + "/" + r.session; renderTree(); updateHash();
+    openSubagent(r.project, r.session, r.agent, q);
+  } else openSession(r.project, r.session, q);   // jump straight to the match
+}
 
 /* ---------- embedded terminal (xterm.js + PTY over SSE) ---------- */
 const TM = { terms: new Map(), active: null };
@@ -1345,6 +1930,29 @@ function strToB64(s){
   const bytes = new TextEncoder().encode(s);
   let bin = ""; bytes.forEach(b => bin += String.fromCharCode(b));
   return btoa(bin);
+}
+
+/* Terminal input, in order. Each POST is its own connection and server
+   thread, so firing one per keystroke let them reach the PTY in whatever
+   order the threads won (key-repeat came out scrambled). Same fix as
+   syncSize: queue, coalesce, keep ONE request in flight. Resolves once
+   everything queued so far has been written. */
+function sendInput(t, s){
+  t.inbuf = (t.inbuf || "") + s;
+  if(!t.inFlight){
+    t.inFlight = (async () => {
+      try{
+        while(t.inbuf && !t.dead){
+          const chunk = t.inbuf; t.inbuf = "";
+          await fetch("/api/term/input", {method:"POST",
+            headers: authHeaders({"Content-Type":"application/json"}),
+            body: JSON.stringify({id: t.id, data: strToB64(chunk)})});
+        }
+      }catch(e){ /* terminal closed mid-write */ }
+      finally{ t.inFlight = null; }
+    })();
+  }
+  return t.inFlight;
 }
 
 /* Keep the PTY's size exactly in step with what xterm displays.
@@ -1374,20 +1982,40 @@ function syncSize(t, force){
 }
 
 /* ---------- popup menu ---------- */
-let menuOff = null;                 // detaches the dismiss listeners
+let menuOff = null, menuAnchor = null;   // detaches the dismiss listeners
 
+// focus goes back to the button that opened the menu (if it was in the menu)
 function closeMenu(){
   const m = document.getElementById("menu");
+  const had = m && m.contains(document.activeElement);
   if(m) m.remove();
   if(menuOff){ menuOff(); menuOff = null; }
+  if(menuAnchor){
+    menuAnchor.setAttribute("aria-expanded", "false");
+    if(had) menuAnchor.focus();
+    menuAnchor = null;
+  }
 }
 
-function openMenu(anchor, build){
+/* ↑/↓/Home/End move between items, Enter picks, Esc or Tab closes */
+function openMenu(anchor, build, label){
   closeMenu();
   const m = document.createElement("div");
   m.className = "menu"; m.id = "menu";
+  m.setAttribute("role", "menu");
+  if(label) m.setAttribute("aria-label", label);
   build(m);
   document.body.appendChild(m);
+  menuAnchor = anchor;
+  anchor.setAttribute("aria-expanded", "true");
+  const items = [...m.querySelectorAll(".mi")];
+  m.addEventListener("keydown", e => {
+    const dir = {ArrowDown: 1, ArrowUp: -1, Home: "first", End: "last"}[e.key];
+    if(dir !== undefined){ e.preventDefault(); stepFocus(items, e.target, dir); }
+    else if(e.key === "Tab"){ e.preventDefault(); closeMenu(); }
+  });
+  const first = m.querySelector('.mi[aria-checked="true"]') || items[0];
+  if(first) first.focus();
   const r = anchor.getBoundingClientRect();   // measure only once it is in the DOM
   m.style.top  = Math.max(8, Math.min(r.bottom + 6,
                           window.innerHeight - m.offsetHeight - 8)) + "px";
@@ -1395,7 +2023,7 @@ function openMenu(anchor, build){
                           window.innerWidth - m.offsetWidth - 8)) + "px";
   // mousedown on the anchor is ignored so its own click can toggle the menu shut
   const onDown = e => { if(!m.contains(e.target) && !anchor.contains(e.target)) closeMenu(); };
-  const onKey  = e => { if(e.key === "Escape") closeMenu(); };
+  const onKey  = e => { if(e.key === "Escape"){ e.preventDefault(); closeMenu(); } };
   document.addEventListener("mousedown", onDown);
   document.addEventListener("keydown", onKey);
   menuOff = () => { document.removeEventListener("mousedown", onDown);
@@ -1413,44 +2041,54 @@ const LIGHT_ANSI = {black:"#24292f", red:"#cf222e", green:"#116329", yellow:"#7d
   brightYellow:"#633c01", brightBlue:"#218bff", brightMagenta:"#a475f9",
   brightCyan:"#3192aa", brightWhite:"#8c959f"};
 const THEMES = {
+  // borderStrong: control outlines (inputs, buttons) at >=3:1; onErr: text on
+  // an --err fill. Text tokens clear 4.5:1 on bg, panel AND panel2
+  // (tests/test_frontend.js recomputes every ratio).
   "GitHub Dark": {bg:"#0d1117", panel:"#161b22", panel2:"#1c2129", border:"#2d333b",
-    fg:"#d6dde5", dim:"#8b949e", accent:"#58a6ff", user:"#3b82f6", think:"#b18cff",
-    tool:"#d29922", ok:"#3fb950", err:"#f85149", termbg:"#0a0d12", bar:"#2f5c8f",
-    addfg:"#7ee787", delfg:"#ffa198"},
+    borderStrong:"#64686e", fg:"#d6dde5", dim:"#8b949e", accent:"#58a6ff", user:"#4186f6",
+    think:"#b18cff", tool:"#d29922", ok:"#3fb950", err:"#f85149", onErr:"#0b0b0b",
+    termbg:"#0a0d12", bar:"#376393", addfg:"#7ee787", delfg:"#ffa198"},
   "GitHub Light": {light:true, bg:"#ffffff", panel:"#f6f8fa", panel2:"#eaeef2",
-    border:"#d0d7de", fg:"#1f2328", dim:"#59636e", accent:"#0969da", user:"#0969da",
-    think:"#8250df", tool:"#9a6700", ok:"#1a7f37", err:"#cf222e", termbg:"#ffffff",
-    bar:"#54aeff", addfg:"#116329", delfg:"#82071e"},
+    border:"#d0d7de", borderStrong:"#8b9095", fg:"#1f2328", dim:"#59636e",
+    accent:"#0968d8", user:"#0968d8", think:"#7e4ed8", tool:"#926200", ok:"#197c36",
+    err:"#cf222e", onErr:"#ffffff", termbg:"#ffffff", bar:"#4a99e0",
+    addfg:"#116329", delfg:"#82071e"},
   "Solarized Dark": {bg:"#002b36", panel:"#073642", panel2:"#0d3f4c", border:"#1f4f5c",
-    fg:"#a3b3b3", dim:"#7a8d91", accent:"#268bd2", user:"#268bd2", think:"#8b8fd8",
-    tool:"#b58900", ok:"#859900", err:"#dc322f", termbg:"#002b36", bar:"#2a6f97",
-    addfg:"#a4b830", delfg:"#ec6b64"},
+    borderStrong:"#5e808a", fg:"#a3b3b3", dim:"#97a6a9", accent:"#61aade", user:"#61aade",
+    think:"#9a9edd", tool:"#c39f30", ok:"#9bab2e", err:"#eb8886", onErr:"#0b0b0b",
+    termbg:"#002b36", bar:"#35769c", addfg:"#a4b830", delfg:"#f07f78"},
   "Solarized Light": {light:true, bg:"#fdf6e3", panel:"#eee8d5", panel2:"#e6dfc8",
-    border:"#d6cfb8", fg:"#4a5d63", dim:"#76878c", accent:"#1f6fb2", user:"#1f6fb2",
-    think:"#5b5fb5", tool:"#8a6800", ok:"#5f6f00", err:"#c02a27", termbg:"#fdf6e3",
-    bar:"#7fb2d9", addfg:"#4f5d00", delfg:"#a3201d"},
+    border:"#d6cfb8", borderStrong:"#898476", fg:"#4a5d63", dim:"#586569",
+    accent:"#1d66a4", user:"#1d66a4", think:"#565aac", tool:"#7c5e00", ok:"#5a6900",
+    err:"#bc2926", onErr:"#ffffff", termbg:"#fdf6e3", bar:"#6892b2",
+    addfg:"#4f5d00", delfg:"#a3201d"},
   "Dracula": {bg:"#282a36", panel:"#21222c", panel2:"#343746", border:"#44475a",
-    fg:"#f8f8f2", dim:"#9ea3c4", accent:"#8be9fd", user:"#bd93f9", think:"#ff79c6",
-    tool:"#ffb86c", ok:"#50fa7b", err:"#ff5555", termbg:"#282a36", bar:"#6272a4",
-    addfg:"#50fa7b", delfg:"#ff8080"},
+    borderStrong:"#717382", fg:"#f8f8f2", dim:"#9ea3c4", accent:"#8be9fd", user:"#bd93f9",
+    think:"#ff79c6", tool:"#ffb86c", ok:"#50fa7b", err:"#ff7575", onErr:"#0b0b0b",
+    termbg:"#282a36", bar:"#6272a4", addfg:"#50fa7b", delfg:"#ff8080"},
   "Monokai": {bg:"#272822", panel:"#1e1f1c", panel2:"#34352f", border:"#49483e",
-    fg:"#f8f8f2", dim:"#a8a28a", accent:"#66d9ef", user:"#66d9ef", think:"#ae81ff",
-    tool:"#e6db74", ok:"#a6e22e", err:"#f92672", termbg:"#272822", bar:"#5a7d8c",
-    addfg:"#a6e22e", delfg:"#ff6188"},
+    borderStrong:"#73726a", fg:"#f8f8f2", dim:"#a8a28a", accent:"#66d9ef", user:"#66d9ef",
+    think:"#b085ff", tool:"#e6db74", ok:"#a6e22e", err:"#fb6b9f", onErr:"#0b0b0b",
+    termbg:"#272822", bar:"#5a7d8c", addfg:"#a6e22e", delfg:"#ff7a9a"},
   "Tomorrow Night": {bg:"#1d1f21", panel:"#232528", panel2:"#2c2e32", border:"#373b41",
-    fg:"#c5c8c6", dim:"#969896", accent:"#81a2be", user:"#81a2be", think:"#b294bb",
-    tool:"#f0c674", ok:"#b5bd68", err:"#cc6666", termbg:"#1d1f21", bar:"#4f6a80",
-    addfg:"#b5bd68", delfg:"#d98a8a"},
+    borderStrong:"#6d7074", fg:"#c5c8c6", dim:"#969896", accent:"#81a2be", user:"#81a2be",
+    think:"#b294bb", tool:"#f0c674", ok:"#b5bd68", err:"#d47d7d", onErr:"#0b0b0b",
+    termbg:"#1d1f21", bar:"#536d83", addfg:"#b5bd68", delfg:"#d98a8a"},
   "Cobalt": {bg:"#002240", panel:"#001b33", panel2:"#0d3a58", border:"#1f4662",
-    fg:"#ffffff", dim:"#9db4c8", accent:"#ffc600", user:"#2ea8ff", think:"#ff7fa3",
-    tool:"#ff9d00", ok:"#3ad900", err:"#ff2c70", termbg:"#002240", bar:"#0088ff",
-    addfg:"#3ad900", delfg:"#ff6f9a"},
+    borderStrong:"#506f85", fg:"#ffffff", dim:"#9db4c8", accent:"#ffc600", user:"#2ea8ff",
+    think:"#ff7fa3", tool:"#ff9d00", ok:"#3ad900", err:"#ff709e", onErr:"#0b0b0b",
+    termbg:"#002240", bar:"#0088ff", addfg:"#3ad900", delfg:"#ff6f9a"},
 };
 const DEFAULT_THEME = "GitHub Dark";
 function themeName(){
   const n = localStorage.getItem("cdl-theme");
   return THEMES[n] ? n : DEFAULT_THEME;
 }
+/* Claude Code draws its diffs in truecolor picked for its own /theme: on a
+   light terminal its grey context lines vanish, and no ANSI palette can
+   remap truecolor. xterm lifts any foreground to this ratio against its cell
+   background (colours that already pass are left exactly as they are). */
+const TERM_MIN_CONTRAST = 4.5;
 function termTheme(){
   const t = THEMES[themeName()];
   return Object.assign({background: t.termbg, foreground: t.fg, cursor: t.accent,
@@ -1463,12 +2101,18 @@ function applyTheme(name){
   for(const k of ["bg","panel","panel2","border","fg","dim","accent","user","think",
                   "tool","ok","err","termbg","bar","addfg","delfg"])
     root.setProperty("--" + k, t[k]);
+  root.setProperty("--border-strong", t.borderStrong);
+  root.setProperty("--on-err", t.onErr);
+  root.setProperty("--focus", t.focus || t.accent);
   root.setProperty("--stripe", t.light ? "rgba(0,0,0,.03)" : "rgba(255,255,255,.02)");
   root.setProperty("--shadow", t.light ? "rgba(31,35,40,.18)" : "rgba(0,0,0,.55)");
   root.setProperty("color-scheme", t.light ? "light" : "dark");
   localStorage.setItem("cdl-theme", name);
   const tt = termTheme();
-  for(const [, x] of (typeof TM !== "undefined" ? TM.terms : [])) x.term.options.theme = tt;
+  for(const [, x] of (typeof TM !== "undefined" ? TM.terms : [])){
+    x.term.options.theme = tt;
+    x.term.options.minimumContrastRatio = TERM_MIN_CONTRAST;
+  }
 }
 function pickTheme(anchor){
   openMenu(anchor, m => {
@@ -1478,18 +2122,21 @@ function pickTheme(anchor){
     for(const name of Object.keys(THEMES)){
       const t = THEMES[name];
       const it = menuItem(m, "", t.light ? "light theme" : "dark theme",
-                          () => applyTheme(name));
+                          () => { applyTheme(name); announce("Theme: " + name); });
+      it.setAttribute("role", "menuitemradio");
+      it.setAttribute("aria-checked", name === themeName());
       it.innerHTML = `<span class="swatch" style="background:${t.bg};border-color:${t.border}">
           <i style="background:${t.accent}"></i><i style="background:${t.ok}"></i><i style="background:${t.think}"></i></span>
         ${esc(name)}${name === themeName() ? ' <span style="color:var(--ok)">✓</span>' : ""}`;
     }
-  });
+  }, "Theme");
 }
 applyTheme(themeName());
 
 function menuItem(m, text, title, fn, mono){
   const it = document.createElement("div");
   it.className = "mi" + (mono ? " mono" : "");
+  it.setAttribute("role", "menuitem"); it.tabIndex = -1;
   it.textContent = text;
   if(title) it.title = title;
   it.onclick = () => { closeMenu(); fn(); };
@@ -1514,45 +2161,64 @@ function pickClaudeFolder(anchor){
       h.className = "hdr"; h.textContent = "projects · most recent first";
       m.appendChild(h);
       for(const p of projs){
-        const shortPath = p.path.split("/").slice(-2).join("/") || p.path;
+        const shortPath = pathParts(p.path).slice(-2).join("/") || p.path;
         menuItem(m, shortPath, p.path,
                  () => openTerm("claude", {project: p.slug,
                                            label: "claude · " + (projName(p.slug) || shortPath)}),
                  true);
       }
     }
-  });
+  }, "Start claude in");
 }
 
-async function openTerm(kind, opts = {}){
+/* An xterm view, built and measured BEFORE the PTY exists, so the PTY is
+   created at the right size (spawning first meant the child drew its first
+   frames at a default 100x30 and kept that wrapping). Shown at once so it
+   can be measured; the other tabs hide. */
+async function termView(kind, label){
   showTermCell();
-
-  // Build and measure the viewport BEFORE spawning, so the PTY is created at
-  // the right size. Spawning first meant the child rendered its first frames
-  // at a default 100x30 and only then got a SIGWINCH — the already-emitted
-  // lines kept the old wrapping.
   const container = document.createElement("div");
   $("#termbody").appendChild(container);
   const term = new Terminal({
     fontSize: 13, fontFamily: "ui-monospace, Menlo, monospace",
     cursorBlink: true, allowProposedApi: true, scrollback: 5000,
-    theme: termTheme()
+    theme: termTheme(), minimumContrastRatio: TERM_MIN_CONTRAST
   });
+  // the app's global keys (⌘K palette…) pass through the terminal
+  term.attachCustomKeyEventHandler(e => !isGlobalKey(e, true));
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
-  const t = { id: null, kind, label: opts.label, term, fit, container,
+  const t = { id: null, kind, label, term, fit, container,
               dead: false, pos: 0, abort: null,
               sentCols: null, sentRows: null, pendingSize: null,
               sizeInFlight: false };
-
-  // show it now so it can be measured, then hide the others
   for(const [, other] of TM.terms) other.container.style.display = "none";
   container.style.display = "block";
   term.open(container);
   try{ fit.fit(); }catch(e){}
   await new Promise(r => requestAnimationFrame(r));
   try{ fit.fit(); }catch(e){}               // second pass: fonts/layout settled
+  return t;
+}
+// wire a view to a PTY the server knows (a new one, or one re-attached)
+function attachTerm(t, info, noFocus){
+  t.id = info.id;
+  t.label = t.label || info.label;
+  // the folder this session actually runs in — the file explorer follows it
+  t.cwd = info.cwd || t.cwd || null;
+  t.fsPath = t.cwd;
+  TM.terms.set(t.id, t);
+  t.term.onData(d => sendInput(t, d));
+  t.term.onResize(() => syncSize(t));
+  activateTerm(t.id, noFocus);
+  streamTerm(t);
+  renderTabs();
+}
 
+async function openTerm(kind, opts = {}){
+  const t = await termView(kind, opts.label);
+  const term = t.term;
+  t.cwd = opts.cwd || null;
   let info;
   try{
     const r = await fetch("/api/term/start", {method:"POST",
@@ -1563,28 +2229,30 @@ async function openTerm(kind, opts = {}){
     info = await r.json();
     if(!r.ok) throw new Error(info.error || r.status);
   }catch(e){
-    term.dispose(); container.remove();
-    $("#termempty").innerHTML = `⚠️ ${esc(e.message)}`;
-    $("#termempty").style.display = "block";
+    term.dispose(); t.container.remove();
+    const prev = TM.terms.get(TM.active);
+    if(prev) prev.container.style.display = "block";   // put back what was showing
+    else {
+      $("#termempty").innerHTML = `⚠️ ${esc(e.message)}`;
+      $("#termempty").style.display = "block";
+    }
+    toast("Could not start the terminal: " + e.message, {kind: "err"});
     return;
   }
-
-  t.id = info.id;
-  t.label = opts.label || info.label;
-  // the folder this session actually runs in — the file explorer follows it
-  t.cwd = info.cwd || opts.cwd || null;
-  t.fsPath = t.cwd;
   t.sentCols = term.cols; t.sentRows = term.rows;   // the size it was born with
-  TM.terms.set(t.id, t);
+  attachTerm(t, info);
+}
 
-  term.onData(d => fetch("/api/term/input", {method:"POST",
-    headers:authHeaders({"Content-Type":"application/json"}),
-    body: JSON.stringify({id: t.id, data: strToB64(d)})}));
-  term.onResize(() => syncSize(t));
-
-  activateTerm(t.id);
-  streamTerm(t);
-  renderTabs();
+/* After a reload the PTYs are still running on the server: give each a tab
+   again. from=0 replays the server's scrollback (up to 512 kB). */
+async function reattachTerms(){
+  let list;
+  try{ list = await api("/api/term/list"); }catch(e){ return; }
+  for(const info of list){
+    if(TM.terms.has(info.id) || !info.alive) continue;
+    const t = await termView(info.kind, info.label);
+    attachTerm(t, info, true);
+  }
 }
 
 async function streamTerm(t){
@@ -1647,7 +2315,7 @@ function fsFollowTerm(id){
   if($("#filesview").style.display !== "none") loadFs(fsPath);
 }
 
-function activateTerm(id){
+function activateTerm(id, noFocus){
   fsFollowTerm(id);
   TM.active = id;
   const at = TM.terms.get(id);
@@ -1656,7 +2324,7 @@ function activateTerm(id){
     t.container.style.display = tid === id ? "block" : "none";
   renderTabs();
   fitActive(true);           // force a size sync: this tab may be stale
-  const t = TM.terms.get(id); if(t) t.term.focus();
+  const t = TM.terms.get(id); if(t && !noFocus) t.term.focus();
 }
 function fitActive(force){
   const t = TM.terms.get(TM.active);
@@ -1674,7 +2342,7 @@ async function closeTerm(id){
   t.dead = true;
   if(t.abort) t.abort.abort();
   fetch("/api/term/kill", {method:"POST", headers:authHeaders({"Content-Type":"application/json"}),
-    body: JSON.stringify({id})});
+    body: JSON.stringify({id})}).catch(() => {});      // already gone is fine
   t.term.dispose(); t.container.remove();
   TM.terms.delete(id);
   if(TM.active === id) TM.active = TM.terms.keys().next().value || null;
@@ -1682,22 +2350,46 @@ async function closeTerm(id){
   else $("#termempty").style.display = "block";
   renderTabs();
 }
+// ARIA tabs with manual activation: arrows move, Enter/Space switches,
+// Delete closes (asking first while the process is alive)
 function renderTabs(){
-  const box = $("#ttablist"); box.innerHTML = "";
+  const box = $("#ttablist");
+  const fk = focusedFk(box);
+  box.innerHTML = "";
   for(const [id, t] of TM.terms){
+    const on = id === TM.active;
     const el = document.createElement("span");
-    el.className = "ttab" + (id===TM.active?" active":"") + (t.dead?" dead":"");
-    el.innerHTML = `<span>${esc(t.label)}</span><span class="x" title="close">✕</span>`;
+    el.className = "ttab" + (on?" active":"") + (t.dead?" dead":"");
+    el.setAttribute("role", "tab");
+    el.setAttribute("aria-selected", on);
+    el.setAttribute("aria-controls", "termbody");
+    el.setAttribute("aria-keyshortcuts", "Delete");
+    el.tabIndex = on ? 0 : -1;
+    el.dataset.id = id; el.dataset.fk = "t:" + id;
+    el.innerHTML = `<span>${esc(t.label)}${t.dead ? '<span class="sr-only"> (exited)</span>' : ""}</span>
+      <button class="x" title="close" aria-label="Close ${esc(t.label)}" tabindex="${on ? 0 : -1}">✕</button>`;
     el.onclick = () => activateTerm(id);
     el.querySelector(".x").onclick = e => { e.stopPropagation(); closeTerm(id); };
     box.appendChild(el);
   }
+  const back = byFk(box, fk);
+  if(back) back.focus();
+  renderStatus();
+}
+async function closeTermAsk(id){
+  const t = TM.terms.get(id);
+  if(!t) return;
+  if(!t.dead && !await ask("Close this terminal?",
+      `“${t.label}” is still running. Closing the tab ends its process.`, "Close", true)) return;
+  closeTerm(id);
+  announce("Terminal closed");
 }
 
 $("#btnQuit").onclick = async () => {
   const n = TM.terms.size;
-  if(!confirm("Quit Claude DevTools?" + (n ?
-      `\n\n${n} terminal session(s) will be closed gracefully — Claude Code gets to run its SessionEnd hooks (this can take a few seconds).` : "")))
+  if(!await ask("Quit Claude DevTools?", n
+      ? `${n} terminal session(s) will be closed gracefully — Claude Code gets to run its SessionEnd hooks (this can take a few seconds).`
+      : "The devtools server stops; relaunch the app to come back.", "Quit", true))
     return;
   document.body.innerHTML = `<div class="placeholder" style="padding-top:30vh">
     ⏻ Closing ${n||"no"} session(s) gracefully, then stopping the server…</div>`;
@@ -1725,13 +2417,12 @@ window.addEventListener("resize", fitActive);
 async function termInsert(text, cwd){
   let t = TM.terms.get(TM.active);
   if(!t || t.dead){
-    await openTerm("shell", {cwd, label: "shell · " + (cwd||"~").split("/").pop()});
+    await openTerm("shell", {cwd, label: "shell · " + (baseName(cwd) || "~")});
     await new Promise(r => setTimeout(r, 700));
     t = TM.terms.get(TM.active);
     if(!t) return;
   }
-  fetch("/api/term/input", {method:"POST", headers:authHeaders({"Content-Type":"application/json"}),
-    body: JSON.stringify({id: t.id, data: strToB64(text)})});
+  sendInput(t, text);
   t.term.focus();
 }
 
@@ -1742,6 +2433,8 @@ function toggleMax(id){
   const ws = $("#workspace");
   ws.classList.toggle("maxed", !!maxedCell);
   ws.querySelectorAll(".cell").forEach(c => c.classList.toggle("maxed", c.id === maxedCell));
+  document.querySelectorAll(".maxbtn").forEach(b =>
+    b.setAttribute("aria-pressed", b.dataset.cell === maxedCell));
   fitActive();
 }
 document.querySelectorAll(".maxbtn").forEach(b => {
@@ -1804,31 +2497,74 @@ function saveSizes(){                       // localStorage + server (.state.jso
     body: JSON.stringify({layout: SZ})}), 400);
 }
 
-makeSplitter($("#vsplit"),
-  ev => wsEl.getBoundingClientRect().right - ev.clientX,
-  v => { SZ.col2 = v; applySizes(); }, saveSizes);
-makeSplitter($("#hsplitL"),
-  ev => $("#colL").getBoundingClientRect().bottom - ev.clientY,
-  v => { SZ.rowL = v; applySizes(); }, saveSizes);
-makeSplitter($("#hsplitR"),          // usage | plan  → sizes the plan pane
-  ev => $("#hsplitR2").getBoundingClientRect().top - ev.clientY,
-  v => { SZ.rowP = v; applySizes(); }, saveSizes);
-makeSplitter($("#hsplitR2"),         // plan | viz    → sizes the viz pane
-  ev => $("#colR").getBoundingClientRect().bottom - ev.clientY,
-  v => { SZ.rowR = v; applySizes(); }, saveSizes);
-makeSplitter($("#sideHandle"),
-  ev => ev.clientX - $("#sidebar").getBoundingClientRect().left,
-  v => { SZ.sidebar = v; applySizes(); }, saveSizes);
-
-// header strip (session title, stats, tool chips, toggles)
-makeSplitter($("#headgrip"),
-  ev => ev.clientY - $("#sheadbox").getBoundingClientRect().top,
-  v => { $("#cell-main").classList.remove("headcollapsed");
-         SZ.headH = v; applySizes(); }, saveSizes);
+/* Keyboard side of a splitter (APG window splitter): arrows move 16 px, with
+   Shift 64 px; Home/End go to the limits; Enter collapses to the minimum and
+   restores. The value is the size of the pane the splitter controls, clamped
+   exactly as applySizes clamps it. Returns the aria-valuenow updater. */
+function splitKeys(el, o){
+  el.tabIndex = 0;
+  el.setAttribute("role", "separator");
+  el.setAttribute("aria-orientation", o.vertical ? "vertical" : "horizontal");
+  el.setAttribute("aria-valuemin", o.min);
+  let restore = null;
+  const sync = () => {
+    el.setAttribute("aria-valuenow", Math.round(o.get()));
+    el.setAttribute("aria-valuemax", Math.round(o.max()));
+  };
+  el.addEventListener("focus", sync);
+  el.addEventListener("keydown", e => {
+    const v = o.get(), step = e.shiftKey ? 64 : 16;
+    let n;
+    if(e.key === o.grow) n = v + step;
+    else if(e.key === o.shrink) n = v - step;
+    else if(e.key === "Home") n = o.min;
+    else if(e.key === "End") n = o.max();
+    else if(e.key === "Enter"){
+      if(o.toggle) o.toggle();
+      else if(v > o.min + 1){ restore = v; n = o.min; }
+      else n = restore || (o.min + o.max()) / 2;
+    } else return;
+    e.preventDefault();
+    if(n !== undefined) o.set(clamp(n, o.min, o.max()));
+    saveSizes(); sync();
+  });
+  return sync;
+}
+const wsH = () => wsEl.getBoundingClientRect().height;
+const boxOf = sel => $(sel).getBoundingClientRect();
+const SPLITS = [
+  ["#vsplit", ev => wsEl.getBoundingClientRect().right - ev.clientX,
+   {vertical: true, grow: "ArrowLeft", shrink: "ArrowRight", min: 200,
+    max: () => Math.max(220, wsEl.getBoundingClientRect().width - 320),
+    get: () => boxOf("#colR").width, set: v => { SZ.col2 = v; applySizes(); }}],
+  ["#hsplitL", ev => boxOf("#colL").bottom - ev.clientY,
+   {grow: "ArrowUp", shrink: "ArrowDown", min: 120, max: () => Math.max(140, wsH() - 160),
+    get: () => boxOf("#cell-term").height, set: v => { SZ.rowL = v; applySizes(); }}],
+  ["#hsplitR", ev => boxOf("#hsplitR2").top - ev.clientY,       // usage | plan → plan
+   {grow: "ArrowUp", shrink: "ArrowDown", min: 70, max: () => Math.max(90, wsH() - 240),
+    get: () => boxOf("#cell-plan").height, set: v => { SZ.rowP = v; applySizes(); }}],
+  ["#hsplitR2", ev => boxOf("#colR").bottom - ev.clientY,       // plan | viz → viz
+   {grow: "ArrowUp", shrink: "ArrowDown", min: 120, max: () => Math.max(140, wsH() - 160),
+    get: () => boxOf("#cell-viz").height, set: v => { SZ.rowR = v; applySizes(); }}],
+  ["#sideHandle", ev => ev.clientX - boxOf("#sidebar").left,
+   {vertical: true, grow: "ArrowRight", shrink: "ArrowLeft", min: 170, max: () => 520,
+    get: () => boxOf("#sidebar").width, set: v => { SZ.sidebar = v; applySizes(); }}],
+  // header strip (session title, stats, tool chips, toggles)
+  ["#headgrip", ev => ev.clientY - boxOf("#sheadbox").top,
+   {grow: "ArrowDown", shrink: "ArrowUp", min: 48,
+    max: () => Math.max(60, (boxOf("#cell-main").height || wsH()) - 120),
+    get: () => boxOf("#sheadbox").height, toggle: () => toggleHeader(),
+    set: v => { $("#cell-main").classList.remove("headcollapsed"); SZ.headH = v; applySizes(); }}],
+];
+for(const [sel, compute, o] of SPLITS){
+  const sync = splitKeys($(sel), o);
+  makeSplitter($(sel), compute, o.set, () => { saveSizes(); sync(); });
+}
 
 function toggleHeader(){
   const collapsed = $("#cell-main").classList.toggle("headcollapsed");
   $("#headToggle").textContent = collapsed ? "▼" : "▲";
+  $("#headToggle").setAttribute("aria-expanded", !collapsed);
   localStorage.setItem("cdl-headcollapsed", collapsed ? "1" : "");
   fitActive();
 }
@@ -1837,6 +2573,7 @@ $("#headgrip").ondblclick = toggleHeader;
 if(localStorage.getItem("cdl-headcollapsed")){
   $("#cell-main").classList.add("headcollapsed");
   $("#headToggle").textContent = "▼";
+  $("#headToggle").setAttribute("aria-expanded", "false");
 }
 
 // restore: localStorage first (instant), then the server copy (survives any
@@ -1886,12 +2623,27 @@ async function refreshUsage(){
       <div class="ubar" title="current block output vs the 90th percentile of your ${u.baseline.blocks} historical 5h blocks (best ever: ${fmtTok(u.baseline.max)})">
         <div style="width:${Math.min(100,pct).toFixed(0)}%;background:${color}"></div></div>`;
     }
-    const blockPart = b ? `
+    // official figures (the "Live limits" add-on) lead; P90 becomes the estimate
+    const o = u.official, nowS = Date.now() / 1000;
+    const pctColor = p => p > 90 ? "var(--err)" : p > 65 ? "var(--tool)" : "var(--ok)";
+    const limitBar = (label, w) => {
+      if(!w || w.used_percentage == null) return "";
+      const p = +w.used_percentage;
+      return `<div class="urow"><span>${label}</span><b style="color:${pctColor(p)}">${p.toFixed(0)}%</b></div>
+        <div class="ubar" role="img" aria-label="${label}: ${p.toFixed(0)}% used"><div style="width:${Math.min(100, p).toFixed(0)}%;background:${pctColor(p)}"></div></div>
+        ${w.resets_at ? `<div class="urow ureset"><span></span><span>${fmtCountdown(w.resets_at - nowS)}</span></div>` : ""}`;
+    };
+    const officialPart = o ? `<div class="uhead">Official limits</div>`
+      + limitBar("5-hour limit", o.five_hour) + limitBar("7-day limit", o.seven_day)
+      + `<div class="urow" style="color:var(--dim)"><span>session ${esc(String(o.session_id || "").slice(0, 8))}${o.model ? " · " + esc(o.model) : ""}</span>
+          <span>${o.context_pct != null ? "context " + Math.round(o.context_pct) + "%" : ""}${o.cost_usd != null ? " · $" + (+o.cost_usd).toFixed(2) : ""}</span></div>
+        <div class="uhead">Estimate from local transcripts</div>` : "";
+    const blockPart = officialPart + (b ? `
       <div class="urow"><span>current 5h block</span><b>${fmtTok(b.output)}</b></div>
       <div class="urow" style="color:var(--dim)"><span>requests</span><b style="color:var(--dim)">${b.requests}</b></div>
       <div class="ubar" title="time elapsed in this 5h block">
         <div style="width:${Math.min(100,((u.generated-b.start)/(b.end-b.start))*100).toFixed(0)}%"></div></div>${limitPart}`
-      : `<div class="vizempty">no active 5h block — idle</div>`;
+      : `<div class="vizempty">no active 5h block — idle</div>`);
     const models = Object.entries(u.week_by_model||{}).sort((a,b2)=>b2[1]-a[1])
       .map(([m,v])=>`<div class="modelrow"><span>${esc(m.replace(/^claude-/,""))}</span><span>${fmtTok(v)}</span></div>`).join("");
     const max = Math.max(...u.hourly, 1);
@@ -1904,9 +2656,18 @@ async function refreshUsage(){
       <div style="margin-top:8px;color:var(--dim);font-size:11px">last 24h (output/hour)</div>
       <svg id="sparkline" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${bars}</svg>
       <div style="margin-top:8px;color:var(--dim);font-size:11px">by model, 7 days</div>${models}
-      <div style="margin-top:10px;color:var(--dim);font-size:10.5px">Computed from local transcripts (output tokens, deduped by request). Plan limits aren't in the logs — use <code>/status</code> in the CLI for the official quota.</div>`;
-    $("#blockreset").textContent = b ? fmtCountdown(b.end - u.generated) : "";
-  }catch(e){ $("#usagebody").innerHTML = `<div class="vizempty">usage error: ${esc(e.message)}</div>`; }
+      <div style="margin-top:10px;color:var(--dim);font-size:10.5px">Computed from local transcripts (output tokens, deduped by request).${o
+        ? " The official limits above come from Claude Code's statusline, " + fmtDur(Math.max(0, nowS - o.at)) + " ago."
+        : addonInstalled("live-limits")
+          ? " Official 5-hour and 7-day figures show here while a Claude session is running (Live limits add-on)."
+          : ` The <a id="uLive" role="button" tabindex="0">Live limits</a> add-on adds the official 5-hour and 7-day figures.`}</div>`;
+    const ul = $("#uLive");
+    if(ul) ul.onclick = () => openAddons("live-limits");
+    $("#blockreset").textContent = o && o.five_hour && o.five_hour.resets_at
+      ? fmtCountdown(o.five_hour.resets_at - nowS) : b ? fmtCountdown(b.end - u.generated) : "";
+    renderStatus();
+  }catch(e){ showState($("#usagebody"), "error", "Could not compute token use: " + e.message,
+                       {label: "Retry", run: refreshUsage}); }
 }
 
 /* ---------- preview routing (iframe for html/images, <embed> for pdf) ------
@@ -1957,6 +2718,7 @@ const isPdfName = n => /\.pdf(\?|$)/i.test(n || "");
 /* ---------- viz inbox ---------- */
 let vizDir = "", vizActive = null, vizNewest = 0, vizPinned = null, vizGraphOffer = null;
 let vizImage = null;          // full path of the image on show, if it is one
+let vizStamp = "";            // what #vizlist last showed: skip no-op rebuilds
 function vizOverride(){ return localStorage.getItem("cdl-vizdir") || ""; }
 function showPinned(){
   if(!vizPinned) return;
@@ -1974,9 +2736,14 @@ async function refreshViz(){
     const ov = vizOverride();
     const v = await api("/api/viz" + (ov ? "?dir=" + encodeURIComponent(ov) : ""));
     vizDir = v.dir;
+    renderStatus();
+    const st = dataStamp(v.dir, v.files.map(f => f.name + ":" + f.mtime), vizPinned, vizActive,
+                         vizGraphOffer, vizGraphOffer && graphOfferDismissed(vizGraphOffer.cwd), addonInstalled("graphify"));
+    if(st === vizStamp) return;
+    vizStamp = st;
     const list = $("#vizlist"); list.innerHTML = "";
     if(vizPinned){
-      const el = document.createElement("div");
+      const el = ctl(document.createElement("div"));
       el.className = "vizfile" + (vizActive === "::pinned" ? " active" : "");
       el.style.color = "var(--think)";
       el.innerHTML = `<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(vizPinned.label)}</span>`;
@@ -1995,7 +2762,7 @@ async function refreshViz(){
       return;
     }
     for(const f of v.files.slice(0, 8)){
-      const el = document.createElement("div");
+      const el = ctl(document.createElement("div"));
       el.className = "vizfile" + (f.name === vizActive ? " active" : "");
       el.innerHTML = `<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.name)}</span>
         <span style="flex:none">${fmtDate(f.mtime)}</span>`;
@@ -2041,18 +2808,18 @@ function graphOfferCard(o){
 
 function showViz(f){
   vizActive = f.name;
-  vizImage = /^image\//.test(f.kind || "") ? vizDir + "/" + f.name : null;
+  vizImage = /^image\//.test(f.kind || "") ? joinPath(vizDir, f.name) : null;
   $("#vizReview").style.display = vizImage ? "" : "none";
   ensureCookie();
   setPreview("#vizframe", "#vizpdf",
-             "/api/fs/file?path=" + encodeURIComponent(vizDir + "/" + f.name)
+             "/api/fs/file?path=" + encodeURIComponent(joinPath(vizDir, f.name))
                + "&t=" + f.mtime,
              f.kind === "application/pdf", !/html|pdf/.test(f.kind));
   [...document.querySelectorAll(".vizfile")].forEach(el =>
     el.classList.toggle("active", el.textContent.startsWith(f.name)));
 }
-$("#vizPath").onclick = () => navigator.clipboard.writeText(vizDir)
-  .then(() => { $("#vizPath").textContent = "✓"; setTimeout(()=>$("#vizPath").textContent="copy path", 900); });
+$("#vizPath").onclick = () => copyText(vizDir)
+  .then(() => { $("#vizPath").textContent = "✓"; setTimeout(()=>$("#vizPath").textContent="copy path", 900); }, () => {});
 
 
 /* ---------- figure review ---------------------------------------------------
@@ -2070,11 +2837,11 @@ async function openReview(path){
   RV.path = path; RV.sel = null;
   let d;
   try{ d = await api("/api/review?path=" + encodeURIComponent(path)); }
-  catch(e){ toast("cannot review this figure: " + e.message); return; }
+  catch(e){ toast("Cannot review this figure: " + e.message, {kind: "err"}); return; }
   RV.rev = d.revision; RV.comments = d.comments; RV.file = d.file;
   $("#vizview").style.display = "none";
   $("#reviewview").style.display = "flex";
-  $("#rvname").textContent = path.split("/").pop();
+  $("#rvname").textContent = baseName(path);
   $("#rvname").title = path;
   $("#rvstale").style.display = d.stale ? "" : "none";
   rvStatus(d.revision ? "saved" : "");
@@ -2123,14 +2890,18 @@ function rvRender(){
         placeholder="What should change here?"></textarea>
       <select title="status">${["open","resolved","wontfix"].map(s =>
         `<option${s === c.status ? " selected" : ""}>${s}</option>`).join("")}</select>
-      <button class="copy" title="delete this comment">✕</button>`;
+      <button class="copy" title="delete this comment" aria-label="Delete comment ${n}">✕</button>`;
     const ta = it.querySelector("textarea");
+    ta.setAttribute("aria-label", `Comment ${n}`);
+    it.querySelector("select").setAttribute("aria-label", `Status of comment ${n}`);
     ta.value = c.text || "";
     ta.onfocus = () => rvSelect(c.id, false);
     ta.oninput = () => { c.text = ta.value; mk.title = c.text; rvDirty(); };
     it.querySelector("select").onchange = e => { c.status = e.target.value; rvDirty(); rvRender(); };
-    it.querySelector("button").onclick = () => {
-      if(c.text && !confirm(`Delete comment ${n}?`)) return;
+    it.querySelector("button").onclick = async () => {
+      if(c.text && !await ask(`Delete comment ${n}?`,
+          `“${c.text.length > 140 ? c.text.slice(0, 140) + "…" : c.text}” will be removed.`,
+          "Delete", true)) return;
       RV.comments = RV.comments.filter(x => x !== c); rvDirty(); rvRender();
     };
     list.appendChild(it);
@@ -2170,7 +2941,8 @@ async function rvFlush(){
     $("#rvstale").style.display = "none";
   }catch(e){
     rvStatus("not saved");
-    toast(e.message + " — your text is still here; copy it before reloading.");
+    toast("Comments not saved: " + e.message + " — your text is still here; copy it before reloading.",
+          {kind: "err"});
   }finally{ RV.busy = false; }
 }
 
@@ -2252,6 +3024,7 @@ function planEmpty(msg, withCreate){
   const b = $("#planbody");
   $("#planbar").style.display = "none";
   $("#plancount").textContent = "";
+  planCounts = null; renderStatus();
   b.innerHTML = `<div class="vizempty">${msg}</div>`;
   if(withCreate && planCwd){
     const btn = document.createElement("button");
@@ -2261,7 +3034,7 @@ function planEmpty(msg, withCreate){
       try{
         const d = await api("/api/plan/create", {cwd: planCwd});
         renderPlan(d);
-      }catch(e){ toast("could not create plan: " + e.message); }
+      }catch(e){ toast("Could not create the plan: " + e.message, {kind: "err"}); }
     };
     b.appendChild(btn);
   }
@@ -2272,9 +3045,11 @@ async function refreshPlan(force){
   if(!planCwd){ planEmpty("Pick a project — its plan shows up here."); return; }
   if(planBusy) return;
   try{
-    const q = "/api/plan?cwd=" + encodeURIComponent(planCwd)
-            + (planFile ? "&file=" + encodeURIComponent(planFile) : "");
+    const cwd = planCwd, file = planFile;
+    const q = "/api/plan?cwd=" + encodeURIComponent(cwd)
+            + (file ? "&file=" + encodeURIComponent(file) : "");
     const d = await api(q);
+    if(cwd !== planCwd || file !== planFile) return;   // switched meanwhile
     // skip a repaint when nothing moved (keeps scroll position stable)
     const stamp = (d.mtime || 0) + ":" + (d.file || "") + ":" + d.done + "/" + d.total;
     if(!force && stamp === planStamp) return;
@@ -2284,7 +3059,9 @@ async function refreshPlan(force){
 }
 
 function renderPlan(d){
-  const body = $("#planbody"); body.innerHTML = "";
+  const body = $("#planbody");
+  const fk = focusedFk(body);            // a tick re-renders: keep the focus on it
+  body.innerHTML = "";
   if(!d.file){
     planEmpty(`No plan file in <code style="font-size:10.5px">${esc(shortHome(d.dir||planCwd))}</code>.<br>
       Looks for <code>.claude/plan.md</code>, <code>quality_reports/plans/*.md</code>,
@@ -2304,6 +3081,7 @@ function renderPlan(d){
   const pct = d.total ? Math.round(100 * d.done / d.total) : 0;
   $("#planbarfill").style.width = pct + "%";
   $("#plancount").textContent = d.total ? `${d.done}/${d.total}` : "no tasks";
+  planCounts = {done: d.done, total: d.total}; renderStatus();
 
   for(const it of d.items){
     if(it.kind === "head"){
@@ -2315,19 +3093,23 @@ function renderPlan(d){
       const t = document.createElement("div");
       t.className = "plan-text"; t.textContent = it.text; body.appendChild(t); continue;
     }
-    const row = document.createElement("div");
+    const row = ctl(document.createElement("div"), "checkbox");
     row.className = "plan-task " + it.state;
+    row.setAttribute("aria-checked", it.state === "done" ? "true" : it.state === "doing" ? "mixed" : "false");
+    row.dataset.fk = "t:" + it.line;
     row.style.marginLeft = (it.depth * 14) + "px";
     row.innerHTML = `<span class="box">${it.state === "done" ? "✓" : it.state === "doing" ? "•" : ""}</span>
                      <span class="lbl"></span>`;
     row.querySelector(".lbl").textContent = it.text;
     row.title = it.state === "done" ? "click to reopen" : "click to tick off";
-    row.onclick = () => togglePlan(row, it, d.file);
+    row.onclick = () => { if(!row.classList.contains("busy")) togglePlan(row, it, d.file); };
     body.appendChild(row);
   }
   if(!d.total) body.appendChild(Object.assign(document.createElement("div"),
     {className: "vizempty", textContent:
       "This file has no checkbox lines yet — add “- [ ] task” lines to it."}));
+  const back = byFk(body, fk) || (fk !== null && body.querySelector(".plan-task"));
+  if(back) back.focus();
 }
 
 async function togglePlan(row, it, file){
@@ -2337,9 +3119,10 @@ async function togglePlan(row, it, file){
     const d = await api("/api/plan/toggle", {cwd: planCwd, file, line: it.line,
                                              expect: it.text, state: next});
     planBusy = false; planStamp = ""; renderPlan(d);
+    announce(`${next === "done" ? "Done" : "Reopened"}: ${it.text}. ${d.done} of ${d.total}.`);
   }catch(e){
     planBusy = false; row.classList.remove("busy");
-    toast(e.message); refreshPlan(true);
+    toast("Could not update the plan: " + e.message, {kind: "err"}); refreshPlan(true);
   }
 }
 
@@ -2389,8 +3172,8 @@ function setPlanProject(cwd){
   refreshPlan(true); refreshImprove();
   if(planView === "config") refreshConfig();
 }
-setInterval(refreshPlan, 4000);
-setInterval(refreshImprove, 30000);
+poll(refreshPlan, 4000);
+poll(refreshImprove, 30000);
 
 /* ---------- click a preview to expand it ----------------------------------
    Sandboxed iframes swallow their own clicks, so a transparent shield sits on
@@ -2399,10 +3182,351 @@ setInterval(refreshImprove, 30000);
 document.querySelectorAll(".shield").forEach(sh => {
   sh.onclick = () => { if(!maxedCell) toggleMax(sh.dataset.cell); };
 });
+// Esc restores a maximized pane — unless something nearer used it first: a
+// dialog, the menu, the search box, or a program running in the terminal
 document.addEventListener("keydown", e => {
-  if(e.key === "Escape" && maxedCell) toggleMax(maxedCell);
+  if(e.key !== "Escape" || !maxedCell || e.defaultPrevented) return;
+  if(document.querySelector("dialog[open]") || document.getElementById("menu")) return;
+  if(e.target.closest && e.target.closest(".xterm")) return;
+  toggleMax(maxedCell);
 });
 
+/* ---------- pane shortcuts: Ctrl+1…5 focus a pane, ⌘⇧M (Ctrl+Shift+M off
+   macOS) maximizes the focused one. Capture phase, so they work from inside
+   the terminal too; digits by physical key (AZERTY has no bare 1–5). */
+const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+const PANES = ["cell-main", "cell-term", "cell-usage", "cell-plan", "cell-viz"];
+function focusPane(id){
+  if(maxedCell && maxedCell !== id) toggleMax(maxedCell);
+  if($("#" + id).closest("#colR")) setRight(true);
+  const t = TM.terms.get(TM.active);
+  const target = {
+    "cell-main": () => $("#main"),
+    "cell-term": () => t ? null : $("#btnClaudeHome"),
+    "cell-usage": () => $("#usagebody"),
+    "cell-plan": () => $('#cell-plan [role="tab"][aria-selected="true"]'),
+    "cell-viz": () => $('#cell-viz [role="tab"][aria-selected="true"]'),
+  }[id]();
+  if(target) target.focus(); else if(t) t.term.focus();
+  fitActive();
+}
+document.addEventListener("keydown", e => {
+  const digit = /^Digit([1-5])$/.exec(e.code);
+  if(digit && e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey){
+    focusPane(PANES[+digit[1] - 1]);
+  } else if(e.shiftKey && !e.altKey && (e.key === "m" || e.key === "M")
+            && (IS_MAC ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey)){
+    const cell = document.activeElement && document.activeElement.closest(".cell");
+    if(!cell) return;
+    toggleMax(cell.id);
+    if(!cell.contains(document.activeElement)) focusPane(cell.id);
+  } else return;
+  e.preventDefault(); e.stopPropagation();
+}, true);
+
+
+/* ---------- palette matching (pure; tests/test_frontend.js) -------------
+   Subsequence fuzzy match: a contiguous hit wins (and a prefix hit most),
+   else characters in order, with bonuses for runs and word starts. The
+   label is escaped one character at a time, THEN the hits are wrapped. */
+function fuzzy(q, s){
+  s = String(s);
+  const lq = String(q || "").toLowerCase(), ls = s.toLowerCase();
+  if(!lq) return {score: 0, html: esc(s)};
+  let marks = [], score = 0;
+  const at = ls.indexOf(lq);
+  if(at >= 0){
+    for(let j = at; j < at + lq.length; j++) marks.push(j);
+    score = 100 + (at === 0 ? 50 : /[\s\/·:_.-]/.test(s[at - 1]) ? 20 : 0) - Math.min(at, 30);
+  } else {
+    let i = 0, last = -2;
+    for(let j = 0; j < s.length && i < lq.length; j++){
+      if(ls[j] !== lq[i]) continue;
+      score += (j === last + 1 ? 3 : 1) + (j === 0 || /[\s\/·:_.-]/.test(s[j - 1]) ? 2 : 0);
+      marks.push(j); last = j; i++;
+    }
+    if(i < lq.length) return null;
+  }
+  let html = "", k = 0;
+  for(let j = 0; j < s.length; j++){
+    const c = esc(s[j]);
+    if(marks[k] === j){ html += "<mark>" + c + "</mark>"; k++; } else html += c;
+  }
+  return {score, html};
+}
+// best 50: score, then most recent, then the registry's own order
+function rankItems(items, q, max){
+  const out = [];
+  items.forEach((it, i) => {
+    const m = fuzzy(q, it.label);
+    if(m) out.push(Object.assign({}, it, {html: m.html, score: m.score, i}));
+  });
+  out.sort((a, b) => (b.score - a.score) || ((b.mtime || 0) - (a.mtime || 0)) || (a.i - b.i));
+  return out.slice(0, max || 50);
+}
+
+/* ---------- palette UI (DES-3) ---------------------------------------------
+   ⌘K (Ctrl+K elsewhere) opens it, also from inside the terminal; ⌘P opens
+   it on sessions. Prefixes: > actions, @ sessions, # transcript search,
+   / files in the Files folder. APG combobox + listbox: focus stays in the
+   input, aria-activedescendant names the selected option. */
+const K = s => IS_MAC ? s : s.replace(/⌘/g, "Ctrl+").replace(/⇧/g, "Shift+").replace(/⌃/g, "Ctrl+").replace(/⌥/g, "Alt+");
+const PANE_NAMES = ["Session", "Terminal", "Usage", "Plan", "Viz"];
+const CP = {items: [], sel: 0, prev: null, ran: false, fs: null, hits: null, hitsQ: "", timer: null, seq: 0};
+
+// the app's global keys: intercepted even while xterm has focus. Off macOS
+// Ctrl+P stays with the shell there (history), and Ctrl+K is ours.
+function isGlobalKey(e, inTerm){
+  if(e.type !== "keydown" || e.altKey) return false;
+  if(!(IS_MAC ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey)) return false;
+  const k = (e.key || "").toLowerCase();
+  if(!e.shiftKey && k === "k") return true;
+  if(!e.shiftKey && k === "p") return IS_MAC || !inTerm;
+  return e.shiftKey && (k === "f" || k === "o");
+}
+document.addEventListener("keydown", e => {
+  if(!isGlobalKey(e, !!(e.target.closest && e.target.closest(".xterm")))) return;
+  e.preventDefault(); e.stopPropagation();
+  const k = e.key.toLowerCase();
+  openPalette(k === "p" ? "@" : k === "f" ? "#" : k === "o" ? "/" : "");
+}, true);
+// ? opens the shortcut sheet (not while typing, nor in the terminal)
+document.addEventListener("keydown", e => {
+  if(e.key !== "?" || e.ctrlKey || e.metaKey || e.altKey) return;
+  if(e.target.closest && e.target.closest("input, textarea, select, [contenteditable], .xterm, dialog")) return;
+  e.preventDefault(); openKeys();
+});
+
+function cpActions(){
+  const A = [];
+  const add = (label, run, keys, keep) => A.push({group: "Action", label, run, keys: keys || "", keep});
+  const pj = state.openProject, pn = pj && (projName(pj) || pj);
+  if(pj) add(`New claude terminal in ${pn}`, () => openTerm("claude", {project: pj, label: "claude · " + pn}));
+  add("New claude terminal in home folder", () => openTerm("claude", {label: "claude · ~"}));
+  add("New shell", () => openTerm("shell", {label: "shell · ~"}));
+  if(state.active){
+    const [slug, id] = state.active.split("/");
+    add("Resume current session in CLI", () => openTerm("resume",
+      {project: slug, session: id, label: "resume · " + (projName(slug) || id.slice(0, 8))}));
+  }
+  PANES.forEach((id, i) => add(`Focus ${PANE_NAMES[i]} pane`, () => focusPane(id), K("⌃" + (i + 1))));
+  add(maxedCell ? "Restore all panes" : "Maximize focused pane", () => {
+    const c = CP.prev && CP.prev.closest && CP.prev.closest(".cell");
+    toggleMax(maxedCell || (c ? c.id : "cell-main"));
+  }, K("⌘⇧M"));
+  add("Show Plan", () => { setRight(true); planTab("plan"); focusPane("cell-plan"); });
+  add("Show Config", () => { setRight(true); planTab("config"); focusPane("cell-plan"); });
+  add("Show Viz", () => { setRight(true); vizTab("viz"); focusPane("cell-viz"); });
+  add("Show Files", () => { setRight(true); vizTab("files"); focusPane("cell-viz"); });
+  add("Toggle right column", () => $("#btnRight").click());
+  add("Toggle session header", toggleHeader);
+  add("Open add-ons", () => openAddons());
+  if(lastSearch) add(`Re-run search “${lastSearch.q}”`, () => runSearch(lastSearch.q, lastSearch.project));
+  add("Go to session…", () => cpSet("@"), K("⌘P"), true);
+  add("Search transcripts…", () => cpSet("#"), K("⌘⇧F"), true);
+  add("Go to file in current folder…", () => cpSet("/"), K("⌘⇧O"), true);
+  add("Keyboard shortcuts", openKeys, "?");
+  for(const n of Object.keys(THEMES))
+    A.push({group: "Theme", label: "Theme: " + n, run: () => { applyTheme(n); announce("Theme: " + n); }});
+  return A;
+}
+function cpSessions(){
+  const out = [];
+  for(const [slug, list] of Object.entries(state.sessions))
+    for(const x of list || []) out.push({group: "Session", mtime: x.mtime,
+      label: (cleanTitle(x.title) || "(untitled session)") + " · " + (projName(slug) || slug),
+      run: async () => { if(state.openProject !== slug) await toggleProject(slug); openSession(slug, x.id); }});
+  return out;
+}
+function cpProjects(){
+  return (state.projects || []).map(p => ({group: "Project", mtime: p.mtime,
+    label: pathParts(p.path).slice(-2).join("/") || p.path,
+    run: async () => { if(state.openProject !== p.slug) await toggleProject(p.slug);
+                       const el = $("#tree .proj.open"); if(el) el.focus(); }}));
+}
+async function cpLoadFiles(){
+  const path = fsPath;
+  if(CP.fs && CP.fs.want === path) return;
+  CP.fs = {want: path, entries: null};
+  try{
+    const d = await api("/api/fs" + (path ? "?path=" + encodeURIComponent(path) : ""));
+    if(CP.fs.want !== path) return;
+    CP.fs.path = d.path; CP.fs.entries = d.entries;
+  }catch(e){ CP.fs.error = e.message; }
+  if($("#cp").open) cpRender();
+}
+function cpFiles(){
+  if(!CP.fs || !CP.fs.entries) return [];
+  const dir = CP.fs.path;
+  return CP.fs.entries.map(e => ({group: e.dir ? "Folder" : "File", label: e.name, mtime: e.mtime,
+    run: async () => {
+      const full = joinPath(dir, e.name);
+      setRight(true); vizTab("files");
+      if(e.dir){ await loadFs(full); focusPane("cell-viz"); return; }
+      await loadFs(dir);
+      if(!e.viewable){ copyText(full, "the path (no preview for this file type)").catch(() => {}); return; }
+      ensureCookie();
+      setPreview("#fsframe", "#fspdf", "/api/fs/file?path=" + encodeURIComponent(full) + "&t=" + (e.mtime || 0),
+                 isPdfName(e.name), !/\.(html?|pdf)$/i.test(e.name));
+    }}));
+}
+// # mode: the open project's matches, live (debounced), plus the full views
+function cpSearch(q){
+  const pj = state.openProject, where = pj ? (projName(pj) || pj) : null;
+  const items = [];
+  if(q.length >= 2){
+    if(pj) items.push({group: "Search", label: `Search “${q}” in ${where}`, html: `Search “${esc(q)}” in ${esc(where)}`,
+                       run: () => runSearch(q, pj)});
+    items.push({group: "Search", label: `Search all projects for “${q}”`, html: `Search all projects for “${esc(q)}”`,
+                run: () => runSearch(q, null)});
+  }
+  if(CP.hitsQ === q && CP.hits) for(const r of CP.hits.slice(0, 50)){
+    const snip = String(r.snippet || "").replace(/\s+/g, " ").slice(0, 160);
+    const m = fuzzy(q, snip);
+    items.push({group: r.agent ? "🤖 " + r.agent.replace(/^agent-|\.jsonl$/g, "") : "Match",
+                label: snip, html: m ? m.html : esc(snip),
+                meta: (projName(r.project) || r.project) + " / " + r.session.slice(0, 8),
+                run: () => openSearchHit(r, q)});
+  }
+  if(q.length >= 2 && CP.hitsQ !== q){
+    clearTimeout(CP.timer);
+    const my = ++CP.seq;
+    CP.timer = setTimeout(async () => {
+      try{
+        const res = await api("/api/search?q=" + encodeURIComponent(q) + (pj ? "&project=" + encodeURIComponent(pj) : ""));
+        if(my !== CP.seq) return;
+        CP.hits = res; CP.hitsQ = q;
+        if($("#cp").open) cpRender();
+      }catch(e){ /* the full search reports errors */ }
+    }, 350);
+  }
+  return items;
+}
+function cpRender(){
+  const raw = $("#cpin").value;
+  const mode = /^[>@#\/]/.test(raw) ? raw[0] : "";
+  const q = (mode ? raw.slice(1) : raw).trim();
+  if(mode === "/") cpLoadFiles();
+  CP.items = mode === "#" ? cpSearch(q)
+    : rankItems(mode === ">" ? cpActions() : mode === "@" ? cpSessions() : mode === "/" ? cpFiles()
+                : [...cpActions(), ...cpSessions(), ...cpProjects()], q);
+  CP.sel = Math.max(0, Math.min(CP.sel, CP.items.length - 1));
+  const ul = $("#cplist"); ul.innerHTML = "";
+  CP.items.forEach((it, i) => {
+    const li = document.createElement("li");
+    li.className = "cpi"; li.id = "cp-" + i;
+    li.setAttribute("role", "option");
+    li.setAttribute("aria-selected", i === CP.sel);
+    li.innerHTML = `<span class="x">${it.html}</span>${it.meta ? `<span class="g">${esc(it.meta)}</span>` : ""}`
+      + `<span class="g">${esc(it.group)}</span>${it.keys ? `<kbd>${esc(it.keys)}</kbd>` : ""}`;
+    li.onmousemove = () => { if(CP.sel !== i) cpSelect(i); };
+    li.onclick = () => cpRun(i);
+    ul.appendChild(li);
+  });
+  if(!CP.items.length){
+    const li = document.createElement("li");
+    li.className = "cpempty"; li.setAttribute("role", "presentation");
+    li.textContent = mode === "#" ? (q.length < 2 ? "Type at least 2 characters to search transcripts." : "Searching…")
+      : mode === "/" ? (CP.fs && CP.fs.error ? "Could not list the folder: " + CP.fs.error : CP.fs && !CP.fs.entries ? "Listing…" : "No file matches.")
+      : mode === "@" && !Object.keys(state.sessions).length ? "Open a project to list its sessions."
+      : "No match. Start with # to search inside transcripts.";
+    ul.appendChild(li);
+  }
+  $("#cpin").setAttribute("aria-activedescendant", CP.items.length ? "cp-" + CP.sel : "");
+}
+function cpSelect(i){
+  const n = CP.items.length;
+  if(!n) return;
+  CP.sel = (i + n) % n;
+  $("#cplist").querySelectorAll(".cpi").forEach((li, j) => li.setAttribute("aria-selected", j === CP.sel));
+  $("#cpin").setAttribute("aria-activedescendant", "cp-" + CP.sel);
+  const el = $("#cp-" + CP.sel); if(el) el.scrollIntoView({block: "nearest"});
+}
+function cpRun(i){
+  const it = CP.items[i];
+  if(!it) return;
+  if(!it.keep){ CP.ran = true; $("#cp").close(); }
+  Promise.resolve().then(it.run).catch(e => toast(e.message, {kind: "err"}));
+}
+function cpSet(prefix){
+  const inp = $("#cpin");
+  inp.value = prefix; CP.sel = 0; cpRender(); inp.focus();
+}
+function openPalette(prefix){
+  const d = $("#cp");
+  if(!d.open){ CP.prev = document.activeElement; CP.ran = false; CP.fs = null; closeMenu(); showDialog(d); }
+  cpSet(prefix || "");
+}
+$("#cpin").addEventListener("input", () => { CP.sel = 0; cpRender(); });
+$("#cpin").addEventListener("keydown", e => {
+  if(e.key === "ArrowDown" || e.key === "ArrowUp"){ e.preventDefault(); cpSelect(CP.sel + (e.key === "ArrowDown" ? 1 : -1)); }
+  else if(e.key === "PageDown" || e.key === "PageUp"){ e.preventDefault(); cpSelect(e.key === "PageDown" ? CP.items.length - 1 : 0); }
+  else if(e.key === "Enter"){ e.preventDefault(); cpRun(CP.sel); }
+});
+modal($("#cp"));
+// Esc / backdrop: focus goes back where it was; a run action places it itself
+$("#cp").addEventListener("close", () => {
+  if(!CP.ran && CP.prev && CP.prev.isConnected) CP.prev.focus();
+  CP.ran = false; clearTimeout(CP.timer); CP.seq++;
+});
+
+/* the shortcut sheet reads the palette's registry, so the two agree */
+function openKeys(){
+  const rows = [[K("⌘K"), "Command palette"]]
+    .concat(cpActions().filter(a => a.keys && a.keys !== "?").map(a => [a.keys, a.label]))
+    .concat([["?", "This sheet"], ["Esc", "Close an overlay, then restore a maximized pane"],
+             ["↑ ↓ → ← Enter", "Move in the sidebar tree; c starts claude in a project"],
+             ["Delete", "Close the focused terminal tab"]]);
+  $("#keystable").innerHTML = rows.map(([k, l]) => `<tr><td><kbd>${esc(k)}</kbd></td><td>${esc(l)}</td></tr>`).join("");
+  showDialog($("#keys"));
+  $("#keysclose").focus();
+}
+modal($("#keys"));
+$("#keysclose").onclick = () => $("#keys").close();
+
+/* ---------- status bar (DES-5) --------------------------------------------- */
+let planCounts = null, connOk = null;
+function setConn(ok){
+  if(ok === connOk) return;
+  connOk = ok;
+  $("#statusbar").classList.toggle("off", !ok);
+  $("#sbConnT").textContent = ok ? "connected" : "offline";
+}
+function renderStatus(){
+  const pj = state.openProject;
+  $("#sbProj").textContent = "⌂ " + (pj ? (projName(pj) || pj) : planCwd ? baseName(planCwd) : "no project");
+  const t = TM.terms.get(TM.active);
+  $("#sbTerm").textContent = t ? `⌨ ${t.label}${TM.terms.size > 1 ? ` (${TM.terms.size} tabs)` : ""}` : "⌨ no terminal";
+  $("#sbPlan").textContent = planCounts && planCounts.total ? `✓ ${planCounts.done}/${planCounts.total}` : "✓ –";
+  const u = lastUsage, o = u && u.official, f = o && o.five_hour, b = u && u.block, nowS = Date.now() / 1000;
+  $("#sbUsage").textContent =
+      f && f.used_percentage != null ? `⚡ 5h ${Math.round(f.used_percentage)}%${f.resets_at ? " · " + fmtCountdown(f.resets_at - nowS) : ""}`
+    : b && u.baseline && u.baseline.p90 ? `⚡ ${fmtTok(b.output)} · ${Math.round(b.output / u.baseline.p90 * 100)}% of P90 · ${fmtCountdown(b.end - u.generated)}`
+    : "⚡ idle";
+  $("#sbViz").textContent = "👁 " + (shortHome(vizDir) || "viz");
+}
+$("#sbKeys").textContent = K("⌘K");
+$("#sbKeys").title = `Command palette (${K("⌘K")}) · shortcuts: ?`;
+$("#sbKeys").onclick = () => openPalette("");
+$("#sbProj").onclick = () => {
+  const el = $("#tree .proj.open") || $("#tree [tabindex='0']") || $("#search");
+  el.focus();
+};
+$("#sbTerm").onclick = () => focusPane("cell-term");
+$("#sbPlan").onclick = () => { setRight(true); planTab("plan"); focusPane("cell-plan"); };
+$("#sbUsage").onclick = () => focusPane("cell-usage");
+$("#sbViz").onclick = () => { setRight(true); vizTab("files"); if(vizDir) loadFs(vizDir); focusPane("cell-viz"); };
+$("#sbConn").onclick = async () => {
+  try{
+    const h = await api("/api/health");
+    const n = Array.isArray(h.terminals) ? h.terminals.length : h.terminals;
+    toast(`Server ${h.version} · up ${fmtDur(h.uptime_s)} · ${n} terminal(s) · ${(h.recent_errors || []).length} recent error(s)`,
+          {action: {label: "Copy", run: () => copyText(JSON.stringify(h, null, 2), "the diagnostics").catch(() => {})}});
+  }catch(e){ toast("The server is not answering: " + e.message, {kind: "err"}); }
+};
+$("#search").title = `Filter projects; Enter searches transcripts (the open project first) · ${K("⌘K")} command palette`;
+document.querySelectorAll(".maxbtn").forEach(b => b.title = `maximize / restore (${K("⌘⇧M")})`);
+$("#btnTerm").title = `open a terminal (${K("⌃2")} focuses it)`;
 
 /* ---------- config inventory (⚙ Config tab) -------------------------------
    What is installed in ~/.claude, and what it costs you in context. The split
@@ -2418,8 +3542,7 @@ const cfgIsOpen = (gid, key) => gid in cfgOpen ? !!cfgOpen[gid] : cfgOpenDefault
 
 function planTab(view){
   planView = view;
-  document.querySelectorAll(".ptab").forEach(t =>
-    t.classList.toggle("active", t.dataset.view === view));
+  setTabs(".ptab", view);
   $("#planbody").style.display   = view === "plan"   ? "" : "none";
   $("#configbody").style.display = view === "config" ? "" : "none";
   $("#planbar").style.display = (view === "plan" && planFile) ? "flex" : "none";
@@ -2449,7 +3572,8 @@ async function refreshConfig(){
     box.appendChild(note);
     $("#plancount").textContent = fmtTokShort(d.user.resident) + " resident";
   }catch(e){
-    box.innerHTML = `<div class="vizempty">${esc(e.message)}</div>`;
+    showState(box, "error", "Could not read the config: " + e.message,
+              {label: "Retry", run: refreshConfig});
   }
 }
 
@@ -2463,8 +3587,9 @@ function renderConfigSide(box, inv, label){
 
   for(const g of inv.groups){
     const gid = label + ":" + g.key;
-    const gh = document.createElement("div");
+    const gh = ctl(document.createElement("div"));
     gh.className = "cfggroup";
+    gh.setAttribute("aria-expanded", cfgIsOpen(gid, g.key));
     const res = g.items.reduce((a, i) => a + i.resident, 0);
     gh.innerHTML = `<span>${cfgIsOpen(gid, g.key) ? "▾" : "▸"} ${esc(g.label)}</span>
       <span class="n">${g.items.length}</span>
@@ -2484,7 +3609,7 @@ function renderConfigSide(box, inv, label){
         (it.event ? it.event + " · " : "") + (it.description || "");
       row.title = (it.path || it.name) + (it.bytes ? "\n" + fmtBytes(it.bytes) : "")
                 + (it.always ? "\nloaded on every turn" : "\nloaded on demand");
-      if(it.path) row.onclick = async () => {
+      if(it.path) ctl(row).onclick = async () => {
         vizTab("files");
         await loadFs(it.path.replace(/\/[^\/]+$/, ""));
         ensureCookie();
@@ -2499,39 +3624,55 @@ function renderConfigSide(box, inv, label){
       cfgOpen[gid] = !cfgIsOpen(gid, g.key);
       localStorage.setItem("cdl-cfgopen", JSON.stringify(cfgOpen));
       wrap.style.display = cfgOpen[gid] ? "" : "none";
+      gh.setAttribute("aria-expanded", !!cfgOpen[gid]);
       gh.firstElementChild.textContent = (cfgOpen[gid] ? "▾ " : "▸ ") + g.label;
     };
   }
 }
 
-$("#btnRight").onclick = () => { $("#workspace").classList.toggle("noright"); fitActive(); };
-if(window.innerWidth < 900) $("#workspace").classList.add("noright");
+function setRight(on){
+  $("#workspace").classList.toggle("noright", !on);
+  $("#btnRight").setAttribute("aria-pressed", on);
+  fitActive();
+}
+$("#btnRight").onclick = () => setRight($("#workspace").classList.contains("noright"));
+if(window.innerWidth < 900) setRight(false);
 
 /* ---------- file explorer (Files tab, RStudio-style) ---------- */
 let fsPath = null;        // current explorer dir; follows the selected project
 let fsHome = "";
 function vizTab(view){
-  document.querySelectorAll(".vtab").forEach(v =>
-    v.classList.toggle("active", v.dataset.view === view));
+  setTabs(".vtab", view);
   $("#vizview").style.display = view === "viz" ? "flex" : "none";
   $("#filesview").style.display = view === "files" ? "flex" : "none";
   if(view === "files") loadFs(fsPath);
 }
 document.querySelectorAll(".vtab").forEach(v => v.onclick = () => vizTab(v.dataset.view));
-// span tabs answer Enter/Space like buttons do
-document.querySelectorAll('[role="tab"]').forEach(t => t.addEventListener("keydown", e => {
-  if(e.key === "Enter" || e.key === " "){ e.preventDefault(); t.click(); }
-}));
+// Backspace in the explorer goes up a level, as in a file manager
+$("#filesview").addEventListener("keydown", e => {
+  if(e.key !== "Backspace" || e.target.matches("input,textarea,select")) return;
+  const up = $("#fsup");
+  if(up){ e.preventDefault(); up.click(); }
+});
 
 async function loadFs(path){
+  const my = ++fsSeq;
+  // a folder opened from the keyboard keeps the focus in the explorer
+  const hadFocus = $("#filesview").contains(document.activeElement);
+  const focusId = hadFocus && document.activeElement.id;
   let d;
   try{ d = await api("/api/fs" + (path ? "?path=" + encodeURIComponent(path) : "")); }
-  catch(e){ $("#fslist").innerHTML = `<div class="vizempty">${esc(e.message)}</div>`; return; }
+  catch(e){
+    if(my === fsSeq) showState($("#fslist"), "error", "Could not list this folder: " + e.message,
+                               {label: "Retry", run: () => loadFs(path)});
+    return;
+  }
+  if(my !== fsSeq) return;
   fsPath = d.path; fsHome = d.home;
   const crumb = $("#fscrumb"); crumb.innerHTML = "";
   const short = d.path === d.home ? "~" : "~" + d.path.slice(d.home.length);
   crumb.innerHTML = `
-    ${d.parent ? '<a id="fsup" title="up one level">⬑ up</a> · ' : ''}
+    ${d.parent ? '<a id="fsup" role="button" tabindex="0" title="up one level (Backspace)">⬑ up</a> · ' : ''}
     <span style="font-family:var(--mono);overflow:hidden;text-overflow:ellipsis">${esc(short)}</span>
     <span style="margin-left:auto;display:flex;gap:5px">
       <button class="copy" id="fsclaude" title="start a claude session in this folder">⌨ claude here</button>
@@ -2540,11 +3681,11 @@ async function loadFs(path){
       <button class="copy" id="fscopy" title="copy folder path">copy</button>
     </span>`;
   if(d.parent) crumb.querySelector("#fsup").onclick = () => loadFs(d.parent);
-  crumb.querySelector("#fscopy").onclick = () => navigator.clipboard.writeText(d.path);
+  crumb.querySelector("#fscopy").onclick = () => copyText(d.path, "the folder path").catch(() => {});
   crumb.querySelector("#fsshell").onclick = () =>
-    openTerm("shell", {cwd: d.path, label: "shell · " + d.path.split("/").pop()});
+    openTerm("shell", {cwd: d.path, label: "shell · " + baseName(d.path)});
   crumb.querySelector("#fsclaude").onclick = () =>
-    openTerm("claude", {cwd: d.path, label: "claude · " + d.path.split("/").pop()});
+    openTerm("claude", {cwd: d.path, label: "claude · " + baseName(d.path)});
   const watching = vizOverride() === d.path;
   const wbtn = crumb.querySelector("#fswatch");
   if(watching){ wbtn.textContent = "👁 watching ✓"; wbtn.style.color = "var(--ok)"; }
@@ -2557,16 +3698,18 @@ async function loadFs(path){
   const list = $("#fslist"); list.innerHTML = "";
   if(!d.entries.length) list.innerHTML = `<div class="vizempty">(empty folder)</div>`;
   for(const e of d.entries){
-    const full = d.path + "/" + e.name;
+    const full = joinPath(d.path, e.name);
     const row = document.createElement("div"); row.className = "fsrow";
-    row.innerHTML = `<span>${e.dir ? "📁" : "📄"}</span>
+    row.innerHTML = `<span aria-hidden="true">${e.dir ? "📁" : "📄"}</span>
       <span class="fname" title="${esc(full)}">${esc(e.name)}</span>
-      <span class="fact" data-a="copy" title="copy full path">copy</span>
-      <span class="fact" data-a="cli" title="paste path into the terminal">→ CLI</span>
+      <button class="fact" data-a="copy" title="copy full path" aria-label="Copy the path of ${esc(e.name)}">copy</button>
+      <button class="fact" data-a="cli" title="paste path into the terminal" aria-label="Paste the path of ${esc(e.name)} into the terminal">→ CLI</button>
       ${e.dir ? "" : `<span class="fmeta">${fmtBytes(e.size)}</span>`}`;
+    ctl(row.querySelector(".fname"), "button",
+        (e.dir ? "Folder " : "File ") + e.name + (e.dir || e.viewable ? "" : " (no preview: copies its path)"));
     row.onclick = () => {
       if(e.dir){ loadFs(full); return; }
-      if(!e.viewable){ navigator.clipboard.writeText(full); return; }
+      if(!e.viewable){ copyText(full, "the path (no preview for this file type)").catch(() => {}); return; }
       ensureCookie();
       setPreview("#fsframe", "#fspdf",
                  "/api/fs/file?path=" + encodeURIComponent(full)
@@ -2574,29 +3717,16 @@ async function loadFs(path){
                  isPdfName(e.name), !/\.(html?|pdf)$/i.test(e.name));
     };
     row.querySelector('[data-a="copy"]').onclick = ev => { ev.stopPropagation();
-      navigator.clipboard.writeText(full); };
+      copyText(full, "the path").catch(() => {}); };
     row.querySelector('[data-a="cli"]').onclick = ev => { ev.stopPropagation();
-      termInsert(JSON.stringify(full).slice(1,-1) + " ", d.path); };
+      termInsert(shQuote(full) + " ", d.path); };
     list.appendChild(row);
   }
   clearPreview("#fsframe", "#fspdf");
-}
-
-/* ---------- toasts for background project activity ---------- */
-function toast(msg, onclick){
-  let box = $("#toasts");
-  if(!box){
-    box = document.createElement("div"); box.id = "toasts";
-    box.style.cssText = "position:fixed;right:14px;bottom:14px;z-index:99;display:flex;flex-direction:column;gap:8px";
-    document.body.appendChild(box);
+  if(hadFocus){
+    const back = (focusId && document.getElementById(focusId)) || list.querySelector(".fname") || $("#fsup");
+    if(back) back.focus();
   }
-  const t = document.createElement("div");
-  t.style.cssText = "background:var(--panel);border:1px solid var(--ok);border-radius:8px;"+
-    "padding:8px 14px;font-size:12.5px;cursor:pointer;box-shadow:0 4px 16px var(--shadow)";
-  t.textContent = msg;
-  t.onclick = () => { if(onclick) onclick(); t.remove(); };
-  box.appendChild(t);
-  setTimeout(() => t.remove(), 8000);
 }
 
 /* ---------- optional add-ons (🧩) ----------------------------------------
@@ -2618,7 +3748,8 @@ async function loadAddons(){
     const d = await api("/api/addons");
     AD.list = d.addons; AD.platform = d.platform; AD.os = d.os;
     AD.pre = d.prerequisites || {};
-  }catch(e){ AD.list = []; }
+    AD.error = null;
+  }catch(e){ AD.list = []; AD.error = e.message; }
   return AD.list;
 }
 const missingIds = () => AD.list.filter(a => !a.installed).map(a => a.id).sort().join(",");
@@ -2728,13 +3859,15 @@ function renderAddonCmds(){
 
 async function openAddons(preselect){
   await loadAddons();
+  if(AD.error) toast("Could not read the add-ons list: " + AD.error, {kind: "err"});
   if(!AD.busy) AD.picked = new Set(preselect ? [preselect]
     : AD.list.filter(a => !a.installed && a.used_by_app).map(a => a.id));
   $("#adquiet").checked = localStorage.getItem("cdl-addons-quiet") === missingIds();
   renderAddons();
-  $("#addons").classList.add("open");
+  showDialog($("#addons"));                // modal: Tab stays inside, Esc closes
   clearInterval(AD.timer);                 // pick up installs as they finish
   AD.timer = setInterval(async () => {
+    if(document.hidden) return;
     const snap = () => AD.list.map(a => a.installed).join() + "|" +
                        Object.values(AD.pre).map(p => p.installed).join();
     const before = snap();
@@ -2743,13 +3876,11 @@ async function openAddons(preselect){
   }, 4000);
   $("#adgo").focus();
 }
-function closeAddons(){
-  $("#addons").classList.remove("open");
-  clearInterval(AD.timer); AD.timer = null;
-}
+function closeAddons(){ if($("#addons").open) $("#addons").close(); }
+// every way out (button, Esc, backdrop) ends in "close"
+$("#addons").addEventListener("close", () => { clearInterval(AD.timer); AD.timer = null; });
 $("#adclose").onclick = closeAddons;
-$("#addons").addEventListener("mousedown", e => { if(e.target.id === "addons") closeAddons(); });
-$("#addons").addEventListener("keydown", e => { if(e.key === "Escape"){ e.stopPropagation(); closeAddons(); } });
+modal($("#addons"));
 $("#adquiet").onchange = e => {
   if(e.target.checked) localStorage.setItem("cdl-addons-quiet", missingIds());
   else localStorage.removeItem("cdl-addons-quiet");
@@ -2762,9 +3893,7 @@ async function runInNewShell(label, lines){
   await openTerm("shell", {label});
   const t = TM.terms.get(TM.active);
   if(!t || t.label !== label) return false;   // spawn failed; openTerm said why
-  await fetch("/api/term/input", {method: "POST",
-    headers: authHeaders({"Content-Type": "application/json"}),
-    body: JSON.stringify({id: t.id, data: strToB64(lines.join("\r") + "\r")})});
+  await sendInput(t, lines.join("\r") + "\r");
   return true;
 }
 async function waitFor(cond, ms){
@@ -2791,7 +3920,8 @@ async function runInstallRounds(){
       const preNow = chain.filter(k => AD.pre[k].needs.every(n => AD.pre[n] && AD.pre[n].installed));
       const addNow = addons.filter(a => a.missing_needs.length === 0);
       if(!preNow.length && !addNow.length){
-        toast("Some prerequisites weren't found: finish them in the terminal, then click Install again.");
+        toast("Some prerequisites weren't found: finish them in the terminal, then click Install again.",
+              {kind: "warn"});
         break;
       }
       const lines = [...preNow.map(preLine), ...addNow.map(addonLine)];
@@ -2807,13 +3937,14 @@ async function runInstallRounds(){
       const ok = await waitFor(() => preNow.every(k => AD.pre[k] && AD.pre[k].installed), 15 * 60e3);
       if(!ok){
         toast("Still waiting for " + preNow.map(k => AD.pre[k].name).join(", ")
-              + " — finish it in the terminal (it may be asking a question), then click Install again.");
+              + " — finish it in the terminal (it may be asking a question), then click Install again.",
+              {kind: "warn"});
         break;
       }
     }
   }finally{
     AD.busy = false; AD.picked = new Set([...todo]);
-    if($("#addons").classList.contains("open")) renderAddons();
+    if($("#addons").open) renderAddons();
   }
 }
 $("#adgo").onclick = () => { if(!AD.busy && AD.picked.size) runInstallRounds(); };
@@ -2824,27 +3955,66 @@ loadAddons().then(() => {
 });
 
 /* ---------- polling ---------- */
-let prevMtimes = null;
-setInterval(async () => {   // badges + activity toasts
+let prevMtimes = null, treeStamp = "";
+// the tree repaints only when what it shows changed (keeps focus and scroll)
+const dataStamp = (...parts) => JSON.stringify(parts);
+poll(async () => {   // badges + activity toasts
   try{
     state.projects = await api("/api/projects");
     if(prevMtimes){
       for(const p of state.projects){
         const was = prevMtimes[p.slug];
         if(was && p.mtime > was + 1 && p.slug !== state.openProject){
-          const name = p.path.split("/").pop();
-          toast(`● new activity in ${name}`, () => toggleProject(p.slug));
+          const name = baseName(p.path);
+          toast(`● new activity in ${name}`, {onclick: () => toggleProject(p.slug),
+                action: {label: "Open", run: () => toggleProject(p.slug)}});
         }
       }
     }
+    // the open project changed (a new or growing session): refresh its list,
+    // or sessions started from the embedded terminal never show up
+    const open = state.projects.find(p => p.slug === state.openProject);
+    if(open && prevMtimes && open.mtime !== prevMtimes[open.slug])
+      state.sessions[open.slug] = await api("/api/sessions?project=" + encodeURIComponent(open.slug));
     prevMtimes = Object.fromEntries(state.projects.map(p => [p.slug, p.mtime]));
-    renderTree();
+    const st = dataStamp(state.projects, state.sessions[state.openProject] || null);
+    if(st !== treeStamp){ treeStamp = st; renderTree(); }
   }catch(e){}
 }, 30000);
-setInterval(refreshUsage, 60000);
-setInterval(refreshViz, 5000);
+poll(refreshUsage, 60000);
+poll(refreshViz, 5000);
+
+/* hook events (the "Live activity" add-on). Not installed → enabled:false,
+   and this stays silent. since=-1 first: start at the live end. */
+async function pollEvents(){
+  let r;
+  try{ r = await api("/api/events?since=" + EV.offset); }catch(e){ return; }
+  EV.enabled = r.enabled;
+  EV.offset = r.enabled ? r.offset : -1;
+  if(!r.events.length) return;
+  const {now, alerts} = applyEvents(EV.now, r.events);
+  const changed = JSON.stringify(now) !== JSON.stringify(EV.now);
+  EV.now = now;
+  if(changed) renderTree();
+  alerts.forEach(waitingToast);
+}
+function waitingToast(e){
+  const key = e.session_id || e.cwd, t0 = Date.now();
+  if(EV.alerted[key] > t0 - 15000) return;          // one toast per wait
+  EV.alerted[key] = t0;
+  const p = projectForCwd(state.projects, e.cwd);
+  const name = baseName(p ? p.path : e.cwd) || "A session";
+  const term = [...TM.terms.values()].find(t => !t.dead && t.cwd && normPath(t.cwd) === normPath(e.cwd));
+  const run = term ? () => { focusPane("cell-term"); activateTerm(term.id); }
+            : p ? () => { if(state.openProject !== p.slug) toggleProject(p.slug); } : null;
+  toast(`${name} is waiting for you`,
+        {kind: "warn", action: run ? {label: term ? "Go to terminal" : "Open", run} : undefined});
+}
+poll(pollEvents, 3000);
+pollEvents();
 refreshUsage(); refreshViz(); refreshPlan(true);
 
+reattachTerms();
 loadProjects().then(restoreFromHash).catch(e => {
   const isAuth = /token/i.test(e.message);
   $("#tree").innerHTML = `<div class="placeholder" style="padding:30px 16px;text-align:left">

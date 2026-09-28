@@ -19,7 +19,6 @@ if [ ! -f "$SERVER" ]; then
   exit 1
 fi
 
-TOKENFILE="${XDG_CONFIG_HOME:-$HOME/.config}/claude-devtools/token"
 LOGDIR="${XDG_STATE_HOME:-$HOME/.local/state}"
 mkdir -p "$LOGDIR"
 LOG="$LOGDIR/claude-devtools.log"
@@ -31,16 +30,19 @@ if [ -z "$PY" ]; then
 fi
 
 if ! curl -s -m 1 -o /dev/null "$URL/"; then
-  nohup "$PY" "$SERVER" --port "$PORT" >> "$LOG" 2>&1 &
+  # the log is private: umask 077 makes a new log file 0600
+  ( umask 077; nohup "$PY" "$SERVER" --port "$PORT" > "$LOG" 2>&1 & )   # fresh per start; the server rotates its own log
   for _ in $(seq 1 40); do
     curl -s -m 1 -o /dev/null "$URL/" && break
     sleep 0.25
   done
 fi
 
-TOKEN="$(cat "$TOKENFILE" 2>/dev/null)"
-TARGET="$URL/launch?k=$TOKEN"
+chmod 600 "$LOG" 2>/dev/null
 [ -n "${CDL_NO_OPEN:-}" ] && exit 0
+# a one-time login URL (60 s): the token itself never reaches the browser's
+# argv; the helper also refuses a server that doesn't hold our token
+TARGET="$("$PY" "$SERVER" --port "$PORT" --launch-url)" || exit 1
 
 # app-mode window first (chromium-family), then generic browser openers
 for B in google-chrome chromium chromium-browser brave-browser microsoft-edge vivaldi; do

@@ -12,6 +12,7 @@
 param([int]$Port = 3456)
 
 $ErrorActionPreference = "SilentlyContinue"
+Add-Type -AssemblyName System.Windows.Forms
 $Url  = "http://127.0.0.1:$Port"
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Repo = (Resolve-Path (Join-Path $Here "..\..")).Path
@@ -45,10 +46,14 @@ if (-not (Test-Server)) {
     }
 }
 
-$TokenFile = Join-Path $env:APPDATA "claude-devtools\token"
-$Token = (Get-Content $TokenFile -ErrorAction SilentlyContinue | Select-Object -First 1)
-$Target = "$Url/launch?k=$Token"
 if ($env:CDL_NO_OPEN) { exit 0 }
+# a one-time login URL (60 s): the token itself never reaches the browser's
+# command line; the helper also refuses a server that doesn't hold our token
+$Target = (& $Python $Server --port "$Port" --launch-url | Select-Object -First 1)
+if ($LASTEXITCODE -ne 0 -or -not $Target) {
+    [System.Windows.Forms.MessageBox]::Show("Could not get a login URL from the server on port $Port.") | Out-Null
+    exit 1
+}
 
 $Browsers = @(
   "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",

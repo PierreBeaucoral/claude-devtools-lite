@@ -59,18 +59,24 @@ into any session in an embedded terminal.
 - **Subagent transcripts** open in the same viewer, and the header chips are named by
   agent type rather than uuid
 - **The sidebar filters as you type** (project paths, and session titles in opened
-  projects); **Enter** runs the full-text search across every session, and results jump
-  to the matching entry. Esc clears the filter
+  projects); **Enter** runs the full-text search — in the open project first (fast), with
+  one click to widen to every project — and it covers **subagent transcripts** too.
+  Results jump to the matching entry. Esc clears the filter
+- **Live-follow**: a session that is still being written updates in place every few
+  seconds (● live), scrolling with it only if you were at the bottom
+- Reopening a session is instant: the parsed transcript is cached until the file changes
 - Project **memory** files rendered in place
 - Big transcripts (20 MB+, thousands of entries) load lazily and stay responsive
 
 **Token usage**
 - Current 5-hour block with reset countdown, output tokens today and over 7 days,
   an hourly sparkline, and a by-model breakdown
-- A limit bar showing the current block against the **P90 of your own historical
-  blocks** (the [Claude-Code-Usage-Monitor](https://github.com/Maciek-roboblog/Claude-Code-Usage-Monitor)
-  approach). Your plan's real quota is not recorded locally — this is a measured
-  baseline, not an official limit. Use `/status` in the CLI for the authoritative number.
+- **Official limits**, with the optional *Live limits* add-on: Claude Code's own 5-hour
+  and 7-day usage %, their reset times, and the session's context % and cost, taken from
+  the data Claude Code hands its statusline (your existing statusline keeps working)
+- Without it, a limit bar compares the current block with the **P90 of your own
+  historical blocks** (the [Claude-Code-Usage-Monitor](https://github.com/Maciek-roboblog/Claude-Code-Usage-Monitor)
+  approach) — a measured estimate, not an official limit
 
 **Embedded terminal**
 - Real PTY streamed to [xterm.js](https://xtermjs.org/): full TUI, colors, resizing
@@ -78,8 +84,24 @@ into any session in an embedded terminal.
   (`claude --resume <id>`) with one click
 - Up to 6 tabs. Quitting closes sessions **gracefully** (SIGHUP on POSIX,
   `CTRL_CLOSE_EVENT` on Windows) so Claude Code's `SessionEnd` hooks run before exit
+- Terminal tabs **survive a page reload**: the page re-attaches to running shells and
+  replays their scrollback
+- Text is kept readable in every theme, including Claude Code's own truecolor diff
+  output on light backgrounds
+- With the optional *Live activity* add-on, the sidebar shows what each session is
+  doing right now, and a toast tells you when a session **waits for your permission**
 - Terminals export `CLAUDE_DEVTOOLS_UI=1`, `CLAUDE_DEVTOOLS_VIZ_DIR`, and
   `CLAUDE_DEVTOOLS_URL`, so a session can tell it's running inside the dashboard
+
+**Keyboard and navigation**
+- **⌘K command palette** (Ctrl+K off macOS): actions, `@` sessions, `#` full-text search,
+  `/` files, `>` commands. ⌘P jumps to a session; `?` lists every shortcut
+- Everything is reachable without a mouse: the project tree (arrow keys), tool and
+  thinking blocks, plan tasks, tabs, menus and the splitters (arrow keys resize them);
+  Ctrl+1–5 focus a pane, ⌘⇧M maximizes it
+- A **status bar** shows the connection, project, terminal, plan progress and 5-hour
+  usage at a glance; each segment jumps to its pane
+- All eight themes meet WCAG AA contrast; notifications are announced to screen readers
 
 **Plan pane**
 - A third right-hand quadrant showing the project's plan as a **live checklist**.
@@ -169,6 +191,12 @@ retrospective). The **🧩** button opens a pane that shows which add-ons from
 It also opens by itself at launch while something is missing; tick
 **Don't show at launch** to stop that until the list of missing add-ons changes.
 
+- Two add-ons ship inside this repo (`tools/devtools_hooks.py`, stdlib only):
+  **Live limits** wraps your statusline to record Claude Code's official usage figures,
+  and **Live activity** adds an async hook that records event *metadata* (event, tool
+  name, session — never tool inputs or outputs). Both edit `~/.claude/settings.json`,
+  save a copy first as `settings.json.bak-devtools`, and undo with
+  `python3 tools/devtools_hooks.py uninstall-statusline` / `uninstall-events`
 - Ticked add-ons install in a **visible terminal tab**, with the exact commands shown
   in the pane first. Nothing installs without that click
 - **Ticking an installed add-on reinstalls it cleanly** (plugin uninstalled and
@@ -207,8 +235,14 @@ cd claude-devtools-lite
 python3 server.py
 ```
 
-Open the URL it prints (it includes a one-time token). That's the whole setup — but each
-platform also has a double-click launcher:
+In a second terminal, get a login link and open it:
+
+```bash
+python3 server.py --launch-url      # prints http://127.0.0.1:3456/launch?c=… (single use, 60 s)
+```
+
+That's the whole setup — but each platform also has a double-click launcher that does
+this for you:
 
 ### macOS
 
@@ -311,15 +345,20 @@ The dashboard can spawn shells, so it is built to be safe on a shared machine:
   the `[ ]` / `[x]` marker on one line, and only when the line's text still matches what
   the UI displayed — a stale click is refused rather than applied to the wrong task
 - Every `/api` route requires a **token** (generated once, stored `0600` in your OS's
-  app-data directory, outside this repo). The launchers hand it to the browser via a
-  same-site cookie — it never appears in a URL, and the request log redacts it
+  app-data directory, outside this repo). The launchers trade it for a **one-time, 60 s
+  login code** and hand the browser only that code, which becomes a same-site cookie — the
+  token never appears in a URL, a browser's command line or the server log. Before sending
+  the token, the launcher checks (HMAC challenge) that the server on the port really holds it
+- The page runs under a strict **Content-Security-Policy**: scripts only from `/vendor` and
+  the one inline script, pinned by its SHA-256, so injected markup cannot execute
 - **CSRF guard** (JSON content type + origin allowlist) and a **Host allowlist**
   (DNS-rebinding protection)
 - File browsing is confined to `$HOME`, blocks path traversal and symlink escapes, and
   **refuses credential-shaped files** (`.env*`, `*secret*`, `*token*`, `id_rsa`,
   `*.pem`, `.netrc`, `hosts.yml`, …)
-- HTML previews render in a **sandboxed iframe** with an opaque origin, so a previewed
-  file cannot reach the dashboard's API or your token
+- HTML previews render in a **sandboxed iframe** with an opaque origin, and the server
+  also sends them with a `sandbox` CSP, so a previewed file cannot reach the dashboard's
+  API or your token even when opened directly
 
 **Do not run this with `--host 0.0.0.0`.** That would offer a shell to your network; the
 server prints a warning if you try.
@@ -327,7 +366,7 @@ server prints a warning if you try.
 ## Development
 
 ```bash
-python3 -m pytest tests/ -q      # 27 tests
+python3 -m pytest tests/ -q      # server suite (also run by CI on macOS, Linux, Windows)
 ```
 
 They cover the transcript-parsing invariants (usage dedup by request ID, tool pairing,

@@ -12,6 +12,8 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 OUT="${1:-$REPO/..}"
 APP="$OUT/Claude DevTools.app"
+# the one version number lives in server.py
+VERSION="$(sed -n 's/^VERSION = "\([^"]*\)".*/\1/p' "$REPO/server.py")"
 
 command -v swiftc >/dev/null 2>&1 || {
   echo "swiftc not found — install the Xcode command line tools: xcode-select --install" >&2
@@ -32,8 +34,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleName</key><string>Claude DevTools</string>
   <key>CFBundleDisplayName</key><string>Claude DevTools</string>
   <key>CFBundleIdentifier</key><string>com.claude-devtools-lite.app</string>
-  <key>CFBundleVersion</key><string>0.9.0</string>
-  <key>CFBundleShortVersionString</key><string>0.9.0</string>
+  <key>CFBundleVersion</key><string>__VERSION__</string>
+  <key>CFBundleShortVersionString</key><string>__VERSION__</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleExecutable</key><string>ClaudeDevTools</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
@@ -42,6 +44,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <dict><key>NSAllowsLocalNetworking</key><true/></dict>
 </dict>
 PLIST
+sed -i '' "s/__VERSION__/$VERSION/g" "$APP/Contents/Info.plist"
 echo "</plist>" >> "$APP/Contents/Info.plist"
 
 # optional icon (needs Pillow); harmless to skip

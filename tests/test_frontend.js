@@ -30,12 +30,22 @@ function report(name, ok, detail) {
   console.log("FAIL " + name + (detail ? "\n     " + detail : ""));
 }
 
+/* ---------------- the whole inline script parses ---------------- */
+// the other tests lift slices; a syntax error anywhere else would ship
+// unnoticed (and the page would be blank). Parse only: nothing runs.
+{
+  const m = html.match(/<script>([\s\S]*?)<\/script>/);
+  let err = null;
+  try { new Function(m[1]); } catch (e) { err = e; }
+  report("index.html inline script parses", m && !err, err && err.message);
+}
+
 /* ---------------- markdown + KaTeX ---------------- */
 
 global.katex = require(path.join(ROOT, "vendor", "katex.min.js"));
-const { md } = (0, eval)(
-  slice("const esc = s =>", "/* ---------- sidebar ----------") +
-  "\n({md, mathify, inlineDollarOk});");
+const { md, esc, isAbsPath, baseName, joinPath, shQuote, cleanTitle } = (0, eval)(
+  slice("const esc = s =>", "/* ---------- keyboard ----") +
+  "\n({md, esc, isAbsPath, baseName, joinPath, shQuote, mathify, inlineDollarOk, cleanTitle});");
 
 const check = (name, input, pred) => {
   const out = md(input);
@@ -54,6 +64,28 @@ check("multiline display", "$$\n\\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix}
 check("two display blocks", "$$a=1$$ and $$b=2$$",
       o => (o.match(/katex-display/g) || []).length === 2);
 check("< inside math is not an entity", "$a < b$", isMath);
+
+// injection: transcript text must never break out of an attribute
+// an href value must hold no raw quote and no restored code/math placeholder
+const hrefs = o => [...o.matchAll(/<a href="([^"]*)"/g)].map(m => m[1]);
+const attrsOk = o => !/<a [^>]*\son\w+=/.test(o) && hrefs(o).every(h => !/[<>'"]/.test(h));
+check("link cannot break out of href", '[x](https://a/"onmouseover="alert`1`)', attrsOk);
+check("single-quote link payload stays inert", "[x](https://a/'onmouseover='y)", attrsOk);
+check("code/math never restored inside an href", "[x](https://a/`q\"z`) [y](https://b/$\\alpha$)",
+      o => attrsOk(o) && hrefs(o).length === 0);
+check("plain link still renders", "see [docs](https://example.com/a?b=1&c=2)",
+      o => o.includes('<a href="https://example.com/a?b=1&amp;c=2"'));
+report("esc() is attribute-safe", esc(`a"b'c<d>&`) === "a&quot;b&#39;c&lt;d&gt;&amp;", esc(`a"b'c<d>&`));
+
+// paths from a Windows server must work like POSIX ones
+report("Windows drive path is absolute", isAbsPath("C:\\Users\\x\\proj") && isAbsPath("/Users/x") && !isAbsPath("proj"));
+report("baseName handles both separators", baseName("C:\\Users\\x\\proj") === "proj" && baseName("/a/b/") === "b");
+report("joinPath keeps the path's own separator",
+       joinPath("C:\\Users\\x", "f.png") === "C:\\Users\\x\\f.png" && joinPath("/a/b", "f") === "/a/b/f" && joinPath("/", "f") === "/f");
+
+report("shQuote leaves plain paths alone", shQuote("/a/b-c_d.txt") === "/a/b-c_d.txt");
+report("shQuote quotes spaces, $ and quotes for POSIX", shQuote("/a/My $HOME/it's") === "'/a/My $HOME/it'\\''s'", shQuote("/a/My $HOME/it's"));
+report("shQuote double-quotes Windows paths", shQuote("C:\\My Docs\\f.txt") === '"C:\\My Docs\\f.txt"', shQuote("C:\\My Docs\\f.txt"));
 
 // must NOT render — transcripts are full of these
 check("price range", "costs $5 to $10 per unit", noMath);
@@ -112,6 +144,81 @@ check("prose after a table resumes",
 check("a lone pipe line is not a table", "a | b\nnot a table", o => !o.includes("<table>"));
 check("a horizontal rule is not a separator", "text\n---\nmore", o => !o.includes("<table>"));
 
+/* ---------------- session titles ---------------- */
+
+eq0("slash-command wrapper becomes the command",
+    cleanTitle("<command-message>graphify</command-message> <command-name>/graphify</command-name> <command-args>--update src</command-args>"),
+    "/graphify --update src");
+eq0("truncated wrapper (no closing tag) still cleans",
+    cleanTitle("<command-message>improve</command-message>\n<command-name>/improve</command-name>\n<command-args>look at the hooks and"),
+    "/improve look at the hooks and");
+eq0("message-only wrapper gets a slash",
+    cleanTitle("<command-message>review</command-message>"), "/review");
+eq0("other hyphenated tags are stripped",
+    cleanTitle("<system-reminder>x</system-reminder> fix the chart"), "x fix the chart");
+eq0("ordinary titles are untouched, even with <b>", cleanTitle("fix <b> in the  table"), "fix <b> in the table");
+eq0("empty title stays empty", cleanTitle(undefined), "");
+report("cleaned title is still escaped where it lands",
+       esc(cleanTitle('<command-name>/x"><img src=x onerror=1></command-name>')).indexOf("<img") < 0);
+
+function eq0(name, got, want) { report(name, got === want, `got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`); }
+
+/* ---------------- theme contrast (WCAG 2.x) ---------------- */
+// text tokens must clear 4.5:1 on every surface they are drawn on; control
+// outlines (--border-strong) and chart bars 3:1 (1.4.11 non-text contrast)
+{
+  const THEMES = (0, eval)(slice("const THEMES = {", "const DEFAULT_THEME") + ";THEMES");
+  const lum = h => {
+    const c = [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16) / 255)
+      .map(v => v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  };
+  const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+  const bad = [];
+  for (const [n, t] of Object.entries(THEMES)) {
+    for (const k of ["fg", "dim", "accent", "user", "think", "tool", "ok", "err"])
+      for (const s of ["bg", "panel", "panel2"])
+        if (ratio(t[k], t[s]) < 4.5) bad.push(`${n} ${k}/${s} ${ratio(t[k], t[s]).toFixed(2)}`);
+    for (const s of ["bg", "panel"])
+      if (!t.borderStrong || ratio(t.borderStrong, t[s]) < 3) bad.push(`${n} borderStrong/${s}`);
+    if (!t.onErr || ratio(t.onErr, t.err) < 4.5) bad.push(`${n} onErr/err`);
+    if (ratio(t.bar, t.bg) < 3) bad.push(`${n} bar/bg ${ratio(t.bar, t.bg).toFixed(2)}`);   // bars sit on --bg
+    if (ratio(t.focus || t.accent, t.bg) < 3) bad.push(`${n} focus/bg`);
+  }
+  // diff lines: addfg/delfg on their fill (--ok/--err at 14% over --bg)
+  const mix = (a, b, t) => "#" + [1, 3, 5].map(i => Math.round(parseInt(a.slice(i, i + 2), 16) * (1 - t)
+    + parseInt(b.slice(i, i + 2), 16) * t).toString(16).padStart(2, "0")).join("");
+  const dbad = [];
+  for (const [n, t] of Object.entries(THEMES))
+    for (const [fg, base] of [["addfg", "ok"], ["delfg", "err"]]) {
+      const fill = mix(t.bg, t[base], 0.14);
+      if (ratio(t[fg], fill) < 4.5) dbad.push(`${n} ${fg} on fill ${ratio(t[fg], fill).toFixed(2)}`);
+    }
+  report("diff lines: added/deleted text >= 4.5:1 on its tinted fill", !dbad.length, dbad.join("; "));
+  report("every theme passes WCAG AA contrast (" + Object.keys(THEMES).length + " themes)", !bad.length, bad.join("; "));
+  // the stylesheet defaults are GitHub Dark: keep them in step with the table
+  const gd = THEMES["GitHub Dark"], root = slice(":root {", "color-scheme: dark;");
+  const drift = ["bg", "panel", "panel2", "border", "fg", "dim", "accent", "user", "think", "tool",
+                 "ok", "err", "termbg", "bar", "addfg", "delfg"].filter(k => !root.includes(`--${k}: ${gd[k]};`))
+    .concat(root.includes(`--border-strong: ${gd.borderStrong};`) ? [] : ["border-strong"])
+    .concat(root.includes(`--on-err: ${gd.onErr};`) ? [] : ["on-err"]);
+  report(":root defaults match the GitHub Dark theme", !drift.length, drift.join(", "));
+}
+
+/* ---------------- CSP-safe markup ---------------- */
+// script-src is 'self' + the hash of ONE inline script: inline handlers,
+// javascript: URLs and eval would all be blocked at runtime
+{
+  const inline = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)];
+  report("exactly one inline <script>", inline.length === 1, inline.length + " found");
+  report("no inline on*= handler attributes", !/<[a-z][^>]*\son[a-z]+\s*=/i.test(html.replace(/<script>[\s\S]*?<\/script>/g, "")));
+  const js = inline[0][1];
+  report("no javascript: URLs", !/javascript:/i.test(html));
+  report("no eval / new Function in the page", !/\beval\(|new Function\(/.test(js));
+  report("no native confirm()/alert() dialogs", !/\b(confirm|alert)\(/.test(js.replace(/\/\/.*$/gm, "")));
+  report("markup builders put no on*= attributes into strings", !/`[^`]*\son(click|load|error|mouse\w+|key\w+)=/.test(js));
+}
+
 /* ---------------- file explorer follows the active terminal ---------------- */
 
 const TM = { terms: new Map(), active: null };
@@ -154,5 +261,113 @@ const before = app.loaded.length;
 app.activateTerm("c");
 eq("re-activating the same tab does not reload", app.loaded.length, before);
 
-console.log(fails ? `\n${fails} failed` : `\nall passed`);
-process.exit(fails ? 1 : 0);
+/* ---------------- command palette: fuzzy match + ranking ---------------- */
+{
+  const { fuzzy, rankItems } = (0, eval)("(esc)=>{" +
+    slice("function fuzzy(q, s){", "/* ---------- palette UI") + "\nreturn {fuzzy, rankItems};}")(esc);
+  report("fuzzy: subsequence matches", !!fuzzy("rsm", "Resume current session") && !fuzzy("xyz", "Resume"));
+  report("fuzzy: case-insensitive, marks the hits",
+         fuzzy("RES", "resume").html === "<mark>r</mark><mark>e</mark><mark>s</mark>ume", fuzzy("RES", "resume").html);
+  report("fuzzy: escapes before marking", (() => {
+    const h = fuzzy("<b", "a <b> tag").html;
+    return h === "a <mark>&lt;</mark><mark>b</mark>&gt; tag";
+  })(), fuzzy("<b", "a <b> tag").html);
+  report("fuzzy: no query = escaped label, score 0",
+         fuzzy("", "<i>x</i>").html === "&lt;i&gt;x&lt;/i&gt;" && fuzzy("", "a").score === 0);
+  report("fuzzy: a contiguous hit beats a scattered one",
+         fuzzy("sess", "Focus Session pane").score > fuzzy("sess", "show settings search").score);
+  report("fuzzy: a prefix hit beats a mid-word hit",
+         fuzzy("the", "Theme: Dracula").score > fuzzy("the", "Toggle the header").score);
+  const items = [
+    {label: "Toggle right column"},
+    {label: "Theme: Dracula"},
+    {label: "old session", mtime: 1},
+    {label: "new session", mtime: 9},
+  ];
+  const r1 = rankItems(items, "the").map(x => x.label);
+  eq("rank: prefix hit first", r1[0], "Theme: Dracula");
+  const r2 = rankItems(items, "session").map(x => x.label);
+  eq("rank: equal scores fall back to recency", r2.join("|"), "new session|old session");
+  eq("rank: empty query keeps everything, newest first", rankItems(items, "").map(x => x.label)[0], "new session");
+  eq("rank: caps the list", rankItems(Array.from({length: 80}, (_, i) => ({label: "a" + i})), "a").length, 50);
+}
+
+/* ---------------- live-follow: tail splice ---------------- */
+{
+  const { spliceTail, tailDiff } = (0, eval)(slice("const spliceTail =", "const sessMtime =") + ";({spliceTail, tailDiff})");
+  const old = [{i: 0}, {i: 1}, {i: 2, result: null}, {i: 3}];
+  const r = {start: 2, entries: [{i: 2, result: "done"}, {i: 3}, {i: 4}]};
+  const next = spliceTail(old, r);
+  eq("tail splice keeps the head and appends", JSON.stringify(next.map(x => x.i)), "[0,1,2,3,4]");
+  eq("tail splice replaces the overlap", next[2].result, "done");
+  eq("tail splice does not mutate the old array", old.length, 4);
+  const d = tailDiff(old, next, r.start, old.length);
+  eq("only the changed rendered row repaints", JSON.stringify(d.replace), "[2]");
+  eq("nothing dropped when the file grew", d.drop, 0);
+  eq("unrendered rows are never repainted", JSON.stringify(tailDiff(old, next, 2, 2).replace), "[]");
+  const shrunk = spliceTail(old, {start: 1, entries: [{i: 1}]});
+  eq("a shorter tail drops rendered rows", tailDiff(old, shrunk, 1, 4).drop, 2);
+}
+
+/* ---------------- hook events: "now doing" per project ---------------- */
+{
+  const { applyEvents, nowMap, projectForCwd } = (0, eval)(
+    slice('/* ---------- "now doing" per project', "/* The tree is one tab stop") + ";({applyEvents, nowMap, projectForCwd})");
+  const P = [{slug: "a", path: "/u/x/proj"}, {slug: "b", path: "/u/x/proj/sub"}, {slug: "w", path: "C:\\u\\win"}];
+  eq("cwd maps to its project", (projectForCwd(P, "/u/x/proj") || {}).slug, "a");
+  eq("deepest project wins", (projectForCwd(P, "/u/x/proj/sub/deep") || {}).slug, "b");
+  eq("sibling with a shared prefix does not match", projectForCwd(P, "/u/x/project2"), null);
+  eq("Windows cwd maps", (projectForCwd(P, "C:\\u\\win\\src") || {}).slug, "w");
+  let st = applyEvents({}, [{hook_event_name: "PreToolUse", cwd: "/u/x/proj", tool_name: "Bash"}]);
+  eq("PreToolUse sets the tool", JSON.stringify(nowMap(P, st.now)), '{"a":"Bash"}');
+  for (const end of ["PostToolUse", "Stop", "SessionEnd"]) {
+    const s2 = applyEvents(st.now, [{hook_event_name: end, cwd: "/u/x/proj"}]);
+    eq(end + " clears it", JSON.stringify(s2.now), "{}");
+  }
+  eq("applyEvents does not mutate the previous state", JSON.stringify(st.now), '{"/u/x/proj":"Bash"}');
+  const al = applyEvents({}, [
+    {hook_event_name: "PermissionRequest", cwd: "/u/x/proj"},
+    {hook_event_name: "Notification", cwd: "/u/x/proj", notification_type: "idle_prompt"},
+    {hook_event_name: "Notification", cwd: "/u/x/proj", notification_type: "auth_success"},
+    {hook_event_name: "SubagentStart", cwd: "/u/x/proj"}]).alerts;
+  eq("permission and idle notifications alert, others do not", al.length, 2);
+  eq("an event from an unknown folder shows no chip",
+     JSON.stringify(nowMap(P, applyEvents({}, [{hook_event_name: "PreToolUse", cwd: "/elsewhere", tool_name: "Read"}]).now)), "{}");
+}
+
+/* ---------------- polling: unchanged data -> no repaint ---------------- */
+{
+  const dataStamp = (0, eval)(slice("const dataStamp =", "poll(async () => {   // badges") + ";dataStamp");
+  const a = [{slug: "p", mtime: 1, sessions: 2}], ss = [{id: "s", mtime: 5}];
+  report("same data gives the same stamp (skip renderTree)", dataStamp(a, ss) === dataStamp(JSON.parse(JSON.stringify(a)), [...ss]));
+  report("a moved mtime changes the stamp (repaint)", dataStamp(a, ss) !== dataStamp([{slug: "p", mtime: 2, sessions: 2}], ss));
+  report("a new session in the open project changes the stamp", dataStamp(a, ss) !== dataStamp(a, [...ss, {id: "t", mtime: 6}]));
+  const js = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+  report("every timer goes through poll() (paused while hidden)",
+         [...js.matchAll(/setInterval\(/g)].every(m => js.slice(m.index, m.index + 90).includes("document.hidden"))
+         && /poll\(pollEvents, 3000\)/.test(js) && /poll\(liveTick, 3000\)/.test(js));
+}
+
+/* ---------------- terminal input ordering ---------------- */
+// fetch that resolves after a random delay: without the queue, bodies land
+// out of order (that was the scrambled key-repeat bug)
+(async () => {
+  const got = [];
+  const io = (0, eval)(`(function(fetch, authHeaders, strToB64){` +
+    slice("function sendInput(t, s){", "/* Keep the PTY's size") +
+    `; return {sendInput}; })`)(
+      (url, o) => new Promise(r => setTimeout(() => {
+        got.push(JSON.parse(o.body).data); r({ok: true});
+      }, Math.random() * 8)),
+      h => h, s => s);
+  const t = {id: "t1"};
+  const typed = "the quick brown fox jumps over the lazy dog 0123456789";
+  let last;
+  for (const ch of typed) { last = io.sendInput(t, ch); await new Promise(r => setTimeout(r, Math.random() * 3)); }
+  await last; while (t.inFlight) await t.inFlight;
+  eq("terminal input arrives in order", got.join(""), typed);
+  report("fast typing is coalesced into fewer requests", got.length < typed.length, `${got.length} requests`);
+
+  console.log(fails ? `\n${fails} failed` : `\nall passed`);
+  process.exit(fails ? 1 : 0);
+})();

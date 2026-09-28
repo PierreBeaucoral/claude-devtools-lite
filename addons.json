@@ -1,5 +1,5 @@
 {
-  "_comment": "Optional Claude Code add-ons offered by the Add-ons pane (🧩). The app only ever runs the install commands written here: edit this list to change what it proposes. check.kind: skill = ~/.claude/skills/<name>/SKILL.md, command = ~/.claude/commands/<name>.md, plugin = <name>@<marketplace> in ~/.claude/plugins/installed_plugins.json. needs = programs that must be on PATH first. install.posix runs in the login shell (macOS/Linux), install.windows in cmd.exe; an add-on's lines are joined with && into ONE line, so each must be safe to chain: group any a || b in parentheses, never use cmd's `if` (it swallows the rest of the line), and prefix `claude` with `call` on Windows (npm installs it as a .cmd). reinstall (optional, same shape as install) is what the pane runs when an installed add-on is ticked again; without it, install is re-run. prerequisites: how to install each program listed in needs, per OS (mac / linux / windows); the pane shows the command and can run it in the visible terminal. On Windows without winget (older Windows 10, managed PCs), install[\"windows-nowinget\"] is used when present: the program's official installer, downloaded with PowerShell and opened for the user to click through.",
+  "_comment": "Optional Claude Code add-ons offered by the Add-ons pane (🧩). The app only ever runs the install commands written here: edit this list to change what it proposes. check.kind: skill = ~/.claude/skills/<name>/SKILL.md, command = ~/.claude/commands/<name>.md, plugin = <name>@<marketplace> in ~/.claude/plugins/installed_plugins.json, statusline / hook = <name> appears in the statusLine / a hook command of ~/.claude/settings.json. {app} in a command = this checkout's folder. needs = programs that must be on PATH first. install.posix runs in the login shell (macOS/Linux), install.windows in cmd.exe; an add-on's lines are joined with && into ONE line, so each must be safe to chain: group any a || b in parentheses, never use cmd's `if` (it swallows the rest of the line), and prefix `claude` with `call` on Windows (npm installs it as a .cmd). reinstall (optional, same shape as install) is what the pane runs when an installed add-on is ticked again; without it, install is re-run. prerequisites: how to install each program listed in needs, per OS (mac / linux / windows); the pane shows the command and can run it in the visible terminal. On Windows without winget (older Windows 10, managed PCs), install[\"windows-nowinget\"] is used when present: the program's official installer, downloaded with PowerShell and opened for the user to click through.",
   "addons": [
     {
       "id": "graphify",
@@ -233,6 +233,46 @@
         "windows": [
           "(rmdir /s /q \"%USERPROFILE%\\.claude\\skills\\dream\" 2>nul || ver >nul)",
           "git clone https://github.com/grandamenium/dream-skill.git \"%USERPROFILE%\\.claude\\skills\\dream\""
+        ]
+      }
+    },
+    {
+      "id": "live-limits",
+      "name": "Live limits (statusline tee)",
+      "used_by_app": false,
+      "unlocks": "Usage pane shows Claude Code's own 5-hour and 7-day limit %, reset times, context % and cost instead of the P90 estimate. Your existing statusline keeps working (it is wrapped). Undo: devtools_hooks.py uninstall-statusline.",
+      "source": "https://github.com/PierreBeaucoral/claude-devtools-lite/blob/main/tools/devtools_hooks.py",
+      "check": {
+        "kind": "statusline",
+        "name": "devtools_hooks.py"
+      },
+      "needs": [],
+      "install": {
+        "posix": [
+          "python3 {app}/tools/devtools_hooks.py install-statusline"
+        ],
+        "windows": [
+          "python {app}\\tools\\devtools_hooks.py install-statusline"
+        ]
+      }
+    },
+    {
+      "id": "live-events",
+      "name": "Live activity (hook event tee)",
+      "used_by_app": false,
+      "unlocks": "An async hook records what each session is doing (tool names, never their inputs) so the sidebar shows live activity and you get a toast when a session waits for your permission. Undo: devtools_hooks.py uninstall-events.",
+      "source": "https://github.com/PierreBeaucoral/claude-devtools-lite/blob/main/tools/devtools_hooks.py",
+      "check": {
+        "kind": "hook",
+        "name": "devtools_hooks.py"
+      },
+      "needs": [],
+      "install": {
+        "posix": [
+          "python3 {app}/tools/devtools_hooks.py install-events"
+        ],
+        "windows": [
+          "python {app}\\tools\\devtools_hooks.py install-events"
         ]
       }
     }

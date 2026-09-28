@@ -6,7 +6,7 @@ Reads ~/.claude/projects/<slug>/*.jsonl transcripts (plus subagent transcripts
 and project memory) and serves a single-page dashboard on localhost.
 
 Zero dependencies: Python 3.9+ standard library only.
-Never writes to ~/.claude — strictly read-only.
+Reads ~/.claude; writes only its own state, a plan checkbox you click, and ~/.claude/improve-reports/.
 
 Usage:
     python3 server.py [--port 3456] [--root ~/.claude]
@@ -14,8 +14,12 @@ Usage:
 import argparse
 import base64
 import hashlib
+import collections
 import json
+import logging
+import logging.handlers
 import os
+import traceback
 import re
 import secrets
 import select
@@ -50,6 +54,8 @@ import winconpty  # noqa: E402
 
 HAS_TERMINAL = HAS_PTY or winconpty.unsupported_reason() is None
 
+
+VERSION = "0.10.0"      # single source: build-app.sh and the HTTP header read it
 HERE = Path(__file__).resolve().parent
 CLAUDE_ROOT = Path(os.environ.get("CLAUDE_ROOT", str(Path.home() / ".claude")))
 
@@ -65,6 +71,30 @@ else:
     APP_DIR = Path(os.environ.get("XDG_CONFIG_HOME",
                                   Path.home() / ".config")) / "claude-devtools"
 APP_DIR.mkdir(parents=True, exist_ok=True)
+
+# Log: stderr (the launchers' redirect) + a small rotating file in APP_DIR, so
+# the macOS app — whose stderr goes nowhere — still leaves a trace. Only
+# non-2xx and slow requests are logged: polls would add ~46k lines a day.
+LOG = logging.getLogger("devtools")
+LOG.setLevel(logging.INFO)
+LOG.propagate = False
+STARTED = time.time()
+RECENT_ERRORS = collections.deque(maxlen=20)      # for /api/health
+SLOW_REQUEST_S = 0.5
+
+
+def setup_logging():
+    fmt = logging.Formatter("%(asctime)s [devtools] %(message)s", "%Y-%m-%d %H:%M:%S")
+    handlers = [logging.StreamHandler(sys.stderr)]
+    try:
+        handlers.append(logging.handlers.RotatingFileHandler(
+            APP_DIR / "server.log", maxBytes=2_000_000, backupCount=2, encoding="utf-8"))
+        os.chmod(APP_DIR / "server.log", 0o600)
+    except OSError:
+        pass
+    for h in handlers:
+        h.setFormatter(fmt)
+        LOG.addHandler(h)
 try:
     os.chmod(APP_DIR, 0o700)
 except OSError:
@@ -99,6 +129,35 @@ def load_token():
 
 
 SERVER_TOKEN = None   # set in main()
+
+# One-time launch codes: launchers trade the token (sent in a header) for a
+# 60 s single-use code, so the long-lived token never lands in a browser's
+# argv, shell history or URL bar.
+_launch_codes = {}
+_launch_lock = threading.Lock()
+
+
+def launch_code_new():
+    code = secrets.token_hex(16)
+    with _launch_lock:
+        now = time.time()
+        for c in [c for c, exp in _launch_codes.items() if exp < now]:
+            del _launch_codes[c]
+        _launch_codes[code] = now + 60
+    return code
+
+
+def launch_code_take(code):
+    with _launch_lock:
+        exp = _launch_codes.pop(code, 0)
+    return exp >= time.time()
+
+
+def hello_mac(token, nonce):
+    """Proof that this server holds `token`, without revealing it: a launcher
+    checks it before sending the token to whatever answers on the port."""
+    import hmac
+    return hmac.new(token.encode(), b"cdl-hello:" + nonce.encode(), "sha256").hexdigest()
 # DNS-rebinding guard: loopback by default; main() adds an explicit --host
 ALLOWED_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
@@ -125,7 +184,11 @@ def state_write(patch):
     with _state_lock:
         st = state_read()
         st.update(patch)
-        STATE_FILE.write_text(json.dumps(st))
+        # atomic: a crash mid-write must not leave a truncated file (which
+        # state_read would silently read back as {})
+        tmp = STATE_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(st))
+        os.replace(tmp, STATE_FILE)
 
 MAX_RESULT_CHARS = 20_000     # per tool-result payload sent to the UI
 MAX_TEXT_CHARS = 120_000      # per text/thinking block sent to the UI
@@ -534,8 +597,166 @@ def parse_session(path, include_sidechain=False):
 
 # ---------------------------------------------------------------- search
 
+_session_cache = {}              # path -> ((mtime_ns, size), encoded JSON)
+_session_lock = threading.Lock()
+SESSION_CACHE_MAX = 3
+
+
+def session_json(path):
+    """parse_session(path) as encoded JSON, cached on (mtime, size): reopening
+    a session, or coming back from a subagent, skips a re-parse that costs
+    ~0.7 s on a 100 MB transcript. A live session changes size, so it misses."""
+    st = path.stat()
+    key = (st.st_mtime_ns, st.st_size)
+    with _session_lock:
+        hit = _session_cache.get(path)
+        if hit and hit[0] == key:
+            _session_cache[path] = _session_cache.pop(path)      # most recent
+            return hit[1]
+    body = json.dumps(parse_session(path), ensure_ascii=False).encode("utf-8")
+    with _session_lock:
+        _session_cache[path] = (key, body)
+        while len(_session_cache) > SESSION_CACHE_MAX:           # evict oldest
+            del _session_cache[next(iter(_session_cache))]
+    return body
+
+
+STATUS_TTL = 600          # official limits older than this are not shown
+
+
+def official_limits():
+    """Newest statusline snapshot (tools/devtools_hooks.py statusline), if
+    fresh: Claude Code's own 5-hour / 7-day usage %, reset times, and the
+    context % and cost of that session. None → the P90 estimate stands."""
+    best = None
+    try:
+        for f in (APP_DIR / "status").glob("*.json"):
+            m = f.stat().st_mtime
+            if time.time() - m < STATUS_TTL and (best is None or m > best[0]):
+                best = (m, f)
+    except OSError:
+        return None
+    if not best:
+        return None
+    try:
+        d = json.loads(best[1].read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    rl = d.get("rate_limits") or {}
+    cw = d.get("context_window") or {}
+    return {"at": best[0], "session_id": d.get("session_id"),
+            "five_hour": rl.get("five_hour"), "seven_day": rl.get("seven_day"),
+            "context_pct": cw.get("used_percentage"),
+            "cost_usd": (d.get("cost") or {}).get("total_cost_usd"),
+            "model": (d.get("model") or {}).get("display_name")}
+
+
+EVENTS_FILE = APP_DIR / "events.jsonl"
+
+
+def events_since(since, limit=500):
+    """Hook events appended after byte offset `since` (tools/devtools_hooks.py
+    event). since < 0 → just the current end, so a fresh page starts live.
+    A file smaller than `since` was rotated: start again from 0."""
+    try:
+        size = EVENTS_FILE.stat().st_size
+    except OSError:
+        return {"events": [], "offset": 0, "enabled": False}
+    if since < 0:
+        return {"events": [], "offset": size, "enabled": True}
+    if since > size:
+        since = 0
+    out = []
+    with open(EVENTS_FILE, "rb") as fh:
+        fh.seek(since)
+        data = fh.read(2_000_000)
+    end = data.rfind(b"\n") + 1                 # only complete lines
+    for line in data[:end].splitlines():
+        try:
+            out.append(json.loads(line))
+        except ValueError:
+            continue
+    return {"events": out[-limit:], "offset": since + end, "enabled": True}
+
+
+TAIL_OVERLAP = 30         # re-send the last N entries: their tool results may have landed
+
+
+def session_tail(path, key, since):
+    """Live-follow: `key` is the (mtime_ns:size) the client last saw. Unchanged
+    → a stat, nothing more. Changed → entries from `since - TAIL_OVERLAP` on
+    (earlier tool calls get their results late), which the client splices in
+    at `start`, plus the fresh totals."""
+    st = path.stat()
+    now_key = f"{st.st_mtime_ns}:{st.st_size}"
+    if key == now_key:
+        return {"key": now_key, "unchanged": True}
+    # ponytail: re-parses the whole file on each change (~0.8 s per 100 MB);
+    # a resumable parse from a byte offset if huge live sessions feel slow
+    d = parse_session(path)
+    start = max(0, min(int(since), len(d["entries"])) - TAIL_OVERLAP)
+    return {"key": now_key, "start": start, "entries": d["entries"][start:],
+            "total": len(d["entries"]), "totals": d["totals"],
+            "tool_counts": d["tool_counts"], "context_series": d["context_series"],
+            "subagents": d["subagents"], "title": d["title"]}
+
+
+SEARCH_CHUNK = 8 * 1024 * 1024
+
+
+def _file_may_contain(path, needles):
+    """Cheap byte-level pre-check (ASCII queries only): lower-cased 8 MB
+    chunks with an overlap, so a big transcript that cannot match is skipped
+    without decoding a single line."""
+    keep = max(len(n) for n in needles) - 1
+    tail = b""
+    try:
+        with open(path, "rb") as fh:
+            while True:
+                chunk = fh.read(SEARCH_CHUNK)
+                if not chunk:
+                    return False
+                buf = tail + chunk.lower()
+                if any(n in buf for n in needles):
+                    return True
+                tail = buf[-keep:] if keep else b""
+    except OSError:
+        return False
+
+
+def _search_file(path, q, needles):
+    """(record, text) for each user/assistant record whose text contains q."""
+    if needles and not _file_may_contain(path, needles):
+        return
+    # the raw line holds JSON-escaped text: `"x"` is stored as `\"x\"`, and
+    # some writers store `è` as `\u00e8`
+    raw = {q, json.dumps(q, ensure_ascii=False)[1:-1].lower(), json.dumps(q)[1:-1].lower()}
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                low = line.lower()
+                if not any(r in low for r in raw):
+                    continue
+                try:
+                    o = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if o.get("type") not in ("user", "assistant"):
+                    continue
+                txt = block_text(o.get("message", {}).get("content"))
+                if txt and q in txt.lower():
+                    yield o, txt
+    except OSError:
+        return
+
+
 def search_all(root, query, project=None, limit=SEARCH_MAX_RESULTS):
+    """Full-text search over sessions AND their subagent transcripts, newest
+    first; `project` scopes it to one project (much faster)."""
     q = query.lower()
+    needles = None
+    if q.isascii():
+        needles = {q.encode(), json.dumps(q)[1:-1].lower().encode()}
     results = []
     pdir = projects_dir(root)
     dirs = [safe_project_path(root, project)] if project else \
@@ -543,33 +764,24 @@ def search_all(root, query, project=None, limit=SEARCH_MAX_RESULTS):
                key=lambda d: d.stat().st_mtime, reverse=True)
     for d in dirs:
         for f in sorted(d.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True):
-            try:
-                with open(f, "r", encoding="utf-8", errors="replace") as fh:
-                    for line in fh:
-                        if q not in line.lower():
-                            continue
-                        try:
-                            o = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
-                        if o.get("type") not in ("user", "assistant"):
-                            continue
-                        txt = block_text(o.get("message", {}).get("content"))
-                        if not txt or q not in txt.lower():
-                            continue
-                        i = txt.lower().find(q)
-                        lo, hi = max(0, i - 120), min(len(txt), i + len(q) + 160)
-                        results.append({
-                            "project": d.name,
-                            "session": f.stem,
-                            "type": o.get("type"),
-                            "ts": o.get("timestamp"),
-                            "snippet": ("…" if lo else "") + txt[lo:hi] + ("…" if hi < len(txt) else ""),
-                        })
-                        if len(results) >= limit:
-                            return results
-            except OSError:
-                continue
+            files = [(f, None)] + [(a, a.name) for a in
+                                   sorted((d / f.stem / "subagents").glob("*.jsonl"))]
+            for path, agent in files:
+                for o, txt in _search_file(path, q, needles):
+                    i = txt.lower().find(q)
+                    lo, hi = max(0, i - 120), min(len(txt), i + len(q) + 160)
+                    hit = {
+                        "project": d.name,
+                        "session": f.stem,
+                        "type": o.get("type"),
+                        "ts": o.get("timestamp"),
+                        "snippet": ("…" if lo else "") + txt[lo:hi] + ("…" if hi < len(txt) else ""),
+                    }
+                    if agent:
+                        hit["agent"] = agent
+                    results.append(hit)
+                    if len(results) >= limit:
+                        return results
     return results
 
 
@@ -859,7 +1071,7 @@ def fit_graph_html(body):
 def viz_list(dir_override=None):
     d = safe_home_path(dir_override) if dir_override else VIZ_DIR
     if not d.is_dir():
-        return []
+        return [], d        # a watched folder that was deleted: empty, not a crash
     out = []
     for f in d.iterdir():
         if f.is_file() and f.suffix.lower() in VIZ_TYPES:
@@ -1276,9 +1488,16 @@ def _md_group(root, sub, always, glob="*.md", nested=None):
 # A file in hooks/ is not necessarily a Claude Code hook. Some are libraries
 # other hooks call, some are git hooks. Only flag the ones that read a hook
 # payload on stdin or say which event they want — the rest are just files.
-HOOK_EVENTS = ("PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop",
-               "SubagentStop", "Notification", "UserPromptSubmit",
-               "PreCompact", "SessionStart", "SessionEnd")
+# Claude Code's documented events (code.claude.com/docs/en/hooks, 2026-09).
+HOOK_EVENTS = (
+    "SessionStart", "Setup", "UserPromptSubmit", "UserPromptExpansion",
+    "PreToolUse", "PermissionRequest", "PermissionDenied", "PostToolUse",
+    "PostToolUseFailure", "PostToolBatch", "Notification", "MessageDisplay",
+    "SubagentStart", "SubagentStop", "TaskCreated", "TaskCompleted", "Stop",
+    "StopFailure", "TeammateIdle", "InstructionsLoaded", "ConfigChange",
+    "CwdChanged", "DirectoryAdded", "FileChanged", "WorktreeCreate",
+    "WorktreeRemove", "PreCompact", "PostCompact", "PreModelSwitch",
+    "PostModelSwitch", "Elicitation", "ElicitationResult", "SessionEnd")
 
 
 def declared_hook_event(path, limit=4096):
@@ -1332,7 +1551,12 @@ def hook_registrations(settings):
             for h in (entry.get("hooks") or []):
                 c = str(h.get("command", "")).strip()
                 if not c:
-                    cmds.append("?")
+                    # http / prompt / agent / mcp_tool hooks run no command
+                    kind = str(h.get("type") or "?")
+                    detail = h.get("url") or h.get("tool") or h.get("server") or ""
+                    if kind == "http" and detail:
+                        detail = urllib.parse.urlparse(str(detail)).netloc or detail
+                    cmds.append(f"{kind}: {detail}" if detail else kind)
                     continue
                 # commands are quoted shell strings; paths contain spaces
                 try:
@@ -1523,6 +1747,17 @@ def addon_installed(check, root=None, plugins=None):
         return (root / "commands" / (name + ".md")).is_file()
     if kind == "plugin":
         return name in (installed_plugins(root) if plugins is None else plugins)
+    if kind in ("statusline", "hook"):      # our own tees, found in settings.json
+        try:
+            st = json.loads((root / "settings.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        if kind == "statusline":
+            return name in str((st.get("statusLine") or {}).get("command", ""))
+        return any(name in str(h.get("command", ""))
+                   for entries in (st.get("hooks") or {}).values()
+                   if isinstance(entries, list)
+                   for e in entries for h in (e.get("hooks") or []))
     return False
 
 
@@ -1551,10 +1786,14 @@ def addons_status(root=None, manifest=None):
     for a in data.get("addons", []):
         if not ADDON_ID_RE.fullmatch(str(a.get("id", ""))):
             continue
-        cmds = (a.get("install") or {}).get(plat) or []
+        # {app} = this checkout, for add-ons that ship inside it (tools/)
+        app = f'"{HERE}"' if " " in str(HERE) else str(HERE)
+        cmds = [str(c).replace("{app}", app)
+                for c in (a.get("install") or {}).get(plat) or []]
         # ticking an installed add-on reinstalls it: a clean redo for when an
         # install was interrupted (app closed mid-way) or left it half-working
-        redo = (a.get("reinstall") or {}).get(plat) or cmds
+        redo = [str(c).replace("{app}", app)
+                for c in (a.get("reinstall") or {}).get(plat) or []] or cmds
         out.append({"id": a["id"], "name": a.get("name", a["id"]),
                     "used_by_app": bool(a.get("used_by_app")),
                     "unlocks": a.get("unlocks", ""), "source": a.get("source", ""),
@@ -1647,11 +1886,25 @@ def improve_enabled():
     return bool(state_read().get("improve", True))
 
 
+def project_dir_for_cwd(root, cwd):
+    """Claude Code's transcript folder for `cwd`. Its naming rule (every
+    non-alphanumeric → "-", long paths truncated + hashed) is undocumented
+    and drifts between versions, so guess first, then look the cwd up in
+    the sessions themselves — a lookup cannot drift."""
+    pdir = projects_dir(root)
+    for guess in (re.sub(r"[^A-Za-z0-9]", "-", str(cwd)), mangle_cwd(cwd)):
+        if (pdir / guess).is_dir():
+            return pdir / guess
+    for p in list_projects(root):             # authoritative cwd per project
+        if p["path"] == str(cwd):
+            return pdir / p["slug"]
+    return None
+
+
 def newest_transcript(cwd, within=900):
     """The session file this terminal most likely just wrote."""
-    slug = mangle_cwd(cwd)
-    d = projects_dir(CLAUDE_ROOT) / slug
-    if not d.is_dir():
+    d = project_dir_for_cwd(CLAUDE_ROOT, cwd)
+    if d is None:
         return None
     now = time.time()
     best = None
@@ -1670,7 +1923,8 @@ def newest_transcript(cwd, within=900):
 
 
 def mangle_cwd(cwd):
-    """Claude Code's project-directory naming: / and space and . become -."""
+    """Folder name for OUR improve-reports/ (not Claude Code's rule — see
+    project_dir_for_cwd for finding its transcripts)."""
     return re.sub(r"[/ .]", "-", str(cwd))
 
 
@@ -1784,6 +2038,7 @@ class Term:
         self.discarded = 0          # bytes trimmed off the front of buf, ever
         self.cond = threading.Condition()
         self.alive = True
+        self._finished = False      # _finish() ran: fds closed, child reaped
         self.cols, self.rows = cols, rows
         # `env` is the COMPLETE child environment (already scrubbed of the
         # parent session's markers); extra_env only adds on top of it
@@ -1841,6 +2096,30 @@ class Term:
         with self.cond:
             self.alive = False
             self.cond.notify_all()
+        # a child that exits by itself (`exit`, /quit) gets the same ending as
+        # a closed tab: reaped, fds closed, retrospective considered
+        self._finish()
+
+    def _finish(self):
+        """Release the transport exactly once — closing an fd twice could
+        close an unrelated file that reused the number — then hand a Claude
+        session to the retrospective."""
+        with self.cond:
+            if self._finished:
+                return
+            self._finished = True
+        try:
+            self._cleanup()
+        except OSError:
+            pass
+        # the session has written its transcript and run its own hooks by
+        # now — hand it to the retrospective (detached, so quitting the app
+        # does not cut it short)
+        if self.is_claude:
+            try:
+                spawn_improve(self.cwd)
+            except Exception:
+                pass
 
     def produced(self):
         """Absolute count of bytes the child has emitted. Call under `cond`."""
@@ -1887,15 +2166,7 @@ class Term:
                 while self.alive and time.time() < deadline:
                     time.sleep(0.15)
         finally:
-            self._cleanup()
-            # the session has written its transcript and run its own hooks by
-            # now — hand it to the retrospective (detached, so quitting the
-            # app does not cut it short)
-            if self.is_claude:
-                try:
-                    spawn_improve(self.cwd)
-                except Exception:
-                    pass
+            self._finish()
 
     def kill(self):
         """Non-blocking graceful close (used by the per-tab close button)."""
@@ -1960,10 +2231,16 @@ class PosixTerm(Term):
             os.close(self.fd)
         except OSError:
             pass
-        try:
-            os.waitpid(self.pid, os.WNOHANG)
-        except (ChildProcessError, OSError):
-            pass
+        # reap, or it stays a zombie: the child may take a moment to exit
+        # after its pty closes, so poll briefly rather than a single WNOHANG
+        deadline = time.time() + 3.0
+        while True:
+            try:
+                if os.waitpid(self.pid, os.WNOHANG)[0] or time.time() > deadline:
+                    break
+            except (ChildProcessError, OSError):
+                break
+            time.sleep(0.05)
 
 
 class WindowsTerm(Term):
@@ -2000,6 +2277,7 @@ class WindowsTerm(Term):
 
 TERMS = {}
 TERMS_LOCK = threading.Lock()
+MAX_TERMS = 6
 
 
 def clamp_dim(v, fallback):
@@ -2207,32 +2485,69 @@ def start_term(kind, cwd, session_id=None, prompt=None, cols=100, rows=30):
         "CLAUDE_DEVTOOLS_VIZ_DIR": str(VIZ_DIR),
         "CLAUDE_DEVTOOLS_URL": f"http://127.0.0.1:{SERVER_PORT}"})
     impl = PosixTerm if HAS_PTY else WindowsTerm
+    # check the cap BEFORE spawning: refusing after the fork left the new
+    # child running with no tab to close it from
+    with TERMS_LOCK:
+        for tid in [tid for tid, tt in TERMS.items() if not tt.alive]:
+            del TERMS[tid]                   # exited ones were _finish()ed
+        if len(TERMS) >= MAX_TERMS:
+            raise RuntimeError("too many open terminals — close one first")
     # spawn at the client's real viewport size: a child that starts at the
     # wrong width emits wrapped output that stays wrong after the SIGWINCH
     t = impl(argv, cwd, cols=clamp_dim(cols, 100), rows=clamp_dim(rows, 30),
              env=env)
     with TERMS_LOCK:
-        # keep at most 6 terminals; reap dead ones
-        for tid in [tid for tid, tt in TERMS.items() if not tt.alive]:
-            del TERMS[tid]
-        if len(TERMS) >= 6:
-            raise RuntimeError("too many open terminals — close one first")
-        TERMS[t.id] = t
+        TERMS[t.id] = t     # ponytail: two racing starts can reach MAX_TERMS+1
     return t
 
 
 # ---------------------------------------------------------------- HTTP
 
+def page_csp(body):
+    """CSP for the dashboard page: scripts only from /vendor and the one inline
+    <script> (pinned by hash, recomputed per serve, so no build step). Inline
+    styles stay allowed: KaTeX and xterm set them, and they cannot run code."""
+    m = re.search(rb"<script>(.*?)</script>", body, re.S)
+    h = base64.b64encode(hashlib.sha256(m.group(1)).digest()).decode() if m else ""
+    return ("default-src 'self'; script-src 'self' 'sha256-%s'; "
+            "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+            "font-src 'self'; frame-src 'self'; object-src 'self'; "
+            "connect-src 'self'; base-uri 'none'; form-action 'none'; "
+            "frame-ancestors 'none'" % h)
+
+
 class Handler(BaseHTTPRequestHandler):
-    server_version = "claude-devtools-lite/0.9.0"
+    server_version = "claude-devtools-lite/" + VERSION
     root = CLAUDE_ROOT  # overridden in main()
 
     def log_message(self, fmt, *args):
         # never let a token reach the log: query-string tokens would otherwise
         # persist wherever stderr is redirected
         line = fmt % args
-        line = re.sub(r"([?&](?:token|k)=)[A-Za-z0-9]+", r"\1[redacted]", line)
-        sys.stderr.write("[devtools] %s\n" % line)
+        line = re.sub(r"([?&](?:token|k|c)=)[A-Za-z0-9]+", r"\1[redacted]", line)
+        LOG.info(line)
+
+    def parse_request(self):
+        self._t0 = time.time()
+        return super().parse_request()
+
+    def log_request(self, code="-", size="-"):
+        ms = (time.time() - getattr(self, "_t0", time.time())) * 1000
+        try:
+            ok = 200 <= int(code) < 400
+        except (TypeError, ValueError):
+            ok = False
+        if ok and ms < SLOW_REQUEST_S * 1000:
+            return                                  # quiet: a normal poll
+        self.log_message('"%s" %s %s %.0fms', self.requestline, code, size, ms)
+        if not ok:
+            RECENT_ERRORS.append({"t": time.time(), "code": code,
+                                  "req": re.sub(r"([?&](?:token|k|c)=)[A-Za-z0-9]+",
+                                                r"\1[redacted]", self.requestline)})
+
+    def end_headers(self):
+        self.send_header("X-Content-Type-Options", "nosniff")
+        super().end_headers()
 
     def _host_ok(self):
         """Reject foreign Host headers (DNS-rebinding guard)."""
@@ -2243,6 +2558,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def _json(self, obj, code=200):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_json_bytes(self, body, code=200):
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -2278,12 +2601,23 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(401, "missing or bad token — relaunch via Claude DevTools.app")
                 return
 
+            if p == "/hello":
+                n = qs.get("n", [""])[0]
+                if not re.fullmatch(r"[0-9a-f]{16,64}", n):
+                    self._err(400, "bad nonce")
+                    return
+                self._json({"mac": hello_mac(SERVER_TOKEN or "", n)})
+                return
+
             if p == "/launch":
                 # the app launcher's entry point: exchange the token (query)
                 # for a browser cookie, then land on the dashboard. A real
                 # navigation — immune to fragment-only tab-reuse races.
                 k = qs.get("k", [""])[0]
-                if not (k and secrets.compare_digest(k, SERVER_TOKEN or "")):
+                c = qs.get("c", [""])[0]
+                ok = (c and launch_code_take(c)) or (
+                    k and secrets.compare_digest(k, SERVER_TOKEN or ""))
+                if not ok:
                     self._err(403, "bad launch token")
                     return
                 self.send_response(302)
@@ -2299,6 +2633,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
+                self.send_header("Content-Security-Policy", page_csp(body))
+                self.send_header("Referrer-Policy", "no-referrer")
                 self.end_headers()
                 self.wfile.write(body)
                 return
@@ -2332,7 +2668,17 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
             if p == "/api/usage":
-                self._json(usage_summary(self.root))
+                u = usage_summary(self.root)
+                u["official"] = official_limits()
+                self._json(u)
+                return
+
+            if p == "/api/events":
+                try:
+                    since = int(qs.get("since", ["-1"])[0])
+                except ValueError:
+                    since = -1
+                self._json(events_since(since))
                 return
 
             if p == "/api/state":
@@ -2387,36 +2733,32 @@ class Handler(BaseHTTPRequestHandler):
                     # access to this server's API or cookies). Allow https so
                     # CDN-based pages (e.g. graphify's vis-network) render.
                     self.send_header("Content-Security-Policy",
+                                     "sandbox allow-scripts; "
                                      "default-src 'unsafe-inline' data: blob: https:")
                 self.end_headers()
                 self.wfile.write(body)
                 return
 
-            if p == "/api/viz/file":
-                name = qs.get("name", [""])[0]
-                if not re.fullmatch(r"[A-Za-z0-9 ._()-]+", name) or name.startswith("."):
-                    self._err(400, "bad name")
-                    return
-                f = VIZ_DIR / name
-                if not f.is_file() or f.suffix.lower() not in VIZ_TYPES:
-                    self._err(404, "not found")
-                    return
-                body = f.read_bytes()
-                if f.suffix.lower() in (".html", ".htm"):
-                    body = fit_graph_html(body)
-                self.send_response(200)
-                self.send_header("Content-Type",
-                                 VIZ_TYPES[f.suffix.lower()] + "; charset=utf-8")
-                self.send_header("Content-Length", str(len(body)))
-                self.send_header("Cache-Control", "no-store")
-                # HTML previews render inside a sandboxed iframe client-side;
-                # CSP here additionally blocks outbound requests from them
-                if f.suffix.lower() in (".html", ".htm"):
-                    self.send_header("Content-Security-Policy",
-                                     "default-src 'unsafe-inline' data: blob:; "
-                                     "script-src 'unsafe-inline'; img-src data: blob:")
-                self.end_headers()
-                self.wfile.write(body)
+            if p == "/api/health":
+                with TERMS_LOCK:
+                    terms = [{"id": t.id, "label": t.label, "alive": t.alive}
+                             for t in TERMS.values()]
+                self._json({"version": VERSION, "pid": os.getpid(),
+                            "uptime_s": round(time.time() - STARTED),
+                            "python": sys.version.split()[0], "os": host_os(),
+                            "terminals": terms,
+                            "caches": {"meta": len(_meta_cache), "usage": len(_usage_cache),
+                                       "sessions": len(_session_cache)},
+                            "recent_errors": list(RECENT_ERRORS)})
+                return
+
+            if p == "/api/term/list":
+                # live terminals, so a reloaded page can re-attach to them
+                with TERMS_LOCK:
+                    self._json([{"id": t.id, "label": t.label, "cwd": t.cwd,
+                                 "alive": t.alive, "cols": t.cols, "rows": t.rows,
+                                 "kind": "claude" if t.is_claude else "shell"}
+                                for t in TERMS.values() if t.alive])
                 return
 
             if p == "/api/projects":
@@ -2441,7 +2783,24 @@ class Handler(BaseHTTPRequestHandler):
                 if not f.is_file():
                     self._err(404, "session not found")
                     return
-                self._json(parse_session(f))
+                self._send_json_bytes(session_json(f))
+                return
+
+            if p == "/api/session/tail":
+                slug = qs.get("project", [""])[0]
+                sid = qs.get("id", [""])[0]
+                if not re.fullmatch(r"[A-Za-z0-9_-]+", sid or ""):
+                    self._err(400, "bad session id")
+                    return
+                f = safe_project_path(self.root, slug) / f"{sid}.jsonl"
+                if not f.is_file():
+                    self._err(404, "session not found")
+                    return
+                try:
+                    since = int(qs.get("since", ["0"])[0])
+                except ValueError:
+                    since = 0
+                self._json(session_tail(f, qs.get("key", [""])[0], since))
                 return
 
             if p == "/api/subagent":
@@ -2502,6 +2861,7 @@ class Handler(BaseHTTPRequestHandler):
         except BrokenPipeError:
             pass
         except Exception as e:  # keep the server alive; report the error
+            LOG.error("GET %s failed\n%s", self.path.split("?")[0], traceback.format_exc())
             self._err(500, f"{type(e).__name__}: {e}")
 
     def do_POST(self):
@@ -2530,6 +2890,10 @@ class Handler(BaseHTTPRequestHandler):
             n = int(self.headers.get("Content-Length") or 0)
             body = json.loads(self.rfile.read(n) or b"{}") if n else {}
             p = u.path
+
+            if p == "/api/launch-code":
+                self._json({"code": launch_code_new()})
+                return
 
             if p == "/api/state":
                 layout = body.get("layout")
@@ -2638,6 +3002,7 @@ class Handler(BaseHTTPRequestHandler):
         except BrokenPipeError:
             pass
         except Exception as e:
+            LOG.error("POST %s failed\n%s", self.path.split("?")[0], traceback.format_exc())
             self._err(500, f"{type(e).__name__}: {e}")
 
     def stream_term(self, qs):
@@ -2683,14 +3048,46 @@ class Handler(BaseHTTPRequestHandler):
             return
 
 
+def print_launch_url(port):
+    """Launcher helper: check the server on `port` holds our token, trade the
+    token for a one-time code, print the /launch URL. Returns an exit code."""
+    import hmac
+    import urllib.request
+    base = f"http://127.0.0.1:{port}"
+    try:
+        tok = TOKEN_FILE.read_text().strip()
+        nonce = secrets.token_hex(16)
+        with urllib.request.urlopen(f"{base}/hello?n={nonce}", timeout=3) as r:
+            mac = json.loads(r.read())["mac"]
+        if not hmac.compare_digest(mac, hello_mac(tok, nonce)):
+            print(f"error: the server on port {port} is not this user's "
+                  f"claude-devtools — refusing to send it the token", file=sys.stderr)
+            return 2
+        req = urllib.request.Request(
+            f"{base}/api/launch-code", method="POST", data=b"{}",
+            headers={"Content-Type": "application/json", "X-Devtools-Token": tok})
+        with urllib.request.urlopen(req, timeout=3) as r:
+            code = json.loads(r.read())["code"]
+    except (OSError, ValueError, KeyError) as e:
+        print(f"error: could not get a login code from {base}: {e}", file=sys.stderr)
+        return 1
+    print(f"{base}/launch?c={code}")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description="claude-devtools-lite")
     ap.add_argument("--port", type=int, default=int(os.environ.get("PORT", 3456)))
     ap.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"))
     ap.add_argument("--root", default=str(CLAUDE_ROOT))
+    ap.add_argument("--launch-url", action="store_true",
+                    help="print a one-time login URL for a running server, then exit")
     args = ap.parse_args()
+    if args.launch_url:
+        sys.exit(print_launch_url(args.port))
 
     global SERVER_PORT, SERVER_TOKEN, ALLOWED_HOSTS
+    setup_logging()
     SERVER_PORT = args.port
     SERVER_TOKEN = load_token()
     ALLOWED_HOSTS = ALLOWED_HOSTS | {args.host.lower()}
@@ -2711,8 +3108,10 @@ def main():
               f"their transcripts are saved", file=sys.stderr)
 
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f"claude-devtools-lite → http://{args.host}:{args.port}/#t={SERVER_TOKEN}")
-    print(f"  (root: {Handler.root}; token file: {TOKEN_FILE})")
+    # never print the token: this output is often redirected to a log file
+    print(f"claude-devtools-lite → http://{args.host}:{args.port}/")
+    print(f"  (root: {Handler.root}; token file: {TOKEN_FILE}; "
+          f"login URL: python3 server.py --launch-url --port {args.port})")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

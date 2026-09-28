@@ -22,3 +22,6 @@ __pycache__/
 
 # live working plan for the PLAN pane (per-machine)
 .claude/plan.md
+
+# graphify knowledge-graph output
+graphify-out/

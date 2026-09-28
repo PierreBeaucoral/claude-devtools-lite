@@ -12,6 +12,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -271,6 +272,34 @@ def test_launch_exchanges_token_for_cookie(http_server):
     assert code == 403
 
 
+def test_launch_code_is_single_use(http_server):
+    H = {"X-Devtools-Token": "a" * 48, "Content-Type": "application/json"}
+    code, body = fetch(http_server + "/api/launch-code", "POST", H, b"{}")
+    assert code == 200
+    c = json.loads(body)["code"]
+
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *a, **k):
+            return None
+    opener = urllib.request.build_opener(NoRedirect)
+    with pytest.raises(urllib.error.HTTPError) as e:
+        opener.open(http_server + "/launch?c=" + c, timeout=5)
+    assert e.value.code == 302 and "cdl=" + "a" * 48 in e.value.headers["Set-Cookie"]
+    code, _ = fetch(http_server + "/launch?c=" + c)      # replay refused
+    assert code == 403
+    code, _ = fetch(http_server + "/api/launch-code", "POST",
+                    {"Content-Type": "application/json"}, b"{}")
+    assert code == 401                                   # minting needs the token
+
+
+def test_hello_proves_token_without_revealing_it(http_server):
+    code, body = fetch(http_server + "/hello?n=" + "ab" * 16)
+    assert code == 200
+    mac = json.loads(body)["mac"]
+    assert mac == srv.hello_mac("a" * 48, "ab" * 16) and "a" * 48 not in body.decode()
+    assert fetch(http_server + "/hello?n=zz")[0] == 400
+
+
 def test_cookie_authenticates(http_server):
     code, body = fetch(http_server + "/api/projects",
                        headers={"Cookie": "cdl=" + "a" * 48})
@@ -288,6 +317,34 @@ def test_sensitive_filenames_blocked():
     for name in ("notes.md", "analysis.R", "graph.html", "settings.json",
                  "data.csv", "main.tex"):
         assert not srv.is_sensitive(name), name
+
+
+def test_page_csp_pins_the_inline_script(http_server):
+    # the CSP hash must match the served inline <script>, or the page is blank;
+    # and no other inline script may run (an XSS payload would be one)
+    import base64, hashlib, re
+    with urllib.request.urlopen(http_server + "/", timeout=5) as r:
+        body, csp = r.read(), r.headers["Content-Security-Policy"]
+        assert r.headers["X-Content-Type-Options"] == "nosniff"
+    inline = re.search(rb"<script>(.*?)</script>", body, re.S).group(1)
+    want = base64.b64encode(hashlib.sha256(inline).digest()).decode()
+    assert f"'sha256-{want}'" in csp
+    assert "'unsafe-inline'" not in csp.split("script-src", 1)[1].split(";")[0]
+    assert "frame-ancestors 'none'" in csp
+
+
+def test_html_preview_is_sandboxed_even_top_level(http_server):
+    home = Path.home()
+    f = home / ".cdl-test-preview.html"
+    f.write_text("<script>1</script>")
+    try:
+        req = urllib.request.Request(
+            http_server + "/api/fs/file?path=" + urllib.parse.quote(str(f)),
+            headers={"X-Devtools-Token": "a" * 48})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            assert r.headers["Content-Security-Policy"].startswith("sandbox allow-scripts")
+    finally:
+        f.unlink()
 
 
 def test_sensitive_file_refused_over_http(http_server, tmp_path):
@@ -333,13 +390,35 @@ def test_foreign_host_header_refused(http_server):
     assert code == 200
 
 
-def test_log_redacts_tokens(capsys):
+@pytest.fixture
+def log_lines():
+    import logging
+    lines = []
+    h = logging.Handler()
+    h.emit = lambda r: lines.append(r.getMessage())
+    srv.LOG.addHandler(h)
+    yield lines
+    srv.LOG.removeHandler(h)
+
+
+def test_log_redacts_tokens(log_lines):
     h = srv.Handler.__new__(srv.Handler)
     srv.Handler.log_message(h, '"GET /api/viz?token=%s HTTP/1.1"', "a" * 48)
-    err = capsys.readouterr().err
-    assert "a" * 48 not in err and "[redacted]" in err
+    assert "a" * 48 not in log_lines[-1] and "[redacted]" in log_lines[-1]
     srv.Handler.log_message(h, '"GET /launch?k=%s HTTP/1.1"', "b" * 48)
-    assert "b" * 48 not in capsys.readouterr().err
+    srv.Handler.log_message(h, '"GET /launch?c=%s HTTP/1.1"', "c" * 32)
+    assert not any("b" * 48 in l or "c" * 32 in l for l in log_lines)
+
+
+def test_only_errors_and_slow_requests_are_logged(http_server, log_lines):
+    fetch(http_server + "/api/projects", headers={"X-Devtools-Token": "a" * 48})
+    assert not any("/api/projects" in l for l in log_lines)       # a normal poll
+    fetch(http_server + "/api/nope", headers={"X-Devtools-Token": "a" * 48})
+    assert any("/api/nope" in l and " 404 " in l for l in log_lines)
+    code, body = fetch(http_server + "/api/health", headers={"X-Devtools-Token": "a" * 48})
+    h = json.loads(body)
+    assert code == 200 and h["version"] == srv.VERSION and "a" * 48 not in body.decode()
+    assert any("/api/nope" in e["req"] for e in h["recent_errors"])
 
 
 def test_token_and_state_live_outside_repo():
@@ -677,10 +756,24 @@ def test_plan_toggle_preserves_crlf_and_indentation(plan_project):
 
 # ------------------------------------------------------- end-of-session improve
 
-def test_mangle_cwd_matches_claude_code_project_dirs():
+def test_mangle_cwd_names_report_folders():
     assert srv.mangle_cwd("/Users/x/Docs/Cours MACRO 1/app") == \
         "-Users-x-Docs-Cours-MACRO-1-app"
     assert srv.mangle_cwd("/a/b.c") == "-a-b-c"
+
+
+@pytest.mark.parametrize("cwd, slug", [
+    ("/Users/x/data/session_logs", "-Users-x-data-session-logs"),          # underscore
+    ("/Users/x/Thèse", "-Users-x-Th-se"),                                  # non-ASCII
+    ("C:\\Users\\x\\proj", "C--Users-x-proj"),                            # Windows
+    ("/Users/x/" + "d" * 240, "-Users-x-" + "d" * 190 + "-fi4zme"),          # truncated+hash
+])
+def test_project_dir_found_whatever_claude_code_named_it(tmp_path, cwd, slug):
+    d = tmp_path / "projects" / slug
+    d.mkdir(parents=True)
+    write_session(d / "s.jsonl", [dict(rec_user("hi"), cwd=cwd)])
+    assert srv.project_dir_for_cwd(tmp_path, cwd) == d
+    assert srv.project_dir_for_cwd(tmp_path, "/nowhere") is None
 
 
 def test_improve_never_runs_inside_its_own_retrospective(monkeypatch, tmp_path):
@@ -934,12 +1027,12 @@ def test_shipped_addons_manifest_is_complete():
     assert len(ids) == len(set(ids))
     for a in data["addons"]:
         assert srv.ADDON_ID_RE.fullmatch(a["id"]), a["id"]
-        assert a["check"]["kind"] in ("skill", "command", "plugin"), a["id"]
+        assert a["check"]["kind"] in ("skill", "command", "plugin", "statusline", "hook"), a["id"]
         for plat in ("posix", "windows"):
             assert a["install"][plat], f"{a['id']} has no {plat} commands"
         assert a["source"].startswith("https://"), a["id"]
     used = {a["id"] for a in data["addons"] if a.get("used_by_app")}
-    assert used == {"graphify", "improve"}
+    assert used == {"graphify", "improve"}   # the tees edit settings.json: opt-in only
 
 
 def test_addon_detection_by_kind(tmp_path):
@@ -1091,3 +1184,183 @@ def test_windows_without_winget_gets_the_fallback(tmp_path, monkeypatch):
     monkeypatch.setattr(srv, "program_on_path", lambda n: n == "winget")
     st = srv.addons_status(root=tmp_path, manifest=manifest)
     assert st["prerequisites"]["zz"]["commands"] == ["winget install zz"]
+
+
+# ---------------------------------------------------------------- term lifecycle
+
+def test_term_cap_refuses_before_spawning(monkeypatch):
+    spawned = []
+
+    class Fake:
+        def __init__(self, *a, **k):
+            spawned.append(1)
+            self.id, self.alive = str(len(spawned)), True
+    monkeypatch.setattr(srv, "HAS_TERMINAL", True)
+    monkeypatch.setattr(srv, "HAS_PTY", True)
+    monkeypatch.setattr(srv, "PosixTerm", Fake)
+    monkeypatch.setattr(srv, "TERMS", {})
+    for _ in range(srv.MAX_TERMS):
+        srv.start_term("shell", None)
+    with pytest.raises(RuntimeError):
+        srv.start_term("shell", None)
+    assert len(spawned) == srv.MAX_TERMS       # the refused one never forked
+
+
+@pytest.mark.skipif(not getattr(srv, "HAS_PTY", False), reason="POSIX pty only")
+def test_child_that_exits_by_itself_is_reaped():
+    t = srv.PosixTerm(["/bin/sh", "-c", "echo bye"], "/tmp")
+    deadline = time.time() + 5
+    while not t._finished and time.time() < deadline:
+        time.sleep(0.05)
+    assert t._finished and not t.alive
+    with pytest.raises(ChildProcessError):     # already reaped: no zombie
+        os.waitpid(t.pid, os.WNOHANG)
+
+
+def test_viz_missing_override_dir_returns_empty():
+    d = Path.home() / ".cdl-test-gone-viz"
+    files, where = srv.viz_list(str(d))
+    assert files == [] and where == d
+
+
+def test_non_command_hooks_are_named_by_type():
+    reg = srv.hook_registrations({"hooks": {
+        "PermissionRequest": [{"hooks": [{"type": "http", "url": "https://hooks.example/x"}]}],
+        "Stop": [{"hooks": [{"type": "prompt", "prompt": "check"}]}]}})
+    assert reg == {"PermissionRequest": ["http: hooks.example"], "Stop": ["prompt"]}
+    assert "PermissionRequest" in srv.HOOK_EVENTS and len(srv.HOOK_EVENTS) == 33
+
+
+def test_one_version_everywhere():
+    import re
+    cff = (HERE.parent / "CITATION.cff").read_text()
+    assert re.search(r'^version: "([^"]+)"', cff, re.M).group(1) == srv.VERSION
+    assert srv.Handler.server_version.endswith("/" + srv.VERSION)
+
+
+# ---------------------------------------------------------------- search
+
+@pytest.fixture
+def search_root(tmp_path):
+    d = tmp_path / "projects" / "-Users-x-proj"
+    write_session(d / "s1.jsonl", [rec_user('say "normal mode" please'),
+                                   rec_assistant([{"type": "text", "text": "Thèse chapter done"}])])
+    write_session(d / "s1" / "subagents" / "agent-a1.jsonl",
+                  [rec_assistant([{"type": "text", "text": "subagent found the needle"}])])
+    write_session(tmp_path / "projects" / "-Users-x-other" / "s2.jsonl", [rec_user("needle elsewhere")])
+    return tmp_path
+
+
+def test_search_finds_quoted_text_accents_and_subagents(search_root):
+    assert [r["session"] for r in srv.search_all(search_root, '"normal mode"')] == ["s1"]
+    assert srv.search_all(search_root, "THÈSE")[0]["type"] == "assistant"      # non-ASCII path
+    hits = srv.search_all(search_root, "needle")
+    assert {(r["session"], r.get("agent")) for r in hits} == {("s1", "agent-a1.jsonl"), ("s2", None)}
+    scoped = srv.search_all(search_root, "needle", project="-Users-x-proj")
+    assert [r.get("agent") for r in scoped] == ["agent-a1.jsonl"]
+
+
+def test_search_precheck_spans_chunk_boundaries(search_root, monkeypatch):
+    monkeypatch.setattr(srv, "SEARCH_CHUNK", 7)      # "needle" straddles every chunk
+    assert len(srv.search_all(search_root, "needle")) == 2
+    assert srv.search_all(search_root, "absent-word") == []
+
+
+def test_session_json_is_cached_until_the_file_changes(tmp_path, monkeypatch):
+    f = tmp_path / "s.jsonl"
+    write_session(f, [rec_user("hello")])
+    calls = []
+    real = srv.parse_session
+    monkeypatch.setattr(srv, "parse_session", lambda p, **k: calls.append(p) or real(p, **k))
+    monkeypatch.setattr(srv, "_session_cache", {})
+    a = srv.session_json(f)
+    assert srv.session_json(f) is a and len(calls) == 1          # hit
+    with open(f, "a") as fh:                                      # live session grows
+        fh.write(json.dumps(rec_user("more", uuid="u2")) + "\n")
+    assert b"more" in srv.session_json(f) and len(calls) == 2
+    assert json.loads(a)["entries"] == real(tmp_path / "s.jsonl")["entries"][:1]
+
+
+# ---------------------------------------------------------------- tees (tools/devtools_hooks.py)
+
+def _hooks_mod(tmp_path, monkeypatch):
+    spec = importlib.util.spec_from_file_location("cdl_hooks", HERE.parent / "tools" / "devtools_hooks.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    for k, v in {"APP_DIR": tmp_path, "STATUS_DIR": tmp_path / "status",
+                 "EVENTS": tmp_path / "events.jsonl", "INNER": tmp_path / "inner.json",
+                 "SETTINGS": tmp_path / "settings.json"}.items():
+        monkeypatch.setattr(m, k, v)
+    return m
+
+
+def test_event_tee_keeps_metadata_never_inputs(tmp_path, monkeypatch):
+    m = _hooks_mod(tmp_path, monkeypatch)
+    m.event(json.dumps({"hook_event_name": "PreToolUse", "session_id": "s1", "tool_name": "Bash",
+                        "tool_input": {"command": "export API_KEY=sk-secret"}}))
+    line = (tmp_path / "events.jsonl").read_text()
+    assert "Bash" in line and "sk-secret" not in line and "tool_input" not in line
+
+
+def test_statusline_tee_saves_status_and_runs_the_wrapped_line(tmp_path, monkeypatch, capsys):
+    m = _hooks_mod(tmp_path, monkeypatch)
+    (tmp_path / "inner.json").write_text(json.dumps({"command": "cat"}))
+    payload = json.dumps({"session_id": "abc", "rate_limits": {"five_hour": {"used_percentage": 42}}})
+    assert m.statusline(payload) == 0
+    assert capsys.readouterr().out == payload                    # passed through unchanged
+    assert json.loads((tmp_path / "status" / "abc.json").read_text())["rate_limits"]
+
+
+def test_tee_install_wraps_and_uninstall_restores(tmp_path, monkeypatch):
+    m = _hooks_mod(tmp_path, monkeypatch)
+    (tmp_path / "settings.json").write_text(json.dumps(
+        {"statusLine": {"type": "command", "command": "my-line"}, "hooks": {"Stop": [
+            {"hooks": [{"type": "command", "command": "mine.sh"}]}]}}))
+    m.install_statusline(); m.install_events(); m.install_events()      # idempotent
+    st = json.loads((tmp_path / "settings.json").read_text())
+    assert "devtools_hooks.py" in st["statusLine"]["command"]
+    assert srv.addon_installed({"kind": "statusline", "name": "devtools_hooks.py"}, tmp_path)
+    assert srv.addon_installed({"kind": "hook", "name": "devtools_hooks.py"}, tmp_path)
+    assert sum("devtools_hooks.py" in json.dumps(e) for e in st["hooks"]["Stop"]) == 1
+    m.uninstall_statusline(); m.uninstall_events()
+    st = json.loads((tmp_path / "settings.json").read_text())
+    assert st == {"statusLine": {"type": "command", "command": "my-line"},
+                  "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "mine.sh"}]}]}}
+    assert (tmp_path / "settings.json.bak-devtools").exists()
+
+
+def test_official_limits_and_events_tail(tmp_path, monkeypatch):
+    monkeypatch.setattr(srv, "APP_DIR", tmp_path)
+    monkeypatch.setattr(srv, "EVENTS_FILE", tmp_path / "events.jsonl")
+    assert srv.official_limits() is None
+    (tmp_path / "status").mkdir()
+    f = tmp_path / "status" / "s.json"
+    f.write_text(json.dumps({"session_id": "s", "rate_limits": {"five_hour": {"used_percentage": 42}}}))
+    assert srv.official_limits()["five_hour"]["used_percentage"] == 42
+    old = time.time() - srv.STATUS_TTL - 5
+    os.utime(f, (old, old))
+    assert srv.official_limits() is None                          # stale is ignored
+    assert srv.events_since(0)["enabled"] is False
+    (tmp_path / "events.jsonl").write_text('{"a":1}\n{"a":2}\n{"a":')   # last line incomplete
+    first = srv.events_since(-1)
+    assert first["events"] == [] and first["offset"] > 0          # fresh page starts live
+    r = srv.events_since(0)
+    assert [e["a"] for e in r["events"]] == [1, 2]
+    assert srv.events_since(10**9)["events"] == r["events"]      # rotated: restart at 0
+
+
+def test_session_tail_splices_to_a_full_parse(tmp_path):
+    f = tmp_path / "s.jsonl"
+    use = {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}}
+    write_session(f, [rec_user("go"), rec_assistant([use])])
+    first = srv.session_tail(f, "", 0)
+    ents = first["entries"]
+    r = srv.session_tail(f, first["key"], len(ents))
+    assert r == {"key": first["key"], "unchanged": True}          # nothing moved: just a stat
+    with open(f, "a") as fh:                                     # the tool result lands later
+        fh.write(json.dumps({"type": "user", "uuid": "u9", "timestamp": "2026-07-28T10:00:09.000Z",
+                             "message": {"role": "user", "content": [
+                                 {"type": "tool_result", "tool_use_id": "t1", "content": "a.txt"}]}}) + "\n")
+    r = srv.session_tail(f, first["key"], len(ents))
+    spliced = ents[:r["start"]] + r["entries"]
+    assert spliced == srv.parse_session(f)["entries"] and r["total"] == len(spliced)
