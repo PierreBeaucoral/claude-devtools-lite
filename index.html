@@ -504,20 +504,20 @@
   #statusbar.off #sbConn, #statusbar.off .sbdot { color:var(--err); }
   #statusbar .sbshrink { flex:0 1 auto; }
   /* ---------- command palette (DES-3) ---------- */
-  dialog.cp { margin:12vh auto auto; width:min(640px, 92vw); max-height:70vh; }
+  dialog.cp { margin:10vh auto auto; width:min(860px, 94vw); height:min(560px, 76vh); max-height:76vh; }
   #cpin { width:100%; border:none; border-bottom:1px solid var(--border-strong); background:transparent;
-          color:var(--fg); padding:12px 14px; font-size:14px; flex:none; }
+          color:var(--fg); padding:16px 18px; font-size:17px; flex:none; }
   #cpin:focus { outline:none; border-bottom-color:var(--focus); }
   #cplist { list-style:none; margin:0; padding:4px; overflow-y:auto; min-height:0; flex:1; }
-  .cpi { display:flex; align-items:center; gap:10px; padding:0 10px; min-height:32px;
-         border-radius:6px; font-size:13px; cursor:pointer; }
+  .cpi { display:flex; align-items:center; gap:12px; padding:0 12px; min-height:40px;
+         border-radius:6px; font-size:14.5px; cursor:pointer; }
   .cpi[aria-selected="true"] { background:var(--panel2); box-shadow:inset 2px 0 0 var(--accent); }
   .cpi .x { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .cpi .g { color:var(--dim); font-size:11px; flex:none; max-width:40%; overflow:hidden;
+  .cpi .g { color:var(--dim); font-size:12.5px; flex:none; max-width:40%; overflow:hidden;
             text-overflow:ellipsis; white-space:nowrap; }
   .cpi mark { background:none; color:var(--accent); font-weight:700; padding:0; }
-  .cpempty { padding:10px 12px; color:var(--dim); font-size:12px; }
-  .cphint { flex:none; padding:6px 12px; border-top:1px solid var(--border); color:var(--dim); font-size:11px; }
+  .cpempty { padding:12px 14px; color:var(--dim); font-size:13.5px; }
+  .cphint { flex:none; padding:8px 14px; border-top:1px solid var(--border); color:var(--dim); font-size:12.5px; }
   kbd { font:600 10.5px/1 var(--mono); padding:2px 5px; border-radius:4px; flex:none;
         border:1px solid var(--border-strong); color:var(--dim); background:var(--panel); }
   #keys table { border-collapse:collapse; font-size:12.5px; margin:0 18px 6px; }
