@@ -171,6 +171,11 @@ It also opens by itself at launch while something is missing; tick
 
 - Ticked add-ons install in a **visible terminal tab**, with the exact commands shown
   in the pane first. Nothing installs without that click
+- **Ticking an installed add-on reinstalls it cleanly** (plugin uninstalled and
+  reinstalled, skill folder re-cloned, `uv tool install --force` for graphify) — the fix
+  when an install was interrupted, e.g. by closing the app mid-way
+- ponytail and codex need **Node.js**: their hooks run `node` on every prompt, so without
+  it Claude shows a "UserPromptSubmit hook error" (typical on a fresh Windows PC)
 - An add-on whose prerequisite is missing (`uv`, `git`, the `codex` CLI…) says so and
   can't be ticked, rather than failing halfway
 - Statuses refresh on their own while the pane is open. Claude sessions already running

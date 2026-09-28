@@ -1546,13 +1546,17 @@ def addons_status(root=None, manifest=None):
         if not ADDON_ID_RE.fullmatch(str(a.get("id", ""))):
             continue
         cmds = (a.get("install") or {}).get(plat) or []
+        # ticking an installed add-on reinstalls it: a clean redo for when an
+        # install was interrupted (app closed mid-way) or left it half-working
+        redo = (a.get("reinstall") or {}).get(plat) or cmds
         out.append({"id": a["id"], "name": a.get("name", a["id"]),
                     "used_by_app": bool(a.get("used_by_app")),
                     "unlocks": a.get("unlocks", ""), "source": a.get("source", ""),
                     "installed": addon_installed(a.get("check"), root, plugins),
                     "missing_needs": [n for n in a.get("needs", [])
                                       if not program_on_path(n)],
-                    "commands": [str(c) for c in cmds]})
+                    "commands": [str(c) for c in cmds],
+                    "reinstall": [str(c) for c in redo]})
     return {"platform": plat, "addons": out}
 
 

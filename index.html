@@ -2622,19 +2622,22 @@ const missingIds = () => AD.list.filter(a => !a.installed).map(a => a.id).sort()
 function renderAddons(){
   const box = $("#adlist"); box.innerHTML = "";
   for(const a of AD.list){
-    const blocked = !a.installed && a.missing_needs.length;
-    if(a.installed || blocked) AD.picked.delete(a.id);
+    const blocked = a.missing_needs.length > 0;
+    if(blocked) AD.picked.delete(a.id);
+    const redo = a.installed && AD.picked.has(a.id);
     const row = document.createElement("label");
     row.className = "adrow";
     row.innerHTML = `<input type="checkbox"${AD.picked.has(a.id) ? " checked" : ""}
-        ${a.installed || blocked ? " disabled" : ""}>
+        ${blocked ? " disabled" : ""} title="${a.installed ? "tick to reinstall it cleanly" : "tick to install"}">
       <div class="main">
         <div class="nm"></div>
         <div class="un"></div>
-        ${blocked ? `<div class="need">Needs ${a.missing_needs.map(esc).join(", ")} on your PATH first.</div>` : ""}
+        ${blocked ? `<div class="need">Needs ${a.missing_needs.map(esc).join(", ")} on your PATH first${
+            a.installed ? " — until then it may fail (e.g. hook errors in Claude)" : ""}.</div>` : ""}
         <div class="src"><a target="_blank" rel="noreferrer"></a></div>
       </div>
-      <span class="st ${a.installed ? "ok" : "miss"}">${a.installed ? "installed ✓" : "not installed"}</span>`;
+      <span class="st ${redo ? "miss" : a.installed ? "ok" : "miss"}">${
+        redo ? "will reinstall" : a.installed ? "installed ✓" : "not installed"}</span>`;
     row.querySelector(".nm").textContent = a.name;
     if(a.used_by_app) row.querySelector(".nm").insertAdjacentHTML("beforeend",
       '<span class="used" title="a feature of this dashboard uses it">used by the app</span>');
@@ -2644,7 +2647,7 @@ function renderAddons(){
     link.textContent = a.source.replace(/^https:\/\//, "");
     row.querySelector("input").onchange = e => {
       e.target.checked ? AD.picked.add(a.id) : AD.picked.delete(a.id);
-      renderAddonCmds();
+      renderAddons();                      // badge flips to "will reinstall"
     };
     box.appendChild(row);
   }
@@ -2652,17 +2655,23 @@ function renderAddons(){
 }
 function addonScript(){
   const win = AD.platform === "windows";
-  return AD.list.filter(a => AD.picked.has(a.id)).map(a =>
-    (win ? `echo [install] ${a.name}` : `echo '[install] ${a.name}'`)
-    + " && " + a.commands.join(" && "));
+  return AD.list.filter(a => AD.picked.has(a.id)).map(a => {
+    const verb = a.installed ? "reinstall" : "install";
+    return (win ? `echo [${verb}] ${a.name}` : `echo '[${verb}] ${a.name}'`)
+      + " && " + (a.installed ? a.reinstall : a.commands).join(" && ");
+  });
 }
 function renderAddonCmds(){
   const lines = addonScript();
   $("#adcmds").textContent = lines.length ? lines.join("\n")
-    : AD.list.every(a => a.installed) ? "Everything on the list is installed."
-    : "Tick an add-on to see the commands that will run.";
+    : AD.list.every(a => a.installed)
+      ? "Everything on the list is installed. Tick one to reinstall it cleanly (e.g. after an interrupted install)."
+    : "Tick an add-on to see the commands that will run. Ticking an installed one reinstalls it.";
   $("#adgo").disabled = !lines.length;
-  $("#adgo").textContent = lines.length ? `Install ${lines.length} selected` : "Install selected";
+  const redo = AD.list.filter(a => AD.picked.has(a.id) && a.installed).length;
+  $("#adgo").textContent = !lines.length ? "Install selected"
+    : redo === lines.length ? `Reinstall ${redo} selected`
+    : `Install ${lines.length} selected` + (redo ? ` (${redo} reinstall)` : "");
 }
 
 async function openAddons(preselect){

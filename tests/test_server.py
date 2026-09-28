@@ -985,8 +985,14 @@ def test_improve_is_skipped_when_the_command_is_not_installed(tmp_path, monkeypa
 
 
 def _joined_install_lines(plat):
+    """Every line the pane can send: install, and reinstall where defined."""
     data = json.loads((HERE.parent / "addons.json").read_text())
-    return {a["id"]: " && ".join(a["install"][plat]) for a in data["addons"]}
+    out = {}
+    for a in data["addons"]:
+        for key in ("install", "reinstall"):
+            if a.get(key):
+                out[f"{a['id']}:{key}"] = " && ".join(a[key][plat])
+    return out
 
 
 @pytest.mark.parametrize("shell", ["sh", "bash", "zsh"])
@@ -1012,3 +1018,18 @@ def test_windows_install_lines_are_safe_to_chain_in_cmd():
         for m in re.finditer(r"(^|&&|\(|\|\|)\s*(\S+)", line):
             assert m.group(2) != "claude", f"{aid}: `claude` without `call`"
         assert line.count("(") == line.count(")"), aid
+
+
+def test_reinstall_falls_back_to_install_and_node_hooks_need_node(tmp_path):
+    manifest = tmp_path / "addons.json"
+    manifest.write_text(json.dumps({"addons": [
+        {"id": "a", "check": {"kind": "skill", "name": "a"},
+         "install": {"posix": ["i"], "windows": ["i"]}},
+        {"id": "b", "check": {"kind": "skill", "name": "b"},
+         "install": {"posix": ["i"], "windows": ["i"]},
+         "reinstall": {"posix": ["r"], "windows": ["r"]}}]}))
+    st = {a["id"]: a for a in srv.addons_status(root=tmp_path, manifest=manifest)["addons"]}
+    assert st["a"]["reinstall"] == ["i"] and st["b"]["reinstall"] == ["r"]
+    shipped = {a["id"]: a for a in json.loads((HERE.parent / "addons.json").read_text())["addons"]}
+    for aid in ("ponytail", "codex"):          # their hooks are `node …`
+        assert "node" in shipped[aid]["needs"], aid

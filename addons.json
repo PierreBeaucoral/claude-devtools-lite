@@ -1,5 +1,5 @@
 {
-  "_comment": "Optional Claude Code add-ons offered by the Add-ons pane (🧩). The app only ever runs the install commands written here: edit this list to change what it proposes. check.kind: skill = ~/.claude/skills/<name>/SKILL.md, command = ~/.claude/commands/<name>.md, plugin = <name>@<marketplace> in ~/.claude/plugins/installed_plugins.json. needs = programs that must be on PATH first. install.posix runs in the login shell (macOS/Linux), install.windows in cmd.exe; an add-on's lines are joined with && into ONE line, so each must be safe to chain: group any a || b in parentheses, never use cmd's `if` (it swallows the rest of the line), and prefix `claude` with `call` on Windows (npm installs it as a .cmd).",
+  "_comment": "Optional Claude Code add-ons offered by the Add-ons pane (🧩). The app only ever runs the install commands written here: edit this list to change what it proposes. check.kind: skill = ~/.claude/skills/<name>/SKILL.md, command = ~/.claude/commands/<name>.md, plugin = <name>@<marketplace> in ~/.claude/plugins/installed_plugins.json. needs = programs that must be on PATH first. install.posix runs in the login shell (macOS/Linux), install.windows in cmd.exe; an add-on's lines are joined with && into ONE line, so each must be safe to chain: group any a || b in parentheses, never use cmd's `if` (it swallows the rest of the line), and prefix `claude` with `call` on Windows (npm installs it as a .cmd). reinstall (optional, same shape as install) is what the pane runs when an installed add-on is ticked again; without it, install is re-run.",
   "addons": [
     {
       "id": "graphify",
@@ -22,6 +22,18 @@
         ],
         "windows": [
           "uv tool install graphifyy",
+          "uv tool update-shell",
+          "uv tool run --from graphifyy graphify install --platform windows"
+        ]
+      },
+      "reinstall": {
+        "posix": [
+          "uv tool install --force graphifyy",
+          "uv tool update-shell",
+          "uv tool run --from graphifyy graphify install"
+        ],
+        "windows": [
+          "uv tool install --force graphifyy",
           "uv tool update-shell",
           "uv tool run --from graphifyy graphify install --platform windows"
         ]
@@ -53,14 +65,15 @@
       "id": "ponytail",
       "name": "ponytail",
       "used_by_app": false,
-      "unlocks": "Plugin that pushes Claude toward the smallest code that works.",
+      "unlocks": "Plugin that pushes Claude toward the smallest code that works. Its hooks run on Node.js.",
       "source": "https://github.com/DietrichGebert/ponytail",
       "check": {
         "kind": "plugin",
         "name": "ponytail@ponytail"
       },
       "needs": [
-        "claude"
+        "claude",
+        "node"
       ],
       "install": {
         "posix": [
@@ -69,6 +82,18 @@
         ],
         "windows": [
           "(call claude plugin marketplace add DietrichGebert/ponytail || echo marketplace already added)",
+          "call claude plugin install ponytail@ponytail"
+        ]
+      },
+      "reinstall": {
+        "posix": [
+          "(claude plugin uninstall ponytail@ponytail || echo was not installed)",
+          "(claude plugin marketplace update ponytail || claude plugin marketplace add DietrichGebert/ponytail)",
+          "claude plugin install ponytail@ponytail"
+        ],
+        "windows": [
+          "(call claude plugin uninstall ponytail@ponytail || echo was not installed)",
+          "(call claude plugin marketplace update ponytail || call claude plugin marketplace add DietrichGebert/ponytail)",
           "call claude plugin install ponytail@ponytail"
         ]
       }
@@ -95,6 +120,18 @@
           "(call claude plugin marketplace add anthropics/claude-plugins-official || echo marketplace already added)",
           "call claude plugin install frontend-design@claude-plugins-official"
         ]
+      },
+      "reinstall": {
+        "posix": [
+          "(claude plugin uninstall frontend-design@claude-plugins-official || echo was not installed)",
+          "(claude plugin marketplace update claude-plugins-official || claude plugin marketplace add anthropics/claude-plugins-official)",
+          "claude plugin install frontend-design@claude-plugins-official"
+        ],
+        "windows": [
+          "(call claude plugin uninstall frontend-design@claude-plugins-official || echo was not installed)",
+          "(call claude plugin marketplace update claude-plugins-official || call claude plugin marketplace add anthropics/claude-plugins-official)",
+          "call claude plugin install frontend-design@claude-plugins-official"
+        ]
       }
     },
     {
@@ -109,7 +146,8 @@
       },
       "needs": [
         "claude",
-        "codex"
+        "codex",
+        "node"
       ],
       "install": {
         "posix": [
@@ -118,6 +156,18 @@
         ],
         "windows": [
           "(call claude plugin marketplace add openai/codex-plugin-cc || echo marketplace already added)",
+          "call claude plugin install codex@openai-codex"
+        ]
+      },
+      "reinstall": {
+        "posix": [
+          "(claude plugin uninstall codex@openai-codex || echo was not installed)",
+          "(claude plugin marketplace update openai-codex || claude plugin marketplace add openai/codex-plugin-cc)",
+          "claude plugin install codex@openai-codex"
+        ],
+        "windows": [
+          "(call claude plugin uninstall codex@openai-codex || echo was not installed)",
+          "(call claude plugin marketplace update openai-codex || call claude plugin marketplace add openai/codex-plugin-cc)",
           "call claude plugin install codex@openai-codex"
         ]
       }
@@ -142,6 +192,16 @@
         "windows": [
           "(git clone https://github.com/jusi-aalto/crossref.git \"%USERPROFILE%\\.claude\\skills\\crossref\" || git -C \"%USERPROFILE%\\.claude\\skills\\crossref\" pull)"
         ]
+      },
+      "reinstall": {
+        "posix": [
+          "rm -rf ~/.claude/skills/crossref",
+          "git clone https://github.com/jusi-aalto/crossref.git ~/.claude/skills/crossref"
+        ],
+        "windows": [
+          "(rmdir /s /q \"%USERPROFILE%\\.claude\\skills\\crossref\" 2>nul || ver >nul)",
+          "git clone https://github.com/jusi-aalto/crossref.git \"%USERPROFILE%\\.claude\\skills\\crossref\""
+        ]
       }
     },
     {
@@ -163,6 +223,16 @@
         ],
         "windows": [
           "(git clone https://github.com/grandamenium/dream-skill.git \"%USERPROFILE%\\.claude\\skills\\dream\" || git -C \"%USERPROFILE%\\.claude\\skills\\dream\" pull)"
+        ]
+      },
+      "reinstall": {
+        "posix": [
+          "rm -rf ~/.claude/skills/dream",
+          "git clone https://github.com/grandamenium/dream-skill.git ~/.claude/skills/dream"
+        ],
+        "windows": [
+          "(rmdir /s /q \"%USERPROFILE%\\.claude\\skills\\dream\" 2>nul || ver >nul)",
+          "git clone https://github.com/grandamenium/dream-skill.git \"%USERPROFILE%\\.claude\\skills\\dream\""
         ]
       }
     }
