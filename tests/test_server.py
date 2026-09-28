@@ -988,7 +988,7 @@ def _joined_install_lines(plat):
     """Every line the pane can send: install, reinstall, and prerequisites."""
     data = json.loads((HERE.parent / "addons.json").read_text())
     out = {}
-    oses = ("windows",) if plat == "windows" else ("mac", "linux")
+    oses = ("windows", "windows-nowinget") if plat == "windows" else ("mac", "linux")
     for key, pr in data.get("prerequisites", {}).items():
         for o in oses:
             if pr["install"].get(o):
@@ -1067,3 +1067,27 @@ def test_addons_status_lists_prerequisites_for_this_os(tmp_path):
     want = {"windows": "w", "mac": "m", "linux": "l"}[st["os"]]
     assert x["installed"] is False and x["commands"] == [want]
     assert x["needs"] == ["node"]
+
+
+def test_every_winget_recipe_has_a_no_winget_fallback():
+    """winget isn't on every Windows PC ("winget n'est pas reconnu")."""
+    pre = json.loads((HERE.parent / "addons.json").read_text())["prerequisites"]
+    for key, pr in pre.items():
+        win = " ".join(pr["install"].get("windows", []))
+        if "winget" in win:
+            fb = " ".join(pr["install"].get("windows-nowinget", []))
+            assert fb and "winget" not in fb, f"{key}: no fallback without winget"
+
+
+def test_windows_without_winget_gets_the_fallback(tmp_path, monkeypatch):
+    manifest = tmp_path / "addons.json"
+    manifest.write_text(json.dumps({"addons": [], "prerequisites": {"zz": {
+        "install": {"windows": ["winget install zz"],
+                    "windows-nowinget": ["powershell zz"]}}}}))
+    monkeypatch.setattr(srv, "host_os", lambda: "windows")
+    monkeypatch.setattr(srv, "program_on_path", lambda n: False)
+    st = srv.addons_status(root=tmp_path, manifest=manifest)
+    assert st["prerequisites"]["zz"]["commands"] == ["powershell zz"]
+    monkeypatch.setattr(srv, "program_on_path", lambda n: n == "winget")
+    st = srv.addons_status(root=tmp_path, manifest=manifest)
+    assert st["prerequisites"]["zz"]["commands"] == ["winget install zz"]

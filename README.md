@@ -179,7 +179,8 @@ It also opens by itself at launch while something is missing; tick
 - **Prerequisites are part of the install.** When an add-on needs a program you don't
   have (Node.js, uv, Git, the Codex CLI…), its row says "Also installs: …" with the command
   for *your* OS (Homebrew or the official script on macOS, apt on Debian/Ubuntu, winget
-  on Windows), and Install runs it first. A freshly installed program usually isn't on
+  on Windows — or, on a PC without winget, the program's official installer downloaded
+  with PowerShell), and Install runs it first. A freshly installed program usually isn't on
   PATH in the same window, so the installer works in rounds: prerequisites, then — once
   the app actually sees them — the add-ons, in a fresh terminal. winget, brew and sudo
   may ask a question in that terminal; answer it there

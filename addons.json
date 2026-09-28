@@ -1,5 +1,5 @@
 {
-  "_comment": "Optional Claude Code add-ons offered by the Add-ons pane (🧩). The app only ever runs the install commands written here: edit this list to change what it proposes. check.kind: skill = ~/.claude/skills/<name>/SKILL.md, command = ~/.claude/commands/<name>.md, plugin = <name>@<marketplace> in ~/.claude/plugins/installed_plugins.json. needs = programs that must be on PATH first. install.posix runs in the login shell (macOS/Linux), install.windows in cmd.exe; an add-on's lines are joined with && into ONE line, so each must be safe to chain: group any a || b in parentheses, never use cmd's `if` (it swallows the rest of the line), and prefix `claude` with `call` on Windows (npm installs it as a .cmd). reinstall (optional, same shape as install) is what the pane runs when an installed add-on is ticked again; without it, install is re-run. prerequisites: how to install each program listed in needs, per OS (mac / linux / windows); the pane shows the command and can run it in the visible terminal.",
+  "_comment": "Optional Claude Code add-ons offered by the Add-ons pane (🧩). The app only ever runs the install commands written here: edit this list to change what it proposes. check.kind: skill = ~/.claude/skills/<name>/SKILL.md, command = ~/.claude/commands/<name>.md, plugin = <name>@<marketplace> in ~/.claude/plugins/installed_plugins.json. needs = programs that must be on PATH first. install.posix runs in the login shell (macOS/Linux), install.windows in cmd.exe; an add-on's lines are joined with && into ONE line, so each must be safe to chain: group any a || b in parentheses, never use cmd's `if` (it swallows the rest of the line), and prefix `claude` with `call` on Windows (npm installs it as a .cmd). reinstall (optional, same shape as install) is what the pane runs when an installed add-on is ticked again; without it, install is re-run. prerequisites: how to install each program listed in needs, per OS (mac / linux / windows); the pane shows the command and can run it in the visible terminal. On Windows without winget (older Windows 10, managed PCs), install[\"windows-nowinget\"] is used when present: the program's official installer, downloaded with PowerShell and opened for the user to click through.",
   "addons": [
     {
       "id": "graphify",
@@ -250,6 +250,9 @@
         ],
         "windows": [
           "winget install -e --id OpenJS.NodeJS.LTS"
+        ],
+        "windows-nowinget": [
+          "powershell -NoProfile -ExecutionPolicy Bypass -Command \"[Net.ServicePointManager]::SecurityProtocol = 'Tls12'; $v = (Invoke-RestMethod https://nodejs.org/dist/index.json | Where-Object { $_.lts } | Select-Object -First 1).version; $f = Join-Path $env:TEMP ('node-' + $v + '-x64.msi'); Invoke-WebRequest ('https://nodejs.org/dist/' + $v + '/node-' + $v + '-x64.msi') -OutFile $f; Start-Process $f -Wait\""
         ]
       },
       "note": {
@@ -269,6 +272,9 @@
         ],
         "windows": [
           "winget install -e --id astral-sh.uv"
+        ],
+        "windows-nowinget": [
+          "powershell -NoProfile -ExecutionPolicy Bypass -Command \"[Net.ServicePointManager]::SecurityProtocol = 'Tls12'; irm https://astral.sh/uv/install.ps1 | iex\""
         ]
       }
     },
@@ -284,6 +290,9 @@
         ],
         "windows": [
           "winget install -e --id Git.Git"
+        ],
+        "windows-nowinget": [
+          "powershell -NoProfile -ExecutionPolicy Bypass -Command \"[Net.ServicePointManager]::SecurityProtocol = 'Tls12'; $r = Invoke-RestMethod https://api.github.com/repos/git-for-windows/git/releases/latest; $a = $r.assets | Where-Object { $_.name -like 'Git-*-64-bit.exe' } | Select-Object -First 1; $f = Join-Path $env:TEMP $a.name; Invoke-WebRequest $a.browser_download_url -OutFile $f; Start-Process $f -Wait\""
         ]
       }
     },

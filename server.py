@@ -1532,6 +1532,11 @@ def program_on_path(name):
     return bool(shutil.which(name, path=login_path()))
 
 
+def host_os():
+    return ("windows" if os.name == "nt"
+            else "mac" if sys.platform == "darwin" else "linux")
+
+
 def addons_status(root=None, manifest=None):
     """Every add-on in addons.json with: installed?, missing prerequisites,
     and the install commands for this OS."""
@@ -1539,7 +1544,8 @@ def addons_status(root=None, manifest=None):
         data = json.loads(Path(manifest or ADDONS_FILE).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {"platform": None, "addons": []}
-    plat = "windows" if os.name == "nt" else "posix"
+    osname = host_os()
+    plat = "windows" if osname == "windows" else "posix"
     plugins = installed_plugins(root)
     out = []
     for a in data.get("addons", []):
@@ -1557,8 +1563,11 @@ def addons_status(root=None, manifest=None):
                                       if not program_on_path(n)],
                     "commands": [str(c) for c in cmds],
                     "reinstall": [str(c) for c in redo]})
-    osname = ("windows" if os.name == "nt"
-              else "mac" if sys.platform == "darwin" else "linux")
+    # winget is missing on older Windows 10 and many managed PCs: fall back to
+    # each program's official installer (install["windows-nowinget"])
+    variant = osname
+    if osname == "windows" and not program_on_path("winget"):
+        variant = "windows-nowinget"
     prereqs = {}
     for key, pr in (data.get("prerequisites") or {}).items():
         if not ADDON_ID_RE.fullmatch(str(key)):
@@ -1567,7 +1576,8 @@ def addons_status(root=None, manifest=None):
                         "installed": program_on_path(key),
                         "needs": [n for n in pr.get("needs", [])],
                         "commands": [str(c) for c in
-                                     (pr.get("install") or {}).get(osname) or []],
+                                     (pr.get("install") or {}).get(variant)
+                                     or (pr.get("install") or {}).get(osname) or []],
                         "note": (pr.get("note") or {}).get(osname, "")}
     return {"platform": plat, "os": osname, "addons": out,
             "prerequisites": prereqs}
