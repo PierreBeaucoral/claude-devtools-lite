@@ -20,6 +20,7 @@ AVAILABLE = sys.platform == "win32"
 _S_OK = 0
 _PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = 0x00020016
 _EXTENDED_STARTUPINFO_PRESENT = 0x00080000
+_STARTF_USESTDHANDLES = 0x00000100
 _CREATE_UNICODE_ENVIRONMENT = 0x00000400
 _STILL_ACTIVE = 259
 _ERROR_BROKEN_PIPE = 109
@@ -154,6 +155,9 @@ class ConPtyProcess:
         buf = ctypes.create_string_buffer(size.value)
         si_ex = STARTUPINFOEXW()
         si_ex.StartupInfo.cb = ctypes.sizeof(STARTUPINFOEXW)
+        # NULL std handles: otherwise a parent whose stdout is redirected (CI,
+        # `server.py > log`) hands them down and the child bypasses the ConPTY
+        si_ex.StartupInfo.dwFlags = _STARTF_USESTDHANDLES
         si_ex.lpAttributeList = ctypes.cast(buf, ctypes.c_void_p)
         if not k32.InitializeProcThreadAttributeList(si_ex.lpAttributeList, 1, 0,
                                                      ctypes.byref(size)):
