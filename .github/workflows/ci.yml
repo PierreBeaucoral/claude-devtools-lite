@@ -19,4 +19,5 @@ jobs:
       - run: python -m pytest -q tests/test_server.py
       - run: node tests/test_frontend.js
       - if: runner.os == 'Windows'
-        run: python tools/selftest_windows.py
+        timeout-minutes: 3
+        run: python -u tools/selftest_windows.py

@@ -11,6 +11,7 @@ code 0 means the terminal pane will work in the dashboard.
 """
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -76,5 +77,14 @@ def main():
     return 0 if ok else 1
 
 
+def _watchdog(seconds=60):
+    """p.read() blocks, so a silent pseudo-console would hang forever: fail instead."""
+    time.sleep(seconds)
+    print(f"[FAIL] no result after {seconds}s — the pseudo-console produced no output",
+          flush=True)
+    os._exit(1)
+
+
 if __name__ == "__main__":
+    threading.Thread(target=_watchdog, daemon=True).start()
     sys.exit(main())
