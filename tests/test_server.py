@@ -430,6 +430,10 @@ def test_token_and_state_live_outside_repo():
 
 # ---------------------------------------------------------------- CLI discovery
 
+posix_only = pytest.mark.skipif(os.name == "nt", reason="POSIX login shell / PATH semantics")
+
+
+@posix_only
 def test_login_path_includes_user_bin_dirs(monkeypatch):
     """An app launched from Finder/.desktop inherits a minimal PATH; the login
     PATH must still surface the usual install dirs."""
@@ -466,6 +470,7 @@ def test_claude_kind_never_falls_back_to_a_shell(monkeypatch):
         srv._env_cache.clear()
 
 
+@posix_only
 def test_terminal_env_carries_login_path(monkeypatch):
     srv._env_cache["claude"] = "/nonexistent/claude"
     srv._env_cache["path_raw"] = ["/usr/bin", "/bin"]
@@ -1093,6 +1098,7 @@ def _joined_install_lines(plat):
     return out
 
 
+@posix_only
 @pytest.mark.parametrize("shell", ["sh", "bash", "zsh"])
 def test_posix_install_lines_parse_in_real_shells(shell):
     """The pane chains an add-on's commands into one line. `echo (x)` once

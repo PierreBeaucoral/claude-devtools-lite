@@ -1280,7 +1280,7 @@ def plan_toggle(cwd, path, line, expect, state):
         raise ValueError("bad state")
     lines[line] = f"{m.group(1)}{m.group(2)} [{mark}] {m.group(4)}" + eol
     tmp = f.with_name(f.name + ".cdl-tmp")
-    tmp.write_text("".join(lines), encoding="utf-8")
+    tmp.write_bytes("".join(lines).encode("utf-8"))  # bytes: keep EOLs as-is on Windows
     os.replace(tmp, f)
     return plan_read(cwd, str(f))
 
@@ -1480,7 +1480,7 @@ def _md_group(root, sub, always, glob="*.md", nested=None):
         rel = f.relative_to(d).with_suffix("")
         items.append(config_item(f, always,
                                  fm.get("description") or first_heading(f),
-                                 {"name": str(rel)} if len(rel.parts) > 1
+                                 {"name": rel.as_posix()} if len(rel.parts) > 1
                                  and f.name != "SKILL.md" else None))
     return items
 
