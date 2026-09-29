@@ -327,10 +327,18 @@ def test_page_csp_pins_the_inline_script(http_server):
         body, csp = r.read(), r.headers["Content-Security-Policy"]
         assert r.headers["X-Content-Type-Options"] == "nosniff"
     inline = re.search(rb"<script>(.*?)</script>", body, re.S).group(1)
+    inline = inline.replace(b"\r\n", b"\n")      # as the browser sees it
     want = base64.b64encode(hashlib.sha256(inline).digest()).decode()
     assert f"'sha256-{want}'" in csp
     assert "'unsafe-inline'" not in csp.split("script-src", 1)[1].split(";")[0]
     assert "frame-ancestors 'none'" in csp
+
+
+def test_page_csp_hash_ignores_crlf():
+    # a Git-for-Windows checkout serves index.html with CRLF; the browser hashes
+    # the script after turning CRLF into LF, so a raw-bytes hash blocks the page
+    lf = b"<html><script>let a = 1;\nlet b = 2;\r</script></html>"
+    assert srv.page_csp(lf.replace(b"\n", b"\r\n")) == srv.page_csp(lf.replace(b"\r", b"\n"))
 
 
 def test_html_preview_is_sandboxed_even_top_level(http_server):

@@ -21,3 +21,20 @@ jobs:
       - if: runner.os == 'Windows'
         timeout-minutes: 3
         run: python -u tools/selftest_windows.py
+      # the desktop shortcut's launcher, run the way the .cmd runs it (Windows
+      # PowerShell 5.1), from a folder with a space in its path
+      - if: runner.os == 'Windows'
+        timeout-minutes: 3
+        shell: powershell
+        env: {CDL_NO_OPEN: "1"}
+        run: |
+          $d = Join-Path $env:RUNNER_TEMP "with space"
+          Copy-Item -Recurse -Path $PWD -Destination $d
+          $env:CLAUDE_ROOT = Join-Path $env:RUNNER_TEMP "claude"
+          New-Item -ItemType Directory -Force (Join-Path $env:CLAUDE_ROOT "projects") | Out-Null
+          $url = powershell -NoProfile -ExecutionPolicy Bypass -File "$d\launchers\windows\claude-devtools.ps1"
+          Write-Output "launcher printed: $url"
+          if ("$url" -notmatch '^http://127\.0\.0\.1:3456/launch\?c=[0-9a-f]+$') { exit 1 }
+          $r = Invoke-WebRequest -UseBasicParsing $url
+          if ($r.StatusCode -ne 200) { exit 1 }
+          Stop-Process -Name python -ErrorAction SilentlyContinue

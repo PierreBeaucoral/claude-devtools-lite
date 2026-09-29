@@ -2522,7 +2522,10 @@ def page_csp(body):
     <script> (pinned by hash, recomputed per serve, so no build step). Inline
     styles stay allowed: KaTeX and xterm set them, and they cannot run code."""
     m = re.search(rb"<script>(.*?)</script>", body, re.S)
-    h = base64.b64encode(hashlib.sha256(m.group(1)).digest()).decode() if m else ""
+    # hash what the browser hashes: HTML parsing turns CRLF and lone CR into LF,
+    # and a Git-for-Windows checkout (autocrlf) serves index.html with CRLF
+    src = m.group(1).replace(b"\r\n", b"\n").replace(b"\r", b"\n") if m else b""
+    h = base64.b64encode(hashlib.sha256(src).digest()).decode() if m else ""
     return ("default-src 'self'; script-src 'self' 'sha256-%s'; "
             "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
             "font-src 'self'; frame-src 'self'; object-src 'self'; "
@@ -3079,10 +3082,13 @@ def print_launch_url(port):
     import hmac
     import urllib.request
     base = f"http://127.0.0.1:{port}"
+    # no proxy: Windows' system proxy (ProxyOverride "<local>" skips only dotless
+    # hosts) would otherwise receive 127.0.0.1 requests — and the token
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
         tok = TOKEN_FILE.read_text().strip()
         nonce = secrets.token_hex(16)
-        with urllib.request.urlopen(f"{base}/hello?n={nonce}", timeout=3) as r:
+        with opener.open(f"{base}/hello?n={nonce}", timeout=3) as r:
             mac = json.loads(r.read())["mac"]
         if not hmac.compare_digest(mac, hello_mac(tok, nonce)):
             print(f"error: the server on port {port} is not this user's "
@@ -3091,7 +3097,7 @@ def print_launch_url(port):
         req = urllib.request.Request(
             f"{base}/api/launch-code", method="POST", data=b"{}",
             headers={"Content-Type": "application/json", "X-Devtools-Token": tok})
-        with urllib.request.urlopen(req, timeout=3) as r:
+        with opener.open(req, timeout=3) as r:
             code = json.loads(r.read())["code"]
     except (OSError, ValueError, KeyError) as e:
         print(f"error: could not get a login code from {base}: {e}", file=sys.stderr)
