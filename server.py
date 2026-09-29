@@ -2612,7 +2612,7 @@ class Handler(BaseHTTPRequestHandler):
             p = u.path
 
             if p.startswith("/api/") and not self._authed(qs):
-                self._err(401, "missing or bad token — relaunch via Claude DevTools.app")
+                self._err(401, "missing or bad token — open the dashboard from a login link")
                 return
 
             if p == "/hello":
@@ -2899,7 +2899,7 @@ class Handler(BaseHTTPRequestHandler):
                     return
             u = urllib.parse.urlparse(self.path)
             if not self._authed(urllib.parse.parse_qs(u.query)):
-                self._err(401, "missing or bad token — relaunch via Claude DevTools.app")
+                self._err(401, "missing or bad token — open the dashboard from a login link")
                 return
             n = int(self.headers.get("Content-Length") or 0)
             body = json.loads(self.rfile.read(n) or b"{}") if n else {}
@@ -3100,6 +3100,26 @@ def print_launch_url(port):
     return 0
 
 
+def quick_edit_off():
+    """Windows: a mouse click in the console starts a QuickEdit selection,
+    which blocks every write to it — and each request logs a line, so the
+    whole server hangs until Esc. Turn QuickEdit off for this console."""
+    if os.name != "nt":
+        return
+    import ctypes
+    from ctypes import wintypes
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.GetStdHandle.restype = wintypes.HANDLE
+    k32.GetStdHandle.argtypes = [wintypes.DWORD]
+    k32.GetConsoleMode.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    k32.SetConsoleMode.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    h = k32.GetStdHandle(wintypes.DWORD(-10).value)         # STD_INPUT_HANDLE
+    mode = wintypes.DWORD()
+    if k32.GetConsoleMode(h, ctypes.byref(mode)):           # False: no console
+        # clear ENABLE_QUICK_EDIT_MODE; ENABLE_EXTENDED_FLAGS makes it stick
+        k32.SetConsoleMode(h, (mode.value & ~0x0040) | 0x0080)
+
+
 def main():
     ap = argparse.ArgumentParser(description="claude-devtools-lite")
     ap.add_argument("--port", type=int, default=int(os.environ.get("PORT", 3456)))
@@ -3133,10 +3153,15 @@ def main():
               f"their transcripts are saved", file=sys.stderr)
 
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
-    # never print the token: this output is often redirected to a log file
-    print(f"claude-devtools-lite → http://{args.host}:{args.port}/")
-    print(f"  (root: {Handler.root}; token file: {TOKEN_FILE}; "
-          f"login URL: python3 server.py --launch-url --port {args.port})")
+    quick_edit_off()
+    # never print the token: this output is often redirected to a log file.
+    # ASCII only: a redirected Windows stdout is cp1252 and can't encode "→"
+    py = "python" if os.name == "nt" else "python3"
+    print(f"claude-devtools-lite running on http://{args.host}:{args.port}/ "
+          f"- leave this window open (Ctrl+C stops it)")
+    print(f"  to log in, run in another terminal and open the link it prints:\n"
+          f"    {py} server.py --launch-url --port {args.port}")
+    print(f"  (root: {Handler.root}; token file: {TOKEN_FILE})")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

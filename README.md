@@ -241,6 +241,10 @@ In a second terminal, get a login link and open it:
 python3 server.py --launch-url      # prints http://127.0.0.1:3456/launch?c=… (single use, 60 s)
 ```
 
+On Windows, type `python` instead of `python3` (`python3` there is often the
+Microsoft Store stub). The server keeps running until Ctrl+C; opening
+`http://127.0.0.1:3456/` without a login link shows a lock screen.
+
 That's the whole setup — but each platform also has a double-click launcher that does
 this for you:
 

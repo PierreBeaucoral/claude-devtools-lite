@@ -819,6 +819,14 @@ function cleanTitle(t){
   return t.replace(/<\/?[a-z]+(?:-[a-z]+)+>/gi, " ").replace(/\s+/g, " ").trim();
 }
 
+/* A 401 means this tab never got the token: how to open one that has it. */
+function reloginHint(){
+  const win = /Win/.test(navigator.platform || navigator.userAgent);
+  return `Double-click the <b>Claude DevTools</b> launcher, or run
+    <code>${win ? "python" : "python3"} server.py --launch-url</code> and open the
+    link it prints. In the same browser, this tab then reconnects by itself.`;
+}
+
 async function api(path, body){
   let r;
   try{
@@ -832,7 +840,7 @@ async function api(path, body){
   const j = await r.json();
   if(r.status === 401){
     $("#main").innerHTML = `<div class="placeholder">🔒 ${esc(j.error)}<br><br>
-      Double-click <b>Claude DevTools.app</b> to reopen with a fresh token.</div>`;
+      ${reloginHint()}</div>`;
     throw new Error(j.error);
   }
   if(!r.ok) throw new Error(j.error||r.status);
@@ -4031,9 +4039,7 @@ reattachTerms();
 loadProjects().then(restoreFromHash).catch(e => {
   const isAuth = /token/i.test(e.message);
   $("#tree").innerHTML = `<div class="placeholder" style="padding:30px 16px;text-align:left">
-    ${isAuth ? `🔒 <b>This tab has no access token</b> (it was opened before the server
-      issued one).<br><br>Double-click <b>Claude DevTools.app</b> — the tab it opens is
-      authenticated, and this tab will reconnect by itself if it's in the same browser.`
+    ${isAuth ? `🔒 <b>This tab has no access token.</b><br><br>${reloginHint()}`
       : "error: " + esc(e.message)}</div>`;
 });
 </script>

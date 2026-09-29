@@ -1393,3 +1393,9 @@ def test_one_stream_carries_every_terminal(http_server, monkeypatch):
             out[tid] += base64.b64decode(b64)
     assert b"AAA" in out[a.id] and b"BBB" in out[b.id]
     assert exits == {a.id, b.id, "gone"}
+
+
+def test_quick_edit_off_is_safe_without_a_console():
+    # a no-op off Windows; on the Windows CI runner stdin is not a console,
+    # so this exercises the ctypes signatures without touching a real window
+    srv.quick_edit_off()
