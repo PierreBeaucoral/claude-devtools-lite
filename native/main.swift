@@ -5,6 +5,7 @@
 // app instance was the one that started the server.
 import Cocoa
 import CryptoKit
+import UserNotifications
 import WebKit
 
 let PORT = ProcessInfo.processInfo.environment["PORT"] ?? "3456"
@@ -59,7 +60,8 @@ func serverHoldsToken(_ token: String) -> Bool {
     return mac == want
 }
 
-class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDelegate,
+                   WKScriptMessageHandler, UNUserNotificationCenterDelegate {
     var window: NSWindow!
     var webView: WKWebView!
     var startedServer = false
@@ -96,6 +98,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDe
 
         let cfg = WKWebViewConfiguration()
         cfg.preferences.setValue(true, forKey: "developerExtrasEnabled")
+        // WKWebView has no web Notification API: the page posts here instead
+        cfg.userContentController.add(self, name: "notify")
+        UNUserNotificationCenter.current().delegate = self
         webView = WKWebView(frame: .zero, configuration: cfg)
         webView.uiDelegate = self
         webView.navigationDelegate = self
@@ -165,6 +170,41 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDe
                  completionHandler: @escaping () -> Void) {
         let a = NSAlert(); a.messageText = message
         a.addButton(withTitle: "OK"); a.runModal(); completionHandler()
+    }
+
+    // "a session waits for you" / "finished" while the window is in the
+    // background. Only the dashboard itself may post: previews run in iframes
+    // and show HTML a session wrote.
+    func userContentController(_ c: WKUserContentController, didReceive m: WKScriptMessage) {
+        guard m.name == "notify", m.frameInfo.isMainFrame,
+              m.frameInfo.request.url?.absoluteString.hasPrefix(BASE + "/") ?? false,
+              let d = m.body as? [String: Any] else { return }
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { ok, _ in
+            // {request: true} with no title only asks for permission
+            guard ok, let title = d["title"] as? String, !title.isEmpty else { return }
+            let content = UNMutableNotificationContent()
+            content.title = String(title.prefix(200))
+            content.body = String(((d["body"] as? String) ?? "").prefix(500))
+            content.sound = .default
+            center.add(UNNotificationRequest(identifier: UUID().uuidString,
+                                             content: content, trigger: nil))
+        }
+    }
+
+    func userNotificationCenter(_ c: UNUserNotificationCenter, willPresent n: UNNotification,
+                                withCompletionHandler done: @escaping (UNNotificationPresentationOptions) -> Void) {
+        done([.banner, .sound])
+    }
+
+    // clicking the notification brings the window back
+    func userNotificationCenter(_ c: UNUserNotificationCenter, didReceive r: UNNotificationResponse,
+                                withCompletionHandler done: @escaping () -> Void) {
+        DispatchQueue.main.async {
+            NSApp.activate(ignoringOtherApps: true)
+            self.window.makeKeyAndOrderFront(nil)
+        }
+        done()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool {

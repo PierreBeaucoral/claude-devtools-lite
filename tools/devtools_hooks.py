@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ember's two optional Claude Code tees. Stdlib only.
+"""Ember's optional Claude Code tees. Stdlib only.
 
     devtools_hooks.py statusline        statusLine command: saves Claude Code's
                                         status JSON (official 5h / 7-day limit %,
@@ -9,8 +9,13 @@
                                         event (never tool inputs or outputs) so
                                         the dashboard can show what each session
                                         is doing and when one waits for you
+    devtools_hooks.py guard             PreToolUse hook: enforces /careful and
+                                        /freeze (.claude/state/session-guards.json
+                                        in the project) and logs each block as
+                                        metadata for the dashboard's guard log
     devtools_hooks.py install-statusline | uninstall-statusline
     devtools_hooks.py install-events     | uninstall-events
+    devtools_hooks.py install-guard      | uninstall-guard
 
 The install commands edit ~/.claude/settings.json (a copy is saved next to it
 first as settings.json.bak-devtools). The Add-ons pane runs them in a visible
@@ -18,6 +23,7 @@ terminal; nothing is installed behind your back.
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -35,6 +41,8 @@ STATUS_DIR = APP_DIR / "status"
 EVENTS = APP_DIR / "events.jsonl"
 INNER = APP_DIR / "statusline_inner.json"      # the statusline we wrap
 EVENTS_MAX = 5_000_000
+GUARDS = APP_DIR / "guards.jsonl"
+GUARDS_MAX = 1_000_000
 SETTINGS = Path(os.environ.get("CLAUDE_ROOT", Path.home() / ".claude")) / "settings.json"
 MARK = "devtools_hooks.py"
 
@@ -91,6 +99,8 @@ def statusline(stdin_text):
 
 def event(stdin_text):
     """One compact line per event; rotated at 5 MB (one old copy kept)."""
+    if os.environ.get("CDL_IMPROVE_RUN"):
+        return 0                    # Ember's own retrospective: not your session
     try:
         d = json.loads(stdin_text)
     except ValueError:
@@ -110,9 +120,102 @@ def event(stdin_text):
     return 0
 
 
+# ------------------------------------------------------------------ guards
+# /careful and /freeze write .claude/state/session-guards.json in the project;
+# this hook enforces them. A guard stays active until "/careful off" or
+# "/freeze off" flips it back.
+
+GUARD_TOOLS = "Bash|Edit|Write|MultiEdit|NotebookEdit"
+DESTRUCTIVE = [
+    (r"\brm\s+-[a-z]*[rf]", "rm with recursive/force flags"),
+    (r"\bgit\s+reset\s+--hard\b", "git reset --hard"),
+    (r"\bgit\s+push\s+(.*\s)?(--force\b|-f\b)", "git push --force"),
+    (r"\bgit\s+clean\s+-[a-z]*f", "git clean -f"),
+    (r"\bgit\s+checkout\s+--\s+\.", "git checkout -- ."),
+    (r"\bgit\s+branch\s+-D\b", "git branch -D"),
+    (r"\bDROP\s+(TABLE|DATABASE)\b", "DROP TABLE/DATABASE"),
+    (r"\bchmod\s+(-R\s+)?777\b", "chmod 777"),
+]
+
+
+def guard_verdict(d):
+    """(guard, rule, reason) when the tool call must be blocked, else None."""
+    root = os.environ.get("CLAUDE_PROJECT_DIR") or d.get("cwd") or ""
+    if not root:
+        return None
+    try:
+        guards = json.loads((Path(root) / ".claude" / "state" /
+                             "session-guards.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(guards, dict):
+        return None
+    tool, inp = d.get("tool_name", ""), d.get("tool_input") or {}
+    freeze = guards.get("freeze") or {}
+    if freeze.get("active") and tool in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
+        target = inp.get("file_path") or inp.get("notebook_path") or ""
+        if target:
+            f = os.path.normcase(os.path.realpath(os.path.join(root, target)))
+            base = os.path.normcase(os.path.realpath(root))
+            allowed = [os.path.join(base, os.path.normcase(a)) for a in
+                       freeze.get("allowed_paths") or []] + [os.path.join(base, ".claude")]
+
+            def inside(a):
+                a = a.rstrip("/\\")
+                try:
+                    return os.path.commonpath([f, a]) == a
+                except ValueError:          # different drives on Windows
+                    return False
+            if not any(inside(a) for a in allowed):
+                return ("freeze", Path(target).name,
+                        f"FREEZE ACTIVE: edit blocked, '{Path(target).name}' is outside "
+                        f"{freeze.get('allowed_paths') or []}. Run /freeze off to lift it.")
+    careful = guards.get("careful") or {}
+    if careful.get("active") and tool == "Bash":
+        cmd = str(inp.get("command", ""))
+        for pat, rule in DESTRUCTIVE:
+            if re.search(pat, cmd, re.IGNORECASE):
+                return ("careful", rule,
+                        f"CAREFUL MODE: blocked '{rule}'. Run /careful off to lift it, "
+                        f"or rephrase the command.")
+    return None
+
+
+def guard(stdin_text):
+    """Deny the call when a guard says so; log the block (never the command)."""
+    try:
+        d = json.loads(stdin_text)
+    except ValueError:
+        return 0
+    v = guard_verdict(d)
+    if not v:
+        return 0
+    line = {"ts": time.time(), "session_id": d.get("session_id"), "cwd": d.get("cwd"),
+            "tool_name": d.get("tool_name"), "guard": v[0], "rule": v[1]}
+    try:
+        APP_DIR.mkdir(parents=True, exist_ok=True)
+        if GUARDS.exists() and GUARDS.stat().st_size > GUARDS_MAX:
+            os.replace(GUARDS, GUARDS.with_suffix(".jsonl.1"))
+        with open(GUARDS, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(line) + "\n")
+    except OSError:
+        pass                        # a failed log must not unblock the call
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse", "permissionDecision": "deny",
+        "permissionDecisionReason": v[2]}}))
+    return 0
+
+
 def _cmd(sub):
     q = lambda s: f'"{s}"' if " " in s else s
     return f"{q(sys.executable)} {q(str(Path(__file__).resolve()))} {sub}"
+
+
+def _ours(command, sub):
+    """Is this hook command our `sub` tee? The last word is the subcommand, so
+    the event tee and the guard (both on PreToolUse) are told apart."""
+    command = str(command or "")
+    return MARK in command and command.split()[-1:] == [sub]
 
 
 def _load_settings():
@@ -169,7 +272,7 @@ def install_events():
     added = 0
     for ev in EVENT_NAMES:
         entries = hooks.setdefault(ev, [])
-        if any(MARK in str(h.get("command", "")) for e in entries for h in e.get("hooks", [])):
+        if any(_ours(h.get("command"), "event") for e in entries for h in e.get("hooks", [])):
             continue
         entries.append({"hooks": [{"type": "command", "command": _cmd("event"),
                                    "async": True, "timeout": 5}]})
@@ -179,21 +282,47 @@ def install_events():
     return 0
 
 
-def uninstall_events():
-    st = _load_settings()
+def _remove(st, sub):
     hooks = st.get("hooks") or {}
     for ev in list(hooks):
         kept = []
         for e in hooks[ev]:
-            hs = [h for h in e.get("hooks", []) if MARK not in str(h.get("command", ""))]
+            hs = [h for h in e.get("hooks", []) if not _ours(h.get("command"), sub)]
             if hs:
                 kept.append(dict(e, hooks=hs))
         if kept:
             hooks[ev] = kept
         else:
             del hooks[ev]
+
+
+def uninstall_events():
+    st = _load_settings()
+    _remove(st, "event")
     _save_settings(st)
     print("event hook removed")
+    return 0
+
+
+def install_guard():
+    st = _load_settings()
+    entries = st.setdefault("hooks", {}).setdefault("PreToolUse", [])
+    if any(_ours(h.get("command"), "guard") for e in entries for h in e.get("hooks", [])):
+        print("session guards already installed")
+        return 0
+    # synchronous on purpose: it has to answer before the tool runs
+    entries.append({"matcher": GUARD_TOOLS,
+                    "hooks": [{"type": "command", "command": _cmd("guard"), "timeout": 5}]})
+    _save_settings(st)
+    print("installed: /careful and /freeze now block in new Claude Code sessions")
+    return 0
+
+
+def uninstall_guard():
+    st = _load_settings()
+    _remove(st, "guard")
+    _save_settings(st)
+    print("session guards removed")
     return 0
 
 
@@ -203,8 +332,11 @@ def main(argv):
         return statusline(sys.stdin.read())
     if cmd == "event":
         return event(sys.stdin.read())
+    if cmd == "guard":
+        return guard(sys.stdin.read())
     fn = {"install-statusline": install_statusline, "uninstall-statusline": uninstall_statusline,
-          "install-events": install_events, "uninstall-events": uninstall_events}.get(cmd)
+          "install-events": install_events, "uninstall-events": uninstall_events,
+          "install-guard": install_guard, "uninstall-guard": uninstall_guard}.get(cmd)
     if not fn:
         print(__doc__)
         return 2

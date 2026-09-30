@@ -430,8 +430,24 @@
              cursor:pointer; font-family:inherit; line-height:1; }
   .ttab .x:hover { color:var(--err); }
   #termbtns { margin-left:auto; display:flex; gap:6px; }
-  #termbody { flex:1; min-height:0; padding:4px 8px 8px; }
-  #termbody > div { height:100%; width:100%; }
+  #termbody { flex:1; min-height:0; padding:4px 8px 8px; position:relative; }
+  /* the card a Claude terminal leaves behind when it ends */
+  #endcard { position:absolute; right:14px; bottom:14px; z-index:5; width:min(420px, calc(100% - 28px));
+             max-height:calc(100% - 28px); overflow:auto; background:var(--panel); color:var(--fg);
+             border:1px solid var(--border-strong); border-left:3px solid var(--accent);
+             border-radius:8px; padding:10px 12px; font-size:12px; line-height:1.45;
+             box-shadow:0 8px 24px rgba(0,0,0,.28); }
+  #endcard .ech { display:flex; gap:8px; align-items:baseline; }
+  #endcard .ech b { font-size:13px; }
+  #endcard .ech .copy { margin-left:auto; }
+  #endcard .ect { color:var(--dim); margin:2px 0 6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #endcard .ecs { display:flex; flex-wrap:wrap; gap:4px 14px; margin-bottom:6px; }
+  #endcard .ecs b { font-variant-numeric:tabular-nums; }
+  #endcard ul { margin:2px 0 6px 16px; padding:0; font-family:var(--mono); font-size:11px; }
+  #endcard .add { color:var(--ok, #3fb950); } #endcard .del { color:var(--err); }
+  #endcard .ecb { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  #btnNotify.on { color:var(--accent); border-color:var(--accent); }
+  #termbody > div:not(#endcard) { height:100%; width:100%; }
   .termbtn { cursor:pointer; }
   .projrow { display:flex; align-items:center; gap:6px; }
   .projrow .cli { visibility:hidden; border:1px solid var(--border); border-radius:5px;
@@ -583,6 +599,7 @@
       <p class="brand-caption">A workspace for Claude Code</p>
         <div class="topbtns" role="group" aria-label="Workspace controls">
           <button class="copy termbtn ibtn" id="btnAddons" title="optional add-ons (graphify, /improve, …)" aria-label="Optional add-ons">🧩</button>
+          <button class="copy termbtn ibtn" id="btnNotify" aria-label="OS notifications" aria-pressed="false">🔔</button>
           <button class="copy termbtn ibtn" id="btnTheme" title="change theme" aria-label="Change theme" aria-haspopup="menu">◐</button>
           <button class="copy termbtn ibtn" id="btnRight" title="toggle usage/viz panels" aria-label="Toggle the right column" aria-pressed="true">◫</button>
           <button class="copy termbtn" id="btnTerm" title="open a terminal (Ctrl+2 focuses it)">⌨ CLI</button>
@@ -1212,6 +1229,22 @@ function applyEvents(now, events){
   }
   return {now: next, alerts};
 }
+/* OS notifications: which events deserve one — a session waiting for you,
+   or Claude finishing its turn (Stop) — at most one per session and kind
+   per 15 s. `last` is mutated: it is the rate limiter's memory. */
+function osNotices(events, last, t0){
+  const out = [];
+  for(const e of events || []){
+    if(!e || !e.cwd) continue;
+    const kind = isWaitingEvent(e) ? "waiting" : e.hook_event_name === "Stop" ? "finished" : null;
+    if(!kind) continue;
+    const key = (e.session_id || e.cwd) + ":" + kind;
+    if(last[key] > t0 - 15000) continue;
+    last[key] = t0;
+    out.push({kind, cwd: e.cwd});
+  }
+  return out;
+}
 // slug -> tool running there now
 function nowMap(projects, now){
   const out = {};
@@ -1434,7 +1467,8 @@ function renderSession(s, ctx){
   const t = s.totals || {};
   head.innerHTML = `
     <h2>${esc(cleanTitle(s.title) || s.id)}
-      ${!ctx.isAgent ? '<button class="copy termbtn" id="btnResume" style="font-size:12px;vertical-align:middle" title="claude --resume '+esc(s.id)+'">⌨ resume in CLI</button>' : ''}</h2>
+      ${!ctx.isAgent ? '<button class="copy termbtn" id="btnResume" style="font-size:12px;vertical-align:middle" title="claude --resume '+esc(s.id)+'">⌨ resume in CLI</button>' : ''}
+      <button class="copy termbtn" id="btnExport" style="font-size:12px;vertical-align:middle" title="save this session as one HTML file to share">⇩ export</button></h2>
     <div class="meta">${esc(s.model||"")} · <span class="nent">${s.entries.length}</span> timeline entries
       ${s.sidechain_msgs? " · "+s.sidechain_msgs+" sidechain msgs":""}
       <span class="live" hidden title="following this session: new entries appear as they are written">● live</span></div>
@@ -1447,6 +1481,7 @@ function renderSession(s, ctx){
       <label><input type="checkbox" id="tgAgents" checked> agents</label>
     </div>`;
   mountHeader(head);
+  head.querySelector("#btnExport").onclick = () => exportSession(s);
   const rbtn = head.querySelector("#btnResume");
   if(rbtn) rbtn.onclick = () => openTerm("resume",
     {project: ctx.slug, session: s.id,
@@ -2350,6 +2385,7 @@ async function streamTerms(ac){
               t.dead = true;
               t.term.write("\r\n\x1b[31m[process exited]\x1b[0m\r\n");
               renderTabs();
+              if(t.kind === "claude" || t.kind === "resume") showEndCard(t.id);
             }
             continue;
           }
@@ -2409,6 +2445,7 @@ function fitActive(force){
 }
 async function closeTerm(id){
   const t = TM.terms.get(id); if(!t) return;
+  if(!t.dead && (t.kind === "claude" || t.kind === "resume")) showEndCard(id);
   t.dead = true;
   fetch("/api/term/kill", {method:"POST", headers:authHeaders({"Content-Type":"application/json"}),
     body: JSON.stringify({id})}).catch(() => {});      // already gone is fine
@@ -3639,7 +3676,8 @@ async function refreshConfig(){
   const box = $("#configbody");
   try{
     const d = await api("/api/config" + (planCwd ? "?cwd=" + encodeURIComponent(planCwd) : ""));
-    box.innerHTML = "";
+    box.innerHTML = '<div id="guardlog"></div>';
+    renderGuardLog();
     renderConfigSide(box, d.user, "~/.claude");
     if(d.project) renderConfigSide(box, d.project, "this project's .claude");
     const note = document.createElement("div");
@@ -4078,6 +4116,7 @@ async function pollEvents(){
   EV.now = now;
   if(changed) renderTree();
   alerts.forEach(waitingToast);
+  notifyEvents(r.events);
 }
 function waitingToast(e){
   const key = e.session_id || e.cwd, t0 = Date.now();
@@ -4091,7 +4130,270 @@ function waitingToast(e){
   toast(`${name} is waiting for you`,
         {kind: "warn", action: run ? {label: term ? "Go to terminal" : "Open", run} : undefined});
 }
-poll(pollEvents, 3000);
+
+/* ---------- OS notifications (🔔, opt-in) ----------------------------------
+   While Ember is in the background: a session waiting for you, or Claude
+   done with its turn. The macOS app has no web Notification API, so it
+   posts to the native bridge (native/main.swift) instead. */
+const NOTIFY = {on: false, last: {}};
+try{ NOTIFY.on = localStorage.getItem("cdl-osnotify") === "1"; }catch(e){}
+const nativeNotify = () => window.webkit && window.webkit.messageHandlers
+  && window.webkit.messageHandlers.notify;
+const pageAway = () => document.hidden || !document.hasFocus();
+function osNotify(title, body){
+  if(!NOTIFY.on) return;
+  try{
+    const h = nativeNotify();
+    if(h){ h.postMessage({title, body}); return; }
+    if(!("Notification" in window) || Notification.permission !== "granted") return;
+    const n = new Notification(title, {body, tag: title});
+    n.onclick = () => { window.focus(); n.close(); };
+  }catch(e){}
+}
+function sessionName(cwd){
+  const p = projectForCwd(state.projects, cwd || "");
+  return baseName(p ? p.path : cwd || "") || "A session";
+}
+function notifyEvents(events){
+  if(!NOTIFY.on || !pageAway()) return;
+  for(const n of osNotices(events, NOTIFY.last, Date.now()))
+    osNotify(n.kind === "waiting" ? `${sessionName(n.cwd)} is waiting for you`
+                                  : `${sessionName(n.cwd)}: Claude finished`,
+             n.kind === "waiting" ? "Claude needs your permission or input." : "Your turn.");
+}
+/* poll() sleeps while the page is hidden; these two must not, when
+   notifications are on — hidden is exactly when a notification matters.
+   (Browsers still slow hidden timers down, to once a minute after a while.) */
+function pollAway(fn, ms){
+  POLLS.push(fn);
+  return setInterval(() => { if(!document.hidden || NOTIFY.on) fn(); }, ms);
+}
+function renderBell(){
+  const b = $("#btnNotify");
+  b.setAttribute("aria-pressed", NOTIFY.on);
+  b.classList.toggle("on", NOTIFY.on);
+  b.title = NOTIFY.on
+    ? "Notifications on: a session waiting or finishing while Ember is in the background. Click to turn off."
+    : "Notifications off. Click to be told when a session waits or finishes while Ember is in the background.";
+}
+$("#btnNotify").onclick = async () => {
+  if(!NOTIFY.on){
+    const h = nativeNotify();
+    if(h) h.postMessage({request: true});          // macOS asks once
+    else if(!("Notification" in window)){
+      toast("This browser has no notifications.", {kind: "warn"}); return;
+    } else if(Notification.permission !== "granted"
+              && await Notification.requestPermission() !== "granted"){
+      toast("Notifications are blocked for this page: allow them in the browser's site settings.",
+            {kind: "warn"}); return;
+    }
+    if(!EV.enabled) toast("Notifications need the Live activity add-on to see your sessions.",
+      {kind: "warn", action: {label: "Add-ons", run: () => $("#btnAddons").click()}});
+  }
+  NOTIFY.on = !NOTIFY.on;
+  try{ localStorage.setItem("cdl-osnotify", NOTIFY.on ? "1" : "0"); }catch(e){}
+  renderBell();
+};
+renderBell();
+
+/* ---------- guard log (the Session guards add-on) --------------------------
+   Blocks by /careful and /freeze, as metadata: guard, rule, tool, project —
+   never the command itself. Shown atop the Config pane, toasted as they come. */
+const GV = {offset: 0, list: [], primed: false, enabled: false};
+async function pollGuards(){
+  let r;
+  try{ r = await api("/api/guards?since=" + GV.offset); }catch(e){ return; }
+  GV.enabled = r.enabled;
+  GV.offset = r.enabled ? r.offset : 0;
+  if(r.events.length){
+    GV.list = GV.list.concat(r.events).slice(-100);
+    if(GV.primed) r.events.forEach(guardToast);     // not the backlog at load
+    renderGuardLog();
+  }
+  GV.primed = true;
+}
+function guardToast(e){
+  const msg = `🛡 Blocked in ${sessionName(e.cwd)}: ${e.rule} (/${e.guard})`;
+  toast(msg, {kind: "warn", action: {label: "Guard log",
+    run: () => { focusPane("cell-plan"); planTab("config"); }}});
+  if(pageAway()) osNotify(msg, "Claude was told why and can take another route.");
+}
+function renderGuardLog(){
+  const box = $("#guardlog"); if(!box) return;
+  const rows = GV.list.slice().reverse();
+  box.innerHTML = `<div class="cfgsum"><span>🛡 Guard log</span>
+    <span style="margin-left:auto">${rows.length ? `<b>${rows.length}</b> block${rows.length === 1 ? "" : "s"}` : ""}</span></div>`;
+  if(!rows.length){
+    box.insertAdjacentHTML("beforeend", GV.enabled
+      ? '<div class="cfgnote">No blocks yet. Commands stopped by <code>/careful</code> and edits stopped by <code>/freeze</code> appear here.</div>'
+      : '<div class="cfgnote">Install <b>Session guards</b> in 🧩 so <code>/careful</code> and <code>/freeze</code> actually block, and each block shows up here.</div>');
+    return;
+  }
+  for(const e of rows.slice(0, 50)){
+    const row = document.createElement("div");
+    row.className = "cfgrow";
+    row.innerHTML = '<span class="nm"></span><span class="ds"></span><span class="tk"></span>';
+    row.querySelector(".nm").textContent = "/" + e.guard;
+    row.querySelector(".ds").textContent = `${e.rule} · ${e.tool_name || "?"} · ${sessionName(e.cwd)}`;
+    row.querySelector(".tk").textContent = fmtDate(e.ts);
+    row.title = (e.cwd || "") + (e.session_id ? "\nsession " + e.session_id : "");
+    box.appendChild(row);
+  }
+}
+pollAway(pollGuards, 3000);
+pollGuards();
+
+/* ---------- session-end card -----------------------------------------------
+   When a Claude terminal ends: what changed (git, since the tab opened),
+   what it cost, what got ticked, and the retrospective once it lands. */
+function endCardHtml(s){
+  const mins = Math.max(1, Math.round((s.ended - s.started) / 60));
+  const t = s.tokens || {}, g = s.git, pl = s.plan;
+  const n = x => parseInt(x, 10) || 0;
+  let h = `<div class="ech"><b>Session ended</b><span>${esc(s.project)} · ${mins} min</span>
+      <button class="copy ibtn" data-act="close" aria-label="Dismiss">✕</button></div>`;
+  if(s.title) h += `<div class="ect" title="${esc(s.title)}">${esc(s.title)}</div>`;
+  h += s.tokens ? `<div class="ecs"><span>output <b>${fmtTok(t.output_tokens)}</b></span>
+      <span>peak context <b>${fmtTok(t.peak_context)}</b></span>
+      <span>tool calls <b>${s.tools || 0}</b></span>
+      ${s.cost_usd != null ? `<span>cost <b>$${Number(s.cost_usd).toFixed(2)}</b></span>` : ""}</div>`
+    : `<div class="ecs" style="color:var(--dim)">No transcript was written: nothing to count.</div>`;
+  if(!g) h += `<div>Not a git repository: file changes not tracked.</div>`;
+  else if(!g.files.length) h += `<div>No file changes.</div>`;
+  else {
+    const add = g.files.reduce((a, f) => a + n(f.added), 0),
+          del = g.files.reduce((a, f) => a + n(f.removed), 0);
+    h += `<div><b>${g.files.length}</b> file${g.files.length === 1 ? "" : "s"} changed
+      <span class="add">+${add}</span> <span class="del">−${del}</span></div><ul>`
+      + g.files.slice(0, 6).map(f => `<li>${esc(f.path)}</li>`).join("")
+      + (g.files.length > 6 ? `<li>… ${g.files.length - 6} more</li>` : "") + `</ul>`;
+  }
+  if(g && g.commits.length) h += `<div><b>${g.commits.length}</b> commit${g.commits.length === 1 ? "" : "s"}: ${esc(g.commits[0])}${g.commits.length > 1 ? " …" : ""}</div>`;
+  if(pl) h += `<div>Plan <b>${pl.done}/${pl.total}</b>${pl.ticked > 0 ? ` · <b>+${pl.ticked}</b> ticked this session` : ""}</div>`;
+  h += `<div class="ecb"><button class="copy" data-act="log" title="append a pre-filled entry to session_logs/ in the project">＋ session log</button>
+      ${s.session_id ? '<button class="copy" data-act="open">open session</button>' : ""}
+      ${s.improve ? '<button class="copy" data-act="improve">🔎 retrospective</button>' : ""}</div>`;
+  return h;
+}
+async function showEndCard(id){
+  let s = null;
+  for(let i = 0; i < 25 && !s; i++){        // the summary is made as the child exits
+    try{ s = await api("/api/term/summary?id=" + encodeURIComponent(id)); }
+    catch(e){ await new Promise(r => setTimeout(r, 1500)); }
+  }
+  if(!s) return;
+  let card = $("#endcard");
+  if(!card){
+    card = document.createElement("div");
+    card.id = "endcard";
+    card.setAttribute("role", "region");
+    card.setAttribute("aria-label", "Summary of the session that ended");
+    $("#termbody").appendChild(card);
+  }
+  card.innerHTML = endCardHtml(s);
+  card.onclick = async ev => {
+    const act = ev.target.closest("[data-act]");
+    if(!act) return;
+    const a = act.dataset.act;
+    if(a === "close") card.remove();
+    else if(a === "log"){
+      try{
+        const r = await api("/api/term/sessionlog", {id});
+        act.disabled = true; act.textContent = "✓ logged";
+        toast("Added to " + r.path.split(/[\\/]/).slice(-2).join("/"), {kind: "ok",
+          action: {label: "Open", run: async () => { vizTab("files");
+            await loadFs(r.path.replace(/[\\/][^\\/]+$/, "")); }}});
+      }catch(e){ toast("Could not write the session log: " + e.message, {kind: "err"}); }
+    }
+    else if(a === "open"){
+      const p = projectForCwd(state.projects, s.cwd);
+      if(p) openSession(p.slug, s.session_id);
+    }
+    else if(a === "improve"){
+      vizTab("files");
+      await loadFs(s.improve.path.replace(/[\\/][^\\/]+$/, ""));
+    }
+  };
+  // the retrospective takes a few minutes: look again, then stop
+  if(!s.improve) setTimeout(async () => {
+    try{
+      const s2 = await api("/api/term/summary?id=" + encodeURIComponent(id));
+      if(s2.improve && $("#endcard") === card){ s = s2; card.innerHTML = endCardHtml(s2); }
+    }catch(e){}
+  }, 240000);
+}
+
+/* ---------- share a session (⇩ export) -------------------------------------
+   One self-contained HTML file: the timeline rendered by the same code as
+   the viewer, today's theme, no scripts. Saved into ~/Downloads by the
+   server (the macOS app's WebKit has no blob downloads). */
+function redactHome(html){
+  // the user names the home paths give away also go, e.g. from `ls -l` output
+  const users = new Set();
+  // a capture group, not a lookbehind: older macOS WebKit can't parse those
+  html = html.replace(/(^|[^\w.\/~-])\/(?:Users|home)\/([^\/\s"'<>&]+)/g, (m, pre, u) => (users.add(u), pre + "~"))
+             .replace(/[A-Za-z]:\\+Users\\+([^\\\s"'<>&]+)/g, (m, u) => (users.add(u), "~"));
+  for(const u of users)
+    if(u.length > 2 && !/^(shared|public|guest)$/i.test(u))
+      html = html.split(u).join("user");
+  return html;
+}
+const EXPORT_DLG = `<form method="dialog" style="min-width:300px">
+  <h3 style="margin:0 0 10px">Export this session</h3>
+  <label style="display:block"><input type="checkbox" name="thinking"> thinking blocks</label>
+  <label style="display:block"><input type="checkbox" name="tools" checked> tool inputs and results</label>
+  <label style="display:block"><input type="checkbox" name="system"> system / commands</label>
+  <label style="display:block"><input type="checkbox" name="redact" checked> hide my home folder and user name</label>
+  <p style="color:var(--dim);font-size:12px;margin:10px 0">Saved to your Downloads folder as one HTML file.
+    Read it before you send it: tool results can contain file contents.</p>
+  <div style="display:flex;gap:8px;justify-content:flex-end">
+    <button class="copy" value="">Cancel</button><button class="copy" value="ok">Export</button></div></form>`;
+function exportSession(s){
+  let d = $("#exportdlg");
+  if(!d){
+    d = document.createElement("dialog"); d.id = "exportdlg";
+    d.innerHTML = EXPORT_DLG; document.body.appendChild(d); modal(d);
+  }
+  d.returnValue = "";
+  d.onclose = () => { if(d.returnValue === "ok") buildExport(s, Object.fromEntries(
+    [...d.querySelectorAll("input")].map(i => [i.name, i.checked]))); };
+  showDialog(d);
+}
+async function buildExport(s, opt){
+  const tl = document.createElement("div"); tl.id = "timeline";
+  for(const e of s.entries){
+    if(e.kind === "thinking" && !opt.thinking) continue;
+    if((e.kind === "system" || e.kind === "command" || e.system_reminder) && !opt.system) continue;
+    const el = renderEntry(e, {}, 0);
+    const body = el.querySelector(".body");
+    if(e.kind === "tool" && !opt.tools && body) body.remove();
+    tl.appendChild(el);
+  }
+  tl.querySelectorAll(".collapsible").forEach(x => x.classList.add("openx"));
+  tl.querySelectorAll("button, .caret").forEach(x => x.remove());
+  let katexCss = "";
+  try{ katexCss = (await (await fetch("/vendor/katex.min.css")).text())
+         .replace(/@font-face\{[^}]*\}/g, ""); }catch(e){}
+  const title = cleanTitle(s.title) || s.id, t = s.totals || {};
+  let html = `<!doctype html><html lang="en" style="${esc(document.documentElement.getAttribute("style") || "")}">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(title)}</title>
+<style>${document.querySelector("style").textContent}\n${katexCss}
+body{overflow:auto;height:auto;background:var(--bg);color:var(--fg)} #timeline{max-width:960px;margin:0 auto;padding:0 20px 40px}
+.xhead{max-width:960px;margin:0 auto;padding:24px 20px 8px}.xhead h1{margin:0 0 6px;font-size:22px}
+.xhead p{color:var(--dim);margin:0}</style></head>
+<body><div class="xhead"><h1>${esc(title)}</h1>
+<p>${esc(s.model || "")} · ${s.entries.length} entries · ${fmtTok(t.output_tokens)} output tokens · exported from Ember on ${esc(new Date().toISOString().slice(0, 10))}</p></div>
+${tl.outerHTML}</body></html>`;
+  if(opt.redact) html = redactHome(html);
+  try{
+    const r = await api("/api/export", {name: title.slice(0, 60), html});
+    toast("Saved " + r.path.split(/[\\/]/).pop(), {kind: "ok", action: {label: "Show",
+      run: async () => { vizTab("files"); await loadFs(r.path.replace(/[\\/][^\\/]+$/, "")); }}});
+  }catch(e){ toast("Export failed: " + e.message, {kind: "err"}); }
+}
+
+pollAway(pollEvents, 3000);
 pollEvents();
 refreshUsage(); refreshViz(); refreshPlan(true);
 

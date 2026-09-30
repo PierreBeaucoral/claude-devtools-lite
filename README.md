@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/PierreBeaucoral/ember/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/PierreBeaucoral/ember/actions/workflows/ci.yml/badge.svg"></a>
-  <img alt="Version 1.0.0" src="https://img.shields.io/badge/version-1.0.0-dd876d">
+  <img alt="Version 1.1.0" src="https://img.shields.io/badge/version-1.1.0-dd876d">
   <img alt="Python 3.9+" src="https://img.shields.io/badge/python-3.9%2B-3776ab?logo=python&logoColor=white">
   <img alt="Zero dependencies" src="https://img.shields.io/badge/dependencies-0-2ea44f">
   <img alt="macOS | Linux | Windows" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey">
@@ -178,6 +178,43 @@ into any session in an embedded terminal.
 - Needs the command installed once:
   `mkdir -p ~/.claude/commands && curl -o ~/.claude/commands/improve.md https://raw.githubusercontent.com/TerenceBristol/claude-improve/main/improve.md`
 
+**Session-end card**
+- When a Claude terminal ends (it exits, or you close its tab), a card in the terminal
+  pane sums the session up: minutes, output tokens, peak context, tool calls, the cost
+  Claude Code itself reports (with *Live limits*), every file changed since the tab
+  opened (commits made in the session plus uncommitted work, from git), and how many
+  plan items were ticked
+- **＋ session log** appends a pre-filled entry to `session_logs/YYYY-MM-DD.md` in the
+  project: changes table, usage, plan progress, and the plan's open items as next steps.
+  Decisions and LEARN entries are left blank for you, since Ember only writes down facts
+- The **🔎 retrospective** button appears once the `/improve` report lands
+
+**Notifications (🔔)**
+- Off by default. Turned on, Ember tells you through your OS when a session **waits for
+  your permission** or **Claude finishes its turn**, but only while Ember is in the
+  background, and at most once per session every 15 seconds
+- Works in the browser (it asks for permission once) and in the macOS app (native
+  notifications; click one to bring the window back). Needs the *Live activity* add-on,
+  which is how Ember sees your sessions. Browsers slow down background tabs, so a
+  notification can lag by up to a minute in a tab that has been hidden for a while
+
+**Guard log**
+- With the *Session guards* add-on, `/careful` blocks destructive shell commands
+  (`rm -rf`, `git push --force`, `git reset --hard`, `git clean -f`, `DROP TABLE`, …) and
+  `/freeze paper/` blocks edits outside the folders you name. Claude is told why and
+  can take another route
+- Each block shows as a toast and in **🛡 Guard log** at the top of the ⚙ Config tab:
+  guard, rule, tool, project, time. Only that metadata is kept, **never the command**
+
+**Share a session (⇩ export)**
+- **⇩ export** in the session header saves one self-contained HTML file to your
+  Downloads folder: the timeline as Ember renders it, in your current theme, with no
+  scripts. Tick what goes in: thinking blocks, tool inputs and results,
+  system messages
+- **Hide my home folder and user name** (on by default) replaces `/Users/<you>/…`
+  paths with `~/…` and your user name with `user`, including in `ls -l` output.
+  Tool results can still contain file contents, so read the file before you send it
+
 **Viz inbox and file explorer**
 - A watched folder: any `.html`, `.png`, `.svg`, `.md`, `.pdf`, `.csv` written there
   appears within 5 seconds and renders automatically. Tell a running Claude session
@@ -227,12 +264,15 @@ retrospective). The **🧩** button opens a pane that shows which add-ons from
 It also opens by itself at launch while something is missing; tick
 **Don't show at launch** to stop that until the list of missing add-ons changes.
 
-- Two add-ons ship inside this repo (`tools/devtools_hooks.py`, stdlib only):
-  **Live limits** wraps your statusline to record Claude Code's official usage figures,
-  and **Live activity** adds an async hook that records event *metadata* (event, tool
-  name, session — never tool inputs or outputs). Both edit `~/.claude/settings.json`,
-  save a copy first as `settings.json.bak-devtools`, and undo with
-  `python3 tools/devtools_hooks.py uninstall-statusline` / `uninstall-events`
+- Three add-ons ship inside this repo (`tools/devtools_hooks.py`, stdlib only):
+  **Live limits** wraps your statusline to record Claude Code's official usage figures;
+  **Live activity** adds an async hook that records event *metadata* (event, tool
+  name, session — never tool inputs or outputs); **Session guards** adds the PreToolUse
+  hook that makes `/careful` and `/freeze` block (it reads the guard file those commands
+  write, `.claude/state/session-guards.json` in the project). All three edit
+  `~/.claude/settings.json`, save a copy first as `settings.json.bak-devtools`, and undo
+  with `python3 tools/devtools_hooks.py uninstall-statusline` / `uninstall-events` /
+  `uninstall-guard`
 - Ticked add-ons install in a **visible terminal tab**, with the exact commands shown
   in the pane first. Nothing installs without that click
 - **Ticking an installed add-on reinstalls it cleanly** (plugin uninstalled and
@@ -255,9 +295,13 @@ It also opens by itself at launch while something is missing; tick
 - graphify reads the whole project folder. On a big data folder (or Dropbox online-only
   files) the first step can take minutes: list data folders in a `.graphifyignore`
   (same syntax as `.gitignore`), or run `/graphify <code-subfolder>`
-- The list also suggests ponytail, frontend-design, codex, crossref and dream, which the
-  dashboard doesn't use. Edit `addons.json` to change what it offers. The app only ever
-  runs commands written in that file
+- The list also suggests add-ons the dashboard doesn't use itself: ponytail,
+  frontend-design, codex, crossref, dream, **Anthropic's document skills** (PDF, Word,
+  Excel, PowerPoint), **Playwright MCP** (Claude drives a browser, e.g. to check a report
+  it built) and **Context7 MCP** (current library docs; hosted, no key needed). The two
+  MCP servers are added at user scope with `claude mcp add --scope user`. Edit
+  `addons.json` to change what it offers. The app only ever runs commands written in
+  that file
 - Without `/improve` installed, the retrospective simply doesn't run; without graphify,
   the graph prompt offers to set it up instead of launching an unknown command
 
@@ -401,8 +445,13 @@ comments; after applying one, set its `status` to `"resolved"` in that file.
 The dashboard can spawn shells, so it is built to be safe on a shared machine:
 
 - Binds to **127.0.0.1** only. It **never modifies your transcripts, settings or
-  memory**. It writes in exactly three places: its own state file, the plan checkbox you
-  click (see below), and `~/.claude/improve-reports/` when a retrospective runs
+  memory**. It writes in exactly five places: its own state file, the plan checkbox you
+  click (see below), `~/.claude/improve-reports/` when a retrospective runs, and, only
+  when you click, a session-log entry and an export
+- **Session-log writes** go only to `session_logs/<date>.md` in the project of a Claude
+  terminal this server ran: the page names the terminal, never a path. **Exports** go
+  only to `~/Downloads`, under a sanitised file name; the page supplies the name and the
+  HTML, never the folder
 - **Plan writes are narrow**: only a file the pane discovered for the open project, only
   the `[ ]` / `[x]` marker on one line, and only when the line's text still matches what
   the UI displayed — a stale click is refused rather than applied to the wrong task

@@ -346,6 +346,50 @@ eq("re-activating the same tab does not reload", app.loaded.length, before);
      JSON.stringify(nowMap(P, applyEvents({}, [{hook_event_name: "PreToolUse", cwd: "/elsewhere", tool_name: "Read"}]).now)), "{}");
 }
 
+/* ---------------- OS notifications: which events, how often ---------------- */
+{
+  const { osNotices } = (0, eval)(
+    slice('/* ---------- "now doing" per project', "/* The tree is one tab stop") + ";({osNotices})");
+  const last = {};
+  const ev = [{hook_event_name: "PermissionRequest", cwd: "/p", session_id: "s"},
+              {hook_event_name: "Stop", cwd: "/p", session_id: "s"},
+              {hook_event_name: "PreToolUse", cwd: "/p", session_id: "s"},
+              {hook_event_name: "Stop", cwd: "/p", session_id: "s"}];
+  eq("waiting and finished notify, once each", JSON.stringify(osNotices(ev, last, 1e6).map(n => n.kind)),
+     '["waiting","finished"]');
+  eq("the same session within 15 s stays quiet", osNotices(ev, last, 1e6 + 5000).length, 0);
+  eq("after 15 s it notifies again", osNotices(ev, last, 1e6 + 16000).length, 2);
+  eq("another session is not rate-limited by the first",
+     osNotices([{hook_event_name: "Stop", cwd: "/q", session_id: "t"}], last, 1e6 + 16500).length, 1);
+}
+
+/* ---------------- session-end card + export redaction ---------------- */
+{
+  const fmtTok = n => String(n || 0);
+  const { endCardHtml } = (0, eval)("(function(esc, fmtTok){" +
+    slice("function endCardHtml(s){", "async function showEndCard(id){") + "; return {endCardHtml};})")(esc, fmtTok);
+  const base = {project: "paper", started: 0, ended: 600, tokens: {output_tokens: 5}, tools: 3,
+                title: "fix <b>tables</b>", cost_usd: null, session_id: "s1", improve: null};
+  const h = endCardHtml(Object.assign({}, base, {
+    git: {files: [{path: "a.R", added: "3", removed: "1"}, {path: "img.png", added: "-", removed: "-"}],
+          commits: ["abc1234 add y"]},
+    plan: {done: 2, total: 3, ticked: 1}}));
+  report("card sums the diff (binary files count as 0)", h.includes("+3") && h.includes("−1"), h);
+  report("card shows ticks and minutes", h.includes("+1</b> ticked") && h.includes("10 min"), h);
+  report("card escapes the session title", h.includes("fix &lt;b&gt;") && !h.includes("<b>tables"), h);
+  report("no cost line without Claude Code's figure", !h.includes("cost"), h);
+  report("no git: said plainly", endCardHtml(Object.assign({}, base, {git: null, plan: null}))
+         .includes("Not a git repository"));
+  report("no transcript: no fake zeros", !endCardHtml(Object.assign({}, base, {git: null, tokens: null}))
+         .includes("output"));
+  const { redactHome } = (0, eval)(slice("function redactHome(html){", "const EXPORT_DLG") + ";({redactHome})");
+  eq("home paths are redacted (mac, linux, windows)",
+     redactHome('/Users/pierre/x /home/ann/y C:\\Users\\Bob\\z'), "~/x ~/y ~\\z");
+  eq("other paths are left alone", redactHome("/opt/Users/x and /usr/lib"), "/opt/Users/x and /usr/lib");
+  eq("the user name goes too (ls -l owner column)",
+     redactHome("/Users/pierre/x\n-rw-r--r-- 1 pierre staff"), "~/x\n-rw-r--r-- 1 user staff");
+}
+
 /* ---------------- polling: unchanged data -> no repaint ---------------- */
 {
   const dataStamp = (0, eval)(slice("const dataStamp =", "poll(async () => {   // badges") + ";dataStamp");
@@ -356,7 +400,12 @@ eq("re-activating the same tab does not reload", app.loaded.length, before);
   const js = html.match(/<script>([\s\S]*?)<\/script>/)[1];
   report("every timer goes through poll() (paused while hidden)",
          [...js.matchAll(/setInterval\(/g)].every(m => js.slice(m.index, m.index + 90).includes("document.hidden"))
-         && /poll\(pollEvents, 3000\)/.test(js) && /poll\(liveTick, 3000\)/.test(js));
+         && /pollAway\(pollEvents, 3000\)/.test(js) && /poll\(liveTick, 3000\)/.test(js));
+  // the one exception: with notifications on, events and guard blocks keep
+  // being read while hidden, since that is when a notification matters
+  report("only opted-in notification polls run while hidden",
+         /if\(!document\.hidden \|\| NOTIFY\.on\) fn\(\)/.test(js)
+         && [...js.matchAll(/\npollAway\((\w+)/g)].map(m => m[1]).sort().join() === "pollEvents,pollGuards");
 }
 
 /* ---------------- terminal input ordering ---------------- */

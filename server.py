@@ -6,7 +6,8 @@ Reads ~/.claude/projects/<slug>/*.jsonl transcripts (plus subagent transcripts
 and project memory) and serves a single-page dashboard on localhost.
 
 Zero dependencies: Python 3.9+ standard library only.
-Reads ~/.claude; writes only its own state, a plan checkbox you click, and ~/.claude/improve-reports/.
+Reads ~/.claude; writes only its own state, a plan checkbox you click, ~/.claude/improve-reports/,
+and on a click a session_logs/ entry or an export in ~/Downloads.
 
 Usage:
     python3 server.py [--port 3456] [--root ~/.claude]
@@ -55,7 +56,7 @@ import winconpty  # noqa: E402
 HAS_TERMINAL = HAS_PTY or winconpty.unsupported_reason() is None
 
 
-VERSION = "1.0.0"      # single source: build-app.sh and the HTTP header read it
+VERSION = "1.1.0"      # single source: build-app.sh and the HTTP header read it
 HERE = Path(__file__).resolve().parent
 CLAUDE_ROOT = Path(os.environ.get("CLAUDE_ROOT", str(Path.home() / ".claude")))
 
@@ -652,14 +653,16 @@ def official_limits():
 
 
 EVENTS_FILE = APP_DIR / "events.jsonl"
+GUARDS_FILE = APP_DIR / "guards.jsonl"      # blocks by the Session guards tee
 
 
-def events_since(since, limit=500):
+def events_since(since, limit=500, path=None):
     """Hook events appended after byte offset `since` (tools/devtools_hooks.py
     event). since < 0 → just the current end, so a fresh page starts live.
     A file smaller than `since` was rotated: start again from 0."""
+    path = path or EVENTS_FILE
     try:
-        size = EVENTS_FILE.stat().st_size
+        size = path.stat().st_size
     except OSError:
         return {"events": [], "offset": 0, "enabled": False}
     if since < 0:
@@ -667,7 +670,7 @@ def events_since(since, limit=500):
     if since > size:
         since = 0
     out = []
-    with open(EVENTS_FILE, "rb") as fh:
+    with open(path, "rb") as fh:
         fh.seek(since)
         data = fh.read(2_000_000)
     end = data.rfind(b"\n") + 1                 # only complete lines
@@ -1769,10 +1772,22 @@ def addon_installed(check, root=None, plugins=None):
             return False
         if kind == "statusline":
             return name in str((st.get("statusLine") or {}).get("command", ""))
-        return any(name in str(h.get("command", ""))
+        # `arg` tells our tees apart: the event tee and the guard share a file
+        arg = (check or {}).get("arg")
+        return any(name in cmd and (not arg or cmd.split()[-1:] == [arg])
                    for entries in (st.get("hooks") or {}).values()
                    if isinstance(entries, list)
-                   for e in entries for h in (e.get("hooks") or []))
+                   for e in entries for h in (e.get("hooks") or [])
+                   for cmd in [str(h.get("command", ""))])
+    if kind == "mcp":           # `claude mcp add` writes ~/.claude.json (next to ~/.claude)
+        try:
+            conf = json.loads((root.parent / ".claude.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        scopes = [conf.get("mcpServers")] + [p.get("mcpServers") for p in
+                                             (conf.get("projects") or {}).values()
+                                             if isinstance(p, dict)]
+        return any(isinstance(m, dict) and name in m for m in scopes)
     return False
 
 
@@ -2037,6 +2052,214 @@ def spawn_improve(cwd):
 # index into it. Treating a position as a plain index into `buf` breaks the
 # moment the front gets trimmed.
 
+# ---------------------------------------------------------------- session-end card
+#
+# When a Claude terminal ends, the page shows what the session did: files
+# changed since it started (git), tokens and cost, plan items ticked, and the
+# retrospective. Snapshot at start, summary at exit, kept for the last few.
+
+SUMMARIES = {}                   # term id -> summary dict
+SUMMARIES_MAX = 20
+SUMMARIES_LOCK = threading.Lock()
+
+
+def git_out(cwd, *args):
+    """stdout of a read-only git command in cwd, or None (no git, not a repo)."""
+    git = shutil.which("git", path=login_path())
+    if not git:
+        return None
+    kw = {"creationflags": 0x08000000} if os.name == "nt" else {}   # CREATE_NO_WINDOW
+    try:
+        r = subprocess.run([git, "-C", str(cwd), *args], capture_output=True,
+                           text=True, timeout=5, stdin=subprocess.DEVNULL, **kw)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def session_snapshot(cwd, resume=None):
+    head = (git_out(cwd, "rev-parse", "HEAD") or "").strip() or None
+    try:
+        plan0 = plan_read(cwd)["done"]
+    except Exception:
+        plan0 = None
+    return {"started": time.time(), "head": head, "plan_done": plan0, "resume": resume}
+
+
+def session_transcript(cwd, since, resume=None):
+    """The transcript this terminal wrote. A resumed session names its own;
+    a new one is the newest file CREATED since the tab opened (so another
+    session running in the same project is not mistaken for it)."""
+    d = project_dir_for_cwd(CLAUDE_ROOT, cwd)
+    if d is None:
+        return None
+    if resume:
+        f = d / (resume + ".jsonl")
+        return f if f.is_file() else None
+    # ponytail: two NEW sessions started in one project within seconds of each
+    # other can still swap; pass the session id to claude if that ever matters
+    best = None
+    for f in d.glob("*.jsonl"):
+        try:
+            st = f.stat()
+        except OSError:
+            continue
+        born = getattr(st, "st_birthtime", None)          # macOS, Windows
+        if born is None:                                   # Linux: first record's time
+            born = transcript_start(f)
+        if born is not None and born >= since - 5 and (best is None or st.st_mtime > best[0]):
+            best = (st.st_mtime, f)
+    return best[1] if best else None
+
+
+def transcript_start(f):
+    """Timestamp of a transcript's first timestamped record, as epoch seconds."""
+    try:
+        with open(f, encoding="utf-8", errors="replace") as fh:
+            for _, line in zip(range(50), fh):
+                ts = (json.loads(line) or {}).get("timestamp")
+                if ts:
+                    return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+    except (OSError, ValueError, AttributeError):
+        pass
+    return None
+
+
+def session_summary(cwd, snap, ended=None):
+    ended = ended or time.time()
+    out = {"cwd": cwd, "project": Path(cwd).name, "started": snap["started"],
+           "ended": ended, "session_id": None, "title": None, "tokens": None,
+           "cost_usd": None, "tools": 0, "git": None, "plan": None}
+    f = session_transcript(cwd, snap["started"], snap.get("resume"))
+    if f:
+        try:
+            d = parse_session(f)
+            out.update(session_id=f.stem, title=d["title"], tokens=d["totals"],
+                       tools=sum(d["tool_counts"].values()))
+        except Exception:
+            pass
+        try:            # the Live limits tee saves the session's own cost
+            st = json.loads((APP_DIR / "status" / (f.stem + ".json")).read_text(encoding="utf-8"))
+            out["cost_usd"] = (st.get("cost") or {}).get("total_cost_usd")
+        except (OSError, ValueError, AttributeError):
+            pass
+    if snap.get("head"):
+        # everything since the start: commits made in the session + uncommitted work
+        files = []
+        for line in (git_out(cwd, "diff", "--numstat", snap["head"]) or "").splitlines()[:200]:
+            parts = line.split("\t", 2)
+            if len(parts) == 3:
+                files.append({"path": parts[2], "added": parts[0], "removed": parts[1]})
+        commits = (git_out(cwd, "log", "--format=%h %s", f"{snap['head']}..HEAD") or "").splitlines()
+        out["git"] = {"files": files, "commits": commits[:50]}
+    try:
+        pl = plan_read(cwd)
+        if pl.get("file"):
+            out["plan"] = {"file": pl["file"], "done": pl["done"], "total": pl["total"],
+                           "ticked": (pl["done"] - snap["plan_done"]
+                                      if snap.get("plan_done") is not None else None),
+                           "open": [i["text"] for i in pl["items"]
+                                    if i["kind"] == "task" and i["state"] != "done"][:8]}
+    except Exception:
+        pass
+    return out
+
+
+def store_summary(tid, summary):
+    with SUMMARIES_LOCK:
+        SUMMARIES[tid] = summary
+        while len(SUMMARIES) > SUMMARIES_MAX:
+            del SUMMARIES[next(iter(SUMMARIES))]
+
+
+def summary_with_improve(tid):
+    with SUMMARIES_LOCK:
+        s = SUMMARIES.get(tid)
+    if s is None:
+        return None
+    reps = [r for r in improve_reports(mangle_cwd(s["cwd"]))["reports"]
+            if r["mtime"] >= s["ended"] - 5]
+    return dict(s, improve=reps[0] if reps else None)
+
+
+def _fmt_int(n):
+    return f"{n:,}" if isinstance(n, int) else "—"
+
+
+def session_log_entry(s):
+    """A session_logs/ entry in the project's format, from facts only."""
+    day = time.strftime("%Y-%m-%d", time.localtime(s["started"]))
+    mins = max(1, round((s["ended"] - s["started"]) / 60))
+    tok = s.get("tokens") or {}
+    lines = [f"## [{day}] Session — {s.get('title') or s['project']}",
+             "Status: completed", "",
+             f"Recorded by Ember from the terminal that closed at "
+             f"{time.strftime('%H:%M', time.localtime(s['ended']))} ({mins} min"
+             + (f", session `{s['session_id']}`" if s.get("session_id") else "") + ").", "",
+             "### Changes", "| File | Added | Removed |", "|---|---|---|"]
+    files = (s.get("git") or {}).get("files") or []
+    lines += [f"| `{f['path']}` | {f['added']} | {f['removed']} |" for f in files] or \
+             ["| (no file changes recorded) | | |"]
+    commits = (s.get("git") or {}).get("commits") or []
+    if commits:
+        lines += ["", "### Commits"] + [f"- {c}" for c in commits]
+    lines += ["", "### Usage",
+              f"- Output tokens: {_fmt_int(tok.get('output_tokens'))}; "
+              f"peak context: {_fmt_int(tok.get('peak_context'))}; tool calls: {s.get('tools', 0)}"]
+    if s.get("cost_usd") is not None:
+        lines.append(f"- Cost (Claude Code's own figure): ${s['cost_usd']:.2f}")
+    pl = s.get("plan")
+    if pl:
+        gained = f" (+{pl['ticked']} this session)" if pl.get("ticked") else ""
+        lines.append(f"- Plan: {pl['done']}/{pl['total']} done{gained}")
+    lines += ["", "### Design Decisions", "| Decision | Rationale | Alternatives |",
+              "|---|---|---|", "| | | |", "", "### LEARN entries", "", "### Next steps"]
+    lines += [f"- {t}" for t in (pl or {}).get("open", [])] or ["- "]
+    return "\n".join(lines) + "\n"
+
+
+def append_session_log(tid):
+    """Append the entry for terminal `tid` to <project>/session_logs/<day>.md.
+    Only summaries this server made are accepted: the client names a terminal,
+    never a path."""
+    with SUMMARIES_LOCK:
+        s = SUMMARIES.get(tid)
+    if s is None:
+        raise KeyError(tid)
+    day = time.strftime("%Y-%m-%d", time.localtime(s["started"]))
+    f = Path(s["cwd"]) / "session_logs" / f"{day}.md"
+    f.parent.mkdir(exist_ok=True)
+    prefix = "\n" if f.exists() and f.stat().st_size else ""
+    with open(f, "a", encoding="utf-8") as fh:
+        fh.write(prefix + session_log_entry(s))
+    return str(f)
+
+
+
+# ---------------------------------------------------------------- session export
+# The page renders a session into one self-contained HTML file; the server
+# only saves it, always into ~/Downloads (the macOS app's WKWebView has no
+# blob downloads). The page picks nothing but a file name.
+
+EXPORT_MAX = 50 * 1024 * 1024
+
+
+def save_export(name, html):
+    if not isinstance(html, str) or not html or len(html) > EXPORT_MAX:
+        raise ValueError("nothing to save, or the export is over 50 MB")
+    # letters in any script (French titles keep their accents); never a separator
+    stem = re.sub(r"[^\w .()-]+", "-", str(name or "session"))[:80].strip(" .-") or "session"
+    d = Path.home() / "Downloads"
+    d.mkdir(exist_ok=True)
+    f = d / f"{stem}.html"
+    n = 2
+    while f.exists():
+        f = d / f"{stem} ({n}).html"
+        n += 1
+    f.write_text(html, encoding="utf-8")
+    return str(f)
+
+
 SCROLLBACK_CAP = 512 * 1024        # bytes of terminal output kept for replay
 # One output stream serves every terminal of a page: a browser allows only 6
 # connections per host, so a stream per tab left none for keystrokes once 6
@@ -2061,6 +2284,8 @@ class Term:
         self.label = Path(argv[0]).name + " · " + (Path(cwd).name or "/")
         self.argv, self.cwd = argv, cwd
         self.is_claude = "claude" in Path(argv[0]).name.lower()
+        resume = argv[argv.index("--resume") + 1] if "--resume" in argv[:-1] else None
+        self.snap = session_snapshot(cwd, resume) if self.is_claude else None
         self.buf = bytearray()      # scrollback so re-attaching clients catch up
         self.discarded = 0          # bytes trimmed off the front of buf, ever
         self.cond = threading.Condition()
@@ -2144,7 +2369,12 @@ class Term:
         # the session has written its transcript and run its own hooks by
         # now — hand it to the retrospective (detached, so quitting the app
         # does not cut it short)
-        if self.is_claude:
+        if self.is_claude and self.snap:
+            try:
+                store_summary(self.id, session_summary(self.cwd, self.snap))
+            except Exception:
+                LOG.exception("session summary failed")
+        if self.is_claude:              # also on quit: that is the retrospective's point
             try:
                 spawn_improve(self.cwd)
             except Exception:
@@ -2748,6 +2978,22 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(events_since(since))
                 return
 
+            if p == "/api/guards":
+                try:
+                    since = int(qs.get("since", ["0"])[0])
+                except ValueError:
+                    since = 0
+                self._json(events_since(since, limit=100, path=GUARDS_FILE))
+                return
+
+            if p == "/api/term/summary":
+                s = summary_with_improve(qs.get("id", [""])[0])
+                if s is None:
+                    self._err(404, "no summary (yet)")
+                    return
+                self._json(s)
+                return
+
             if p == "/api/state":
                 self._json({"layout": state_read().get("layout"),
                             "improve": improve_enabled(),
@@ -3002,6 +3248,8 @@ class Handler(BaseHTTPRequestHandler):
                 with TERMS_LOCK:
                     terms = list(TERMS.values())
                     TERMS.clear()
+                for t in terms:
+                    t.snap = None           # no one is left to read an end card
                 threads = [threading.Thread(target=t.close_gracefully, daemon=True)
                            for t in terms]
                 for th in threads:
@@ -3031,6 +3279,19 @@ class Handler(BaseHTTPRequestHandler):
                                rows=body.get("rows", 30))
                 self._json({"id": t.id, "label": t.label, "cwd": t.cwd,
                             "argv": t.argv})
+                return
+
+            if p == "/api/export":
+                self._json({"ok": True, "path": save_export(body.get("name"), body.get("html"))})
+                return
+
+            if p == "/api/term/sessionlog":
+                try:
+                    self._json({"ok": True, "path": append_session_log(str(body.get("id", "")))})
+                except KeyError:
+                    self._err(404, "no summary for that terminal")
+                except OSError as e:
+                    self._err(500, f"could not write the session log: {e}")
                 return
 
             t = None

@@ -264,7 +264,8 @@
       "source": "https://github.com/PierreBeaucoral/ember/blob/main/tools/devtools_hooks.py",
       "check": {
         "kind": "hook",
-        "name": "devtools_hooks.py"
+        "name": "devtools_hooks.py",
+        "arg": "event"
       },
       "needs": [],
       "install": {
@@ -273,6 +274,112 @@
         ],
         "windows": [
           "python {app}\\tools\\devtools_hooks.py install-events"
+        ]
+      }
+    },
+    {
+      "id": "session-guards",
+      "name": "Session guards (/careful, /freeze)",
+      "used_by_app": false,
+      "unlocks": "A PreToolUse hook that makes /careful block destructive shell commands and /freeze block edits outside the folders you name, and logs each block (tool and rule, never the command) to the Guard log in the Config pane. Undo: devtools_hooks.py uninstall-guard.",
+      "source": "https://github.com/PierreBeaucoral/ember/blob/main/tools/devtools_hooks.py",
+      "check": {
+        "kind": "hook",
+        "name": "devtools_hooks.py",
+        "arg": "guard"
+      },
+      "needs": [],
+      "install": {
+        "posix": [
+          "python3 {app}/tools/devtools_hooks.py install-guard"
+        ],
+        "windows": [
+          "python {app}\\tools\\devtools_hooks.py install-guard"
+        ]
+      }
+    },
+    {
+      "id": "anthropic-skills",
+      "name": "Anthropic document skills",
+      "used_by_app": false,
+      "unlocks": "Anthropic's official skills for PDF, Word, Excel and PowerPoint files: read, fill, create and edit them from a session.",
+      "source": "https://github.com/anthropics/skills",
+      "check": {
+        "kind": "plugin",
+        "name": "document-skills@anthropic-agent-skills"
+      },
+      "needs": [
+        "claude"
+      ],
+      "install": {
+        "posix": [
+          "(claude plugin marketplace add anthropics/skills || echo marketplace already added)",
+          "claude plugin install document-skills@anthropic-agent-skills"
+        ],
+        "windows": [
+          "(call claude plugin marketplace add anthropics/skills || echo marketplace already added)",
+          "call claude plugin install document-skills@anthropic-agent-skills"
+        ]
+      },
+      "reinstall": {
+        "posix": [
+          "(claude plugin uninstall document-skills@anthropic-agent-skills || echo was not installed)",
+          "(claude plugin marketplace update anthropic-agent-skills || claude plugin marketplace add anthropics/skills)",
+          "claude plugin install document-skills@anthropic-agent-skills"
+        ],
+        "windows": [
+          "(call claude plugin uninstall document-skills@anthropic-agent-skills || echo was not installed)",
+          "(call claude plugin marketplace update anthropic-agent-skills || call claude plugin marketplace add anthropics/skills)",
+          "call claude plugin install document-skills@anthropic-agent-skills"
+        ]
+      }
+    },
+    {
+      "id": "playwright",
+      "name": "Playwright MCP",
+      "used_by_app": false,
+      "unlocks": "Microsoft's browser-automation MCP server: Claude can open a page, click through it and read it, e.g. to check an HTML report or a Quarto site it just built. Runs through npx.",
+      "source": "https://github.com/microsoft/playwright-mcp",
+      "check": {
+        "kind": "mcp",
+        "name": "playwright"
+      },
+      "needs": [
+        "claude",
+        "node"
+      ],
+      "install": {
+        "posix": [
+          "(claude mcp remove --scope user playwright >/dev/null 2>&1 || true)",
+          "claude mcp add --scope user playwright npx @playwright/mcp@latest"
+        ],
+        "windows": [
+          "(call claude mcp remove --scope user playwright >nul 2>&1 || ver >nul)",
+          "call claude mcp add --scope user playwright npx @playwright/mcp@latest"
+        ]
+      }
+    },
+    {
+      "id": "context7",
+      "name": "Context7 MCP",
+      "used_by_app": false,
+      "unlocks": "Up-to-date library documentation pulled into the session (R and Python packages included), so Claude stops guessing at APIs that changed. Hosted server, no key needed; a free key from context7.com raises the rate limit.",
+      "source": "https://github.com/upstash/context7",
+      "check": {
+        "kind": "mcp",
+        "name": "context7"
+      },
+      "needs": [
+        "claude"
+      ],
+      "install": {
+        "posix": [
+          "(claude mcp remove --scope user context7 >/dev/null 2>&1 || true)",
+          "claude mcp add --scope user --transport http context7 https://mcp.context7.com/mcp"
+        ],
+        "windows": [
+          "(call claude mcp remove --scope user context7 >nul 2>&1 || ver >nul)",
+          "call claude mcp add --scope user --transport http context7 https://mcp.context7.com/mcp"
         ]
       }
     }

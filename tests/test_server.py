@@ -1040,7 +1040,7 @@ def test_shipped_addons_manifest_is_complete():
     assert len(ids) == len(set(ids))
     for a in data["addons"]:
         assert srv.ADDON_ID_RE.fullmatch(a["id"]), a["id"]
-        assert a["check"]["kind"] in ("skill", "command", "plugin", "statusline", "hook"), a["id"]
+        assert a["check"]["kind"] in ("skill", "command", "plugin", "statusline", "hook", "mcp"), a["id"]
         for plat in ("posix", "windows"):
             assert a["install"][plat], f"{a['id']} has no {plat} commands"
         assert a["source"].startswith("https://"), a["id"]
@@ -1446,6 +1446,7 @@ def _hooks_mod(tmp_path, monkeypatch):
     spec.loader.exec_module(m)
     for k, v in {"APP_DIR": tmp_path, "STATUS_DIR": tmp_path / "status",
                  "EVENTS": tmp_path / "events.jsonl", "INNER": tmp_path / "inner.json",
+                 "GUARDS": tmp_path / "guards.jsonl",
                  "SETTINGS": tmp_path / "settings.json"}.items():
         monkeypatch.setattr(m, k, v)
     return m
@@ -1550,3 +1551,175 @@ def test_quick_edit_off_is_safe_without_a_console():
     # a no-op off Windows; on the Windows CI runner stdin is not a console,
     # so this exercises the ctypes signatures without touching a real window
     srv.quick_edit_off()
+
+
+# ---------------------------------------------------------------- session guards
+
+def _guarded_project(tmp_path, guards):
+    proj = tmp_path / "proj"
+    (proj / ".claude" / "state").mkdir(parents=True)
+    (proj / ".claude" / "state" / "session-guards.json").write_text(json.dumps(guards))
+    return proj
+
+
+def test_careful_blocks_destructive_commands_only(tmp_path, monkeypatch):
+    m = _hooks_mod(tmp_path, monkeypatch)
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+    proj = _guarded_project(tmp_path, {"careful": {"active": True}})
+    bash = lambda c: {"cwd": str(proj), "tool_name": "Bash", "tool_input": {"command": c}}
+    for bad in ("rm -rf build", "rm -Rf x", "git push --force", "git push origin main -f",
+                "git reset --hard HEAD~1", "git clean -fd", "chmod -R 777 ."):
+        assert m.guard_verdict(bash(bad)), bad
+    for ok in ("rm notes.txt", "git status", "git push origin main", "ls -rf"):
+        assert m.guard_verdict(bash(ok)) is None, ok
+    (proj / ".claude" / "state" / "session-guards.json").write_text('{"careful": {"active": false}}')
+    assert m.guard_verdict(bash("rm -rf /")) is None
+
+
+def test_freeze_allows_only_named_folders(tmp_path, monkeypatch):
+    m = _hooks_mod(tmp_path, monkeypatch)
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+    proj = _guarded_project(tmp_path, {"freeze": {"active": True, "allowed_paths": ["paper/"]}})
+    edit = lambda f: {"cwd": str(proj), "tool_name": "Edit", "tool_input": {"file_path": f}}
+    assert m.guard_verdict(edit(str(proj / "paper" / "main.tex"))) is None
+    assert m.guard_verdict(edit("paper/sub/x.tex")) is None                 # relative
+    assert m.guard_verdict(edit(str(proj / ".claude" / "plan.md"))) is None  # never frozen out
+    assert m.guard_verdict(edit(str(proj / "code" / "a.R")))[0] == "freeze"
+    assert m.guard_verdict(edit(str(proj / "paper2" / "x.tex")))             # not a prefix match
+    assert m.guard_verdict(edit(str(proj / "paper" / ".." / "code.R")))      # no escaping
+    assert m.guard_verdict({"cwd": str(proj), "tool_name": "Read",
+                            "tool_input": {"file_path": "/etc/hosts"}}) is None
+
+
+def test_guard_denies_and_logs_metadata_never_the_command(tmp_path, monkeypatch, capsys):
+    m = _hooks_mod(tmp_path, monkeypatch)
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+    proj = _guarded_project(tmp_path, {"careful": {"active": True}})
+    m.guard(json.dumps({"cwd": str(proj), "session_id": "s1", "tool_name": "Bash",
+                        "tool_input": {"command": "rm -rf secret-dir-name"}}))
+    out = json.loads(capsys.readouterr().out)["hookSpecificOutput"]
+    assert out["permissionDecision"] == "deny" and "/careful off" in out["permissionDecisionReason"]
+    line = (tmp_path / "guards.jsonl").read_text()
+    assert json.loads(line)["guard"] == "careful" and "secret-dir-name" not in line
+    m.guard(json.dumps({"cwd": str(proj), "tool_name": "Bash", "tool_input": {"command": "ls"}}))
+    assert capsys.readouterr().out == ""                                     # allowed: silent
+    monkeypatch.setattr(srv, "GUARDS_FILE", tmp_path / "guards.jsonl")
+    assert srv.events_since(0, path=srv.GUARDS_FILE)["events"][0]["rule"]
+
+
+def test_event_tee_and_guard_install_independently(tmp_path, monkeypatch):
+    m = _hooks_mod(tmp_path, monkeypatch)
+    m.install_guard(); m.install_guard()                                    # idempotent
+    assert not srv.addon_installed({"kind": "hook", "name": "devtools_hooks.py", "arg": "event"}, tmp_path)
+    m.install_events()                  # the guard on PreToolUse must not hide a missing tee
+    st = json.loads((tmp_path / "settings.json").read_text())
+    pre = json.dumps(st["hooks"]["PreToolUse"])
+    assert pre.count("devtools_hooks.py") == 2 and "Bash|Edit" in pre
+    assert srv.addon_installed({"kind": "hook", "name": "devtools_hooks.py", "arg": "guard"}, tmp_path)
+    m.uninstall_events()
+    assert srv.addon_installed({"kind": "hook", "name": "devtools_hooks.py", "arg": "guard"}, tmp_path)
+    assert not srv.addon_installed({"kind": "hook", "name": "devtools_hooks.py", "arg": "event"}, tmp_path)
+    m.uninstall_guard()
+    assert "hooks" not in json.loads((tmp_path / "settings.json").read_text()) or \
+        not json.loads((tmp_path / "settings.json").read_text())["hooks"]
+
+
+def test_event_tee_skips_embers_own_retrospective(tmp_path, monkeypatch):
+    m = _hooks_mod(tmp_path, monkeypatch)
+    monkeypatch.setenv("CDL_IMPROVE_RUN", "1")
+    m.event(json.dumps({"hook_event_name": "Stop", "cwd": "/p"}))
+    assert not (tmp_path / "events.jsonl").exists()
+
+
+def test_mcp_addon_detection(tmp_path):
+    root = tmp_path / ".claude"
+    root.mkdir()
+    check = {"kind": "mcp", "name": "context7"}
+    assert not srv.addon_installed(check, root)
+    (tmp_path / ".claude.json").write_text(json.dumps(
+        {"projects": {"/p": {"mcpServers": {"playwright": {}}}}}))
+    assert srv.addon_installed({"kind": "mcp", "name": "playwright"}, root)  # project scope
+    assert not srv.addon_installed(check, root)
+    (tmp_path / ".claude.json").write_text(json.dumps({"mcpServers": {"context7": {}}}))
+    assert srv.addon_installed(check, root)
+
+
+def test_new_addons_have_commands_for_both_platforms():
+    by_id = {a["id"]: a for a in json.loads((HERE.parent / "addons.json").read_text())["addons"]}
+    for aid in ("session-guards", "anthropic-skills", "playwright", "context7"):
+        assert by_id[aid]["install"]["posix"] and by_id[aid]["install"]["windows"], aid
+
+
+# ---------------------------------------------------------------- session-end card
+
+def _git(cwd, *args):
+    import subprocess
+    subprocess.run(["git", "-C", str(cwd), "-c", "user.name=t", "-c", "user.email=t@t",
+                    "-c", "commit.gpgsign=false", *args], check=True, capture_output=True)
+
+
+@pytest.mark.skipif(not __import__("shutil").which("git"), reason="needs git")
+def test_session_summary_counts_changes_since_the_tab_opened(tmp_path, monkeypatch):
+    proj = tmp_path / "proj"
+    (proj / ".claude").mkdir(parents=True)
+    _git(proj, "init", "-q")
+    (proj / "a.R").write_text("x <- 1\n")
+    (proj / ".claude" / "plan.md").write_text("- [x] one\n- [ ] two\n- [ ] three\n")
+    _git(proj, "add", "-A"); _git(proj, "commit", "-qm", "start")
+    monkeypatch.setattr(srv, "login_path", lambda: os.environ.get("PATH", ""))
+    monkeypatch.setattr(srv.Path, "home", classmethod(lambda cls: tmp_path))  # plans live under $HOME
+    snap = srv.session_snapshot(str(proj))
+    assert snap["head"] and snap["plan_done"] == 1
+    (proj / "a.R").write_text("x <- 1\ny <- 2\n")
+    _git(proj, "commit", "-qam", "add y")
+    (proj / "b.R").write_text("z <- 3\n"); _git(proj, "add", "b.R")     # staged, not committed
+    (proj / ".claude" / "plan.md").write_text("- [x] one\n- [x] two\n- [ ] three\n")
+    s = srv.session_summary(str(proj), snap)
+    paths = {f["path"] for f in s["git"]["files"]}
+    assert {"a.R", "b.R"} <= paths and len(s["git"]["commits"]) == 1
+    assert s["plan"]["done"] == 2 and s["plan"]["ticked"] == 1 and s["plan"]["open"] == ["three"]
+    entry = srv.session_log_entry(s)
+    assert "| `a.R` | 1 | 0 |" in entry and "- three" in entry and "Plan: 2/3 done (+1" in entry
+
+    srv.store_summary("t1", s)
+    f = Path(srv.append_session_log("t1"))
+    srv.append_session_log("t1")
+    assert f.parent == proj / "session_logs" and f.read_text().count("## [") == 2
+    with pytest.raises(KeyError):
+        srv.append_session_log("../../etc")          # only known terminals, never a path
+
+
+def test_session_summary_without_git_or_transcript(tmp_path):
+    s = srv.session_summary(str(tmp_path), {"started": time.time(), "head": None, "plan_done": None})
+    assert s["git"] is None and s["tokens"] is None and "(no file changes recorded)" in srv.session_log_entry(s)
+
+
+# ---------------------------------------------------------------- export
+
+def test_export_saves_into_downloads_with_a_safe_name(tmp_path, monkeypatch):
+    monkeypatch.setattr(srv.Path, "home", classmethod(lambda cls: tmp_path))
+    a = Path(srv.save_export("../../evil/<name>", "<html>1</html>"))
+    b = Path(srv.save_export("../../evil/<name>", "<html>2</html>"))
+    assert a.parent == b.parent == tmp_path / "Downloads" and a != b
+    assert ".." not in a.name and "/" not in a.name and a.read_text() == "<html>1</html>"
+    assert Path(srv.save_export("Tu reçois le digest", "x")).name == "Tu reçois le digest.html"
+    with pytest.raises(ValueError):
+        srv.save_export("x", "")
+
+
+def test_session_transcript_ignores_older_sessions_in_the_same_project(tmp_path, monkeypatch):
+    monkeypatch.setattr(srv, "project_dir_for_cwd", lambda root, cwd: tmp_path)
+    old = tmp_path / "old.jsonl"
+    write_session(old, [rec_user("earlier")])            # created before the tab opened
+    t0 = time.time() + 30
+    os.utime(old, (t0 + 5, t0 + 5))                      # ...but written to since
+    monkeypatch.setattr(srv, "transcript_start", lambda f: 0.0)
+    if not hasattr(os.stat_result, "st_birthtime"):
+        assert srv.session_transcript("/p", t0) is None
+    new = tmp_path / "new.jsonl"
+    write_session(new, [rec_user("mine")])
+    monkeypatch.setattr(srv, "transcript_start", lambda f: t0 + 1 if f == new else 0.0)
+    if not hasattr(os.stat_result, "st_birthtime"):
+        assert srv.session_transcript("/p", t0) == new
+    assert srv.session_transcript("/p", t0, resume="old") == old      # resume names its own
+    assert srv.transcript_start(new) is not None
