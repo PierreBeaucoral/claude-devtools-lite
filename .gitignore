@@ -28,3 +28,6 @@ __pycache__/
 
 # graphify knowledge-graph output
 graphify-out/
+
+# PyInstaller output (packaging/pyinstaller/build.py)
+/dist/

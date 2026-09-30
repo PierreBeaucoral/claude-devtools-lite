@@ -56,8 +56,12 @@ import winconpty  # noqa: E402
 HAS_TERMINAL = HAS_PTY or winconpty.unsupported_reason() is None
 
 
-VERSION = "1.1.0"      # single source: build-app.sh and the HTTP header read it
+VERSION = "1.2.0"      # single source: build-app.sh and the HTTP header read it
 HERE = Path(__file__).resolve().parent
+# Inside Ember.app (Contents/Resources) or a PyInstaller build, the code folder
+# is replaced wholesale on every update: nothing may be written there.
+BUNDLED = (bool(getattr(sys, "frozen", False))
+           or ".app/Contents/Resources" in HERE.as_posix())
 CLAUDE_ROOT = Path(os.environ.get("CLAUDE_ROOT", str(Path.home() / ".claude")))
 
 # --- private data dir ------------------------------------------------------
@@ -190,6 +194,68 @@ def state_write(patch):
         tmp = STATE_FILE.with_suffix(".tmp")
         tmp.write_text(json.dumps(st))
         os.replace(tmp, STATE_FILE)
+
+
+# --- update notice -----------------------------------------------------------
+# At most once a day, ask GitHub for the latest release; the UI shows a notice
+# with a download link. Nothing is installed automatically. The only request
+# Ember makes on its own to the internet; off with the palette or CDL_UPDATES=0.
+# the web redirect, not the REST API: the API allows 60 unauthenticated calls
+# an hour per IP, which a shared (university, office) address can use up
+UPDATE_URL = "https://github.com/PierreBeaucoral/ember/releases/latest"
+UPDATE_EVERY_S = 86400
+_update = {"at": 0.0, "info": None}
+
+
+def open_in():
+    """Where the desktop apps open the dashboard: their own window (default)
+    or the default browser. Read at launch by native/main.swift and
+    native/window.py; the browser launchers ignore it."""
+    return "browser" if state_read().get("open_in") == "browser" else "window"
+
+
+def updates_enabled():
+    if os.environ.get("CDL_UPDATES", "1") == "0":
+        return False
+    return bool(state_read().get("updates", True))
+
+
+def version_tuple(v):
+    return tuple(int(x) for x in re.findall(r"\d+", str(v))[:3])
+
+
+def latest_release_url():
+    """…/releases/latest redirects to …/releases/tag/vX.Y.Z."""
+    import urllib.request
+    req = urllib.request.Request(UPDATE_URL, method="HEAD",
+                                 headers={"User-Agent": "ember/" + VERSION})
+    with urllib.request.urlopen(req, timeout=5) as r:
+        return r.geturl()
+
+
+def update_info(force=False, fetch=latest_release_url):
+    """{current, enabled, latest, url, newer}; latest/url stay None until a
+    check succeeded."""
+    out = {"current": VERSION, "enabled": updates_enabled(),
+           "latest": None, "url": None, "newer": False}
+    if not out["enabled"]:
+        return out
+    now = time.time()
+    if force or now - _update["at"] > UPDATE_EVERY_S:
+        _update["at"] = now     # also on failure: offline means retry tomorrow
+        try:
+            url = str(fetch())
+            m = re.fullmatch(r"https://github\.com/PierreBeaucoral/ember/releases/tag/"
+                             r"v?(\d+(?:\.\d+){0,2})", url)
+            if m:
+                _update["info"] = {"latest": m.group(1), "url": url}
+        except (OSError, ValueError) as e:
+            LOG.info("update check failed: %s", e)
+    if _update["info"]:
+        out.update(_update["info"])
+        out["newer"] = version_tuple(out["latest"]) > version_tuple(VERSION)
+    return out
+
 
 MAX_RESULT_CHARS = 20_000     # per tool-result payload sent to the UI
 MAX_TEXT_CHARS = 120_000      # per text/thinking block sent to the UI
@@ -933,7 +999,8 @@ def usage_summary(root):
     hourly = [0] * 24                                # last 24h sparkline
     for ep, out, _ in recs:
         if ep >= now - 86400:
-            hourly[int((ep - (now - 86400)) // 3600)] += out
+            # min(): a live session can write a record stamped after `now`
+            hourly[min(23, int((ep - (now - 86400)) // 3600))] += out
     st = state_read()
     return {
         "block": block,
@@ -950,9 +1017,10 @@ def usage_summary(root):
 # ---------------------------------------------------------------- viz inbox
 #
 # A watched folder Claude Code sessions can write into to "show" you output.
-# Lives in this tool's own directory (never inside ~/.claude).
+# Lives in this tool's own directory (never inside ~/.claude); a bundled app
+# keeps it in its private data dir, since an update replaces the bundle.
 
-VIZ_DIR = HERE / "viz"
+VIZ_DIR = (APP_DIR if BUNDLED else HERE) / "viz"
 VIZ_TYPES = {".html": "text/html", ".htm": "text/html", ".svg": "image/svg+xml",
              ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
              ".gif": "image/gif", ".webp": "image/webp", ".pdf": "application/pdf",
@@ -1810,6 +1878,32 @@ def host_os():
             else "mac" if sys.platform == "darwin" else "linux")
 
 
+def hooks_cmd(exe=None, here=None, frozen=None, windows=None):
+    """The shell words that run tools/devtools_hooks.py with the interpreter
+    running Ember (a frozen Ember.exe runs it itself: `Ember.exe
+    devtools_hooks.py …`), so no system Python is needed. Quoted for the
+    install terminal's shell."""
+    exe = exe or sys.executable
+    here = Path(here or HERE)
+    frozen = getattr(sys, "frozen", False) if frozen is None else frozen
+    windows = os.name == "nt" if windows is None else windows
+    if "/AppTranslocation/" in here.as_posix():
+        # macOS runs a downloaded app from a random read-only copy until it
+        # is moved: hooks pointing there would break on the next launch.
+        # `false` stops the && chain without closing the terminal.
+        return "echo Move Ember to the Applications folder, reopen it, then retry && false"
+    if not frozen:
+        argv = [exe, str(here / "tools" / "devtools_hooks.py")]
+    elif windows:
+        # Ember.exe is a windowed program: an interactive cmd would not wait
+        # for it, so the && chain would run on (and lose its exit code)
+        return 'start "" /wait ' + subprocess.list2cmdline([exe, "devtools_hooks.py"])
+    else:
+        argv = [exe, "devtools_hooks.py"]
+    return (subprocess.list2cmdline(argv) if windows
+            else " ".join(shlex.quote(a) for a in argv))
+
+
 def addons_status(root=None, manifest=None):
     """Every add-on in addons.json with: installed?, missing prerequisites,
     and the install commands for this OS."""
@@ -1820,17 +1914,22 @@ def addons_status(root=None, manifest=None):
     osname = host_os()
     plat = "windows" if osname == "windows" else "posix"
     plugins = installed_plugins(root)
+    # {hooks} = how to run our own tees; {app} = this checkout (older lists)
+    app = f'"{HERE}"' if " " in str(HERE) else str(HERE)
+    subst = {"{hooks}": hooks_cmd(), "{app}": app}
+
+    def fill(c):
+        for k, v in subst.items():
+            c = c.replace(k, v)
+        return c
     out = []
     for a in data.get("addons", []):
         if not ADDON_ID_RE.fullmatch(str(a.get("id", ""))):
             continue
-        # {app} = this checkout, for add-ons that ship inside it (tools/)
-        app = f'"{HERE}"' if " " in str(HERE) else str(HERE)
-        cmds = [str(c).replace("{app}", app)
-                for c in (a.get("install") or {}).get(plat) or []]
+        cmds = [fill(str(c)) for c in (a.get("install") or {}).get(plat) or []]
         # ticking an installed add-on reinstalls it: a clean redo for when an
         # install was interrupted (app closed mid-way) or left it half-working
-        redo = [str(c).replace("{app}", app)
+        redo = [fill(str(c))
                 for c in (a.get("reinstall") or {}).get(plat) or []] or cmds
         out.append({"id": a["id"], "name": a.get("name", a["id"]),
                     "used_by_app": bool(a.get("used_by_app")),
@@ -3007,6 +3106,8 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/state":
                 self._json({"layout": state_read().get("layout"),
                             "improve": improve_enabled(),
+                            "open_in": open_in(),
+                            "updates": updates_enabled(),
                             "has_terminal": HAS_TERMINAL,
                             "terminal_blocked": (None if HAS_TERMINAL
                                                  else winconpty.unsupported_reason()),
@@ -3016,6 +3117,10 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/viz":
                 files, d = viz_list(qs.get("dir", [None])[0])
                 self._json({"dir": str(d), "default_dir": str(VIZ_DIR), "files": files})
+                return
+
+            if p == "/api/update":
+                self._json(update_info(force=qs.get("force", [""])[0] == "1"))
                 return
 
             if p == "/api/addons":
@@ -3227,7 +3332,12 @@ class Handler(BaseHTTPRequestHandler):
                     state_write({"layout": clean})
                 if isinstance(body.get("improve"), bool):
                     state_write({"improve": body["improve"]})
-                self._json({"ok": True, "improve": improve_enabled()})
+                if isinstance(body.get("updates"), bool):
+                    state_write({"updates": body["updates"]})
+                if body.get("open_in") in ("window", "browser"):
+                    state_write({"open_in": body["open_in"]})
+                self._json({"ok": True, "improve": improve_enabled(),
+                            "updates": updates_enabled(), "open_in": open_in()})
                 return
 
             if p in ("/api/plan/toggle", "/api/plan/create"):
@@ -3404,33 +3514,51 @@ class Handler(BaseHTTPRequestHandler):
             return
 
 
-def print_launch_url(port):
-    """Launcher helper: check the server on `port` holds our token, trade the
-    token for a one-time code, print the /launch URL. Returns an exit code."""
+class NotOurServer(Exception):
+    pass
+
+
+def local_opener():
+    # no proxy: Windows' system proxy (ProxyOverride "<local>" skips only dotless
+    # hosts) would otherwise receive 127.0.0.1 requests — and the token
+    import urllib.request
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def launch_url(port):
+    """Check the server on `port` holds our token, trade the token for a
+    one-time code, return the /launch URL. Raises NotOurServer, OSError,
+    ValueError or KeyError."""
     import hmac
     import urllib.request
     base = f"http://127.0.0.1:{port}"
-    # no proxy: Windows' system proxy (ProxyOverride "<local>" skips only dotless
-    # hosts) would otherwise receive 127.0.0.1 requests — and the token
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    opener = local_opener()
+    tok = TOKEN_FILE.read_text().strip()
+    nonce = secrets.token_hex(16)
+    with opener.open(f"{base}/hello?n={nonce}", timeout=3) as r:
+        mac = json.loads(r.read())["mac"]
+    if not hmac.compare_digest(mac, hello_mac(tok, nonce)):
+        raise NotOurServer(f"the server on port {port} is not this user's "
+                           f"Ember — refusing to send it the token")
+    req = urllib.request.Request(
+        f"{base}/api/launch-code", method="POST", data=b"{}",
+        headers={"Content-Type": "application/json", "X-Devtools-Token": tok})
+    with opener.open(req, timeout=3) as r:
+        code = json.loads(r.read())["code"]
+    return f"{base}/launch?c={code}"
+
+
+def print_launch_url(port):
+    """Launcher helper: print a one-time /launch URL. Returns an exit code."""
     try:
-        tok = TOKEN_FILE.read_text().strip()
-        nonce = secrets.token_hex(16)
-        with opener.open(f"{base}/hello?n={nonce}", timeout=3) as r:
-            mac = json.loads(r.read())["mac"]
-        if not hmac.compare_digest(mac, hello_mac(tok, nonce)):
-            print(f"error: the server on port {port} is not this user's "
-                  f"Ember — refusing to send it the token", file=sys.stderr)
-            return 2
-        req = urllib.request.Request(
-            f"{base}/api/launch-code", method="POST", data=b"{}",
-            headers={"Content-Type": "application/json", "X-Devtools-Token": tok})
-        with opener.open(req, timeout=3) as r:
-            code = json.loads(r.read())["code"]
+        print(launch_url(port))
+    except NotOurServer as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
     except (OSError, ValueError, KeyError) as e:
-        print(f"error: could not get a login code from {base}: {e}", file=sys.stderr)
+        print(f"error: could not get a login code from http://127.0.0.1:{port}: {e}",
+              file=sys.stderr)
         return 1
-    print(f"{base}/launch?c={code}")
     return 0
 
 

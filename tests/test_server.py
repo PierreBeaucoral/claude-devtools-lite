@@ -1113,10 +1113,13 @@ def _joined_install_lines(plat):
         for o in oses:
             if pr["install"].get(o):
                 out[f"prereq {key}:{o}"] = " && ".join(pr["install"][o])
+    # {hooks} as the server fills it, with a path that needs quoting
+    hooks = srv.hooks_cmd(exe="/Apps/My Python/python3", here="/Users/Jean Dupont/ember",
+                          frozen=False, windows=plat == "windows")
     for a in data["addons"]:
         for key in ("install", "reinstall"):
             if a.get(key):
-                out[f"{a['id']}:{key}"] = " && ".join(a[key][plat])
+                out[f"{a['id']}:{key}"] = " && ".join(a[key][plat]).replace("{hooks}", hooks)
     return out
 
 
@@ -1737,3 +1740,88 @@ def test_session_transcript_ignores_older_sessions_in_the_same_project(tmp_path,
         assert srv.session_transcript("/p", t0) == new
     assert srv.session_transcript("/p", t0, resume="old") == old      # resume names its own
     assert srv.transcript_start(new) is not None
+
+
+# ---------------------------------------------------------------- desktop apps
+
+def test_hooks_cmd_uses_the_running_interpreter_and_quotes_it():
+    posix = srv.hooks_cmd(exe="/Apps/My Py/python3", here="/Users/Jean Dupont/ember",
+                          frozen=False, windows=False)
+    assert posix == "'/Apps/My Py/python3' '/Users/Jean Dupont/ember/tools/devtools_hooks.py'"
+    win = srv.hooks_cmd(exe=r"C:\Program Files\Py\python.exe", here=r"C:\Users\Jean\ember",
+                        frozen=False, windows=True)
+    assert win.startswith(r'"C:\Program Files\Py\python.exe" ') and win.endswith("devtools_hooks.py")
+
+
+def test_hooks_cmd_frozen_runs_the_app_itself():
+    # the literal name keeps addon_installed()/devtools_hooks._ours() working
+    # start /wait: an interactive cmd does not wait for a windowed exe
+    assert srv.hooks_cmd(exe=r"C:\Users\Jean Dupont\Ember\Ember.exe", here="x",
+                         frozen=True, windows=True) == \
+        r'start "" /wait "C:\Users\Jean Dupont\Ember\Ember.exe" devtools_hooks.py'
+    assert srv.hooks_cmd(exe="/opt/Ember/Ember", here="x", frozen=True,
+                         windows=False) == "/opt/Ember/Ember devtools_hooks.py"
+
+
+def test_hooks_cmd_refuses_a_translocated_app():
+    line = srv.hooks_cmd(exe="/p/python3", frozen=False, windows=False,
+                         here="/private/var/folders/x/AppTranslocation/ABC/d/Ember.app/Contents/Resources")
+    assert "Applications" in line and line.endswith("&& false") and "devtools_hooks" not in line
+
+
+def test_frozen_tee_command_names_the_exe(tmp_path, monkeypatch):
+    m = _hooks_mod(tmp_path, monkeypatch)
+    monkeypatch.setattr(m.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(m.sys, "executable", r"C:\Apps\Ember\Ember.exe")
+    cmd = m._cmd("guard")
+    assert cmd == r"C:\Apps\Ember\Ember.exe devtools_hooks.py guard" and m._ours(cmd, "guard")
+
+
+def test_update_info_compares_versions(monkeypatch):
+    monkeypatch.setattr(srv, "updates_enabled", lambda: True)
+    monkeypatch.setattr(srv, "VERSION", "1.2.0")
+    tag = "https://github.com/PierreBeaucoral/ember/releases/tag/"
+    info = srv.update_info(force=True, fetch=lambda: tag + "v1.10.0")
+    assert info["newer"] and info["latest"] == "1.10.0" and info["url"] == tag + "v1.10.0"
+    assert not srv.update_info(force=True, fetch=lambda: tag + "v1.2.0")["newer"]
+
+
+def test_update_info_ignores_foreign_urls_and_failures(monkeypatch):
+    monkeypatch.setattr(srv, "updates_enabled", lambda: True)
+    monkeypatch.setattr(srv, "_update", {"at": 0.0, "info": None})
+    assert srv.update_info(force=True, fetch=lambda: "https://evil.example/tag/v9.0.0")["url"] is None
+
+    def offline():
+        raise OSError("no network")
+    assert srv.update_info(force=True, fetch=offline)["latest"] is None
+    # and a failed check is not retried on every call
+    assert srv.update_info(fetch=lambda: 1 / 0)["latest"] is None
+
+
+def test_update_info_off_makes_no_request(monkeypatch):
+    monkeypatch.setenv("CDL_UPDATES", "0")
+    info = srv.update_info(force=True, fetch=lambda: 1 / 0)
+    assert info["enabled"] is False and info["newer"] is False
+
+
+def test_open_in_and_updates_are_validated(http_server, monkeypatch, tmp_path):
+    monkeypatch.setattr(srv, "STATE_FILE", tmp_path / "state.json")
+    hdr = {"X-Devtools-Token": "a" * 48, "Content-Type": "application/json"}
+    post = lambda b: json.loads(fetch(http_server + "/api/state", "POST", hdr,
+                                      json.dumps(b).encode())[1])
+    assert post({"open_in": "browser", "updates": False}) == \
+        {"ok": True, "improve": True, "updates": False, "open_in": "browser"}
+    assert post({"open_in": "javascript:alert(1)"})["open_in"] == "browser"   # ignored
+    assert post({"open_in": "window"})["open_in"] == "window"
+    # the native apps read the file directly: keep its shape
+    assert json.loads((tmp_path / "state.json").read_text())["open_in"] == "window"
+
+
+def test_usage_survives_a_record_written_after_the_scan_started(tmp_path):
+    """A live session appends while usage_summary() runs: a record stamped a
+    moment after `now` once raised IndexError (HTTP 500 in the Usage pane)."""
+    future = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() + 30))
+    write_session(tmp_path / "projects" / "-Users-x-proj" / "s.jsonl",
+                  [rec_assistant([{"type": "text", "text": "hi"}], ts=future)])
+    u = srv.usage_summary(tmp_path)
+    assert sum(u["hourly"]) == 100

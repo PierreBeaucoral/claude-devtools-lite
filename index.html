@@ -2700,6 +2700,9 @@ if(localStorage.getItem("cdl-headcollapsed")){
   try{
     const r = await api("/api/state");
     if(r.layout){ Object.assign(SZ, r.layout); applySizes(); }
+    APP.openIn = r.open_in || "window";
+    APP.updates = r.updates !== false;
+    if(APP.updates) checkUpdate(false);
     if(r.has_terminal === false){   // e.g. Windows older than 10 1809
       $("#termempty").innerHTML = `⚠️ Terminal unavailable — ${esc(r.terminal_blocked||"")}.
         <br>Run <b>claude</b> in your own terminal instead; every other pane
@@ -3477,6 +3480,51 @@ function rankItems(items, q, max){
   return out.slice(0, max || 50);
 }
 
+/* ---------- desktop app: window or browser, update notice ----------------
+   The desktop apps (native/main.swift, native/window.py) read open_in from
+   the server's state.json at launch. Update checks: server-side, once a day,
+   a notice with a link — nothing is installed automatically. */
+const APP = {openIn: "window", updates: true};
+const inDesktopApp = () => !!((window.webkit && window.webkit.messageHandlers
+  && window.webkit.messageHandlers.notify) || window.pywebview);
+async function openInBrowser(){
+  try{
+    const {code} = await api("/api/launch-code", {});
+    // target=_blank: both apps hand it to the default browser
+    window.open("/launch?c=" + encodeURIComponent(code), "_blank");
+  }catch(e){ toast("Could not open the browser: " + e.message, {kind: "err"}); }
+}
+async function setOpenIn(where){
+  try{
+    APP.openIn = (await api("/api/state", {open_in: where})).open_in;
+    toast(APP.openIn === "browser"
+      ? "Next time, the Ember app opens your browser (and quits). Switch back from this palette."
+      : "Next time, the Ember app opens its own window.");
+  }catch(e){ toast("Could not save: " + e.message, {kind: "err"}); }
+}
+async function setUpdates(on){
+  try{
+    APP.updates = (await api("/api/state", {updates: on})).updates;
+    toast(APP.updates ? "Ember checks for a new release once a day."
+                      : "Update check off: Ember makes no request of its own to the internet.");
+  }catch(e){ toast("Could not save: " + e.message, {kind: "err"}); }
+}
+async function checkUpdate(manual){
+  let u;
+  try{ u = await api("/api/update" + (manual ? "?force=1" : "")); }
+  catch(e){ if(manual) toast("Update check failed: " + e.message, {kind: "err"}); return; }
+  const seen = (() => { try{ return localStorage.getItem("cdl-update-seen"); }catch(_){ return null; } })();
+  if(u.newer && u.url && (manual || seen !== u.latest)){
+    try{ localStorage.setItem("cdl-update-seen", u.latest); }catch(_){}
+    toast(`Ember ${u.latest} is available (you have ${u.current}).`,
+          {action: {label: "Download", run: () => window.open(u.url, "_blank", "noopener")}});
+  }else if(manual){
+    toast(!u.enabled ? "The update check is off (turn it on from this palette)."
+      : u.latest ? `Ember ${u.current} is up to date.`
+      : "Could not reach GitHub; try again later.");
+  }
+}
+
 /* ---------- palette UI (DES-3) ---------------------------------------------
    ⌘K (Ctrl+K elsewhere) opens it, also from inside the terminal; ⌘P opens
    it on sessions. Prefixes: > actions, @ sessions, # transcript search,
@@ -3538,6 +3586,13 @@ function cpActions(){
   add("Search transcripts…", () => cpSet("#"), K("⌘⇧F"), true);
   add("Go to file in current folder…", () => cpSet("/"), K("⌘⇧O"), true);
   add("Keyboard shortcuts", openKeys, "?");
+  if(inDesktopApp()) add("Open Ember in your browser", openInBrowser);
+  add(APP.openIn === "browser" ? "Desktop app: open its own window at launch"
+                               : "Desktop app: open the browser at launch",
+      () => setOpenIn(APP.openIn === "browser" ? "window" : "browser"));
+  add("Check for updates", () => checkUpdate(true));
+  add(APP.updates ? "Turn off the daily update check" : "Turn on the daily update check",
+      () => setUpdates(!APP.updates));
   for(const n of Object.keys(THEMES))
     A.push({group: "Theme", label: "Theme: " + n, run: () => { applyTheme(n); announce("Theme: " + n); }});
   return A;

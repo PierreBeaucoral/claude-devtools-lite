@@ -208,7 +208,10 @@ def guard(stdin_text):
 
 def _cmd(sub):
     q = lambda s: f'"{s}"' if " " in s else s
-    return f"{q(sys.executable)} {q(str(Path(__file__).resolve()))} {sub}"
+    # a frozen Ember.exe / Ember runs us itself: `Ember devtools_hooks.py event`
+    # (the literal name keeps MARK in the command)
+    me = MARK if getattr(sys, "frozen", False) else q(str(Path(__file__).resolve()))
+    return f"{q(sys.executable)} {me} {sub}"
 
 
 def _ours(command, sub):

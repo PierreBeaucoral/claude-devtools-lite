@@ -11,8 +11,18 @@ import WebKit
 let PORT = ProcessInfo.processInfo.environment["PORT"] ?? "3456"
 let BASE = "http://127.0.0.1:\(PORT)"
 
+/// Private data dir (token, state.json); same path as server.py's APP_DIR.
+let APP_SUPPORT = FileManager.default.homeDirectoryForCurrentUser
+    .appendingPathComponent("Library/Application Support/claude-devtools")
+
 func serverDir() -> URL {
-    // new clone name first, then the pre-rename one
+    // a self-contained build (build-app.sh without --dev) carries the app
+    // files and its own Python in Contents/Resources
+    if let res = Bundle.main.resourceURL,
+       FileManager.default.fileExists(atPath: res.appendingPathComponent("server.py").path) {
+        return res
+    }
+    // otherwise a checkout: new clone name first, then the pre-rename one
     let bundleParent = Bundle.main.bundleURL.deletingLastPathComponent()
     let desktop = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop")
     for base in [bundleParent, desktop] {
@@ -60,6 +70,36 @@ func serverHoldsToken(_ token: String) -> Bool {
     return mac == want
 }
 
+func opensInBrowser() -> Bool {
+    guard let d = try? Data(contentsOf: APP_SUPPORT.appendingPathComponent("state.json")),
+          let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return false }
+    return o["open_in"] as? String == "browser"
+}
+
+/// Trade the token for a 60 s single-use code, so the long-lived token never
+/// reaches the browser's URL bar or history.
+func oneTimeLoginURL() -> URL? {
+    let tok = ((try? String(contentsOf: APP_SUPPORT.appendingPathComponent("token"),
+                            encoding: .utf8)) ?? "")
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    var req = URLRequest(url: URL(string: BASE + "/api/launch-code")!, timeoutInterval: 3)
+    req.httpMethod = "POST"
+    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    req.setValue(tok, forHTTPHeaderField: "X-Devtools-Token")
+    req.httpBody = "{}".data(using: .utf8)
+    var code: String? = nil
+    let sem = DispatchSemaphore(value: 0)
+    URLSession.shared.dataTask(with: req) { data, _, _ in
+        if let d = data, let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] {
+            code = o["code"] as? String
+        }
+        sem.signal()
+    }.resume()
+    sem.wait()
+    guard let c = code, c.allSatisfy({ $0.isHexDigit }) else { return nil }
+    return URL(string: BASE + "/launch?c=" + c)
+}
+
 class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDelegate,
                    WKScriptMessageHandler, UNUserNotificationCenterDelegate {
     var window: NSWindow!
@@ -71,9 +111,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDe
         let dir = serverDir()
         if !serverUp() {
             let p = Process()
-            p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            p.arguments = ["python3", dir.appendingPathComponent("server.py").path,
-                           "--port", PORT]
+            let server = dir.appendingPathComponent("server.py").path
+            let bundled = dir.appendingPathComponent("python/bin/python3")
+            if FileManager.default.isExecutableFile(atPath: bundled.path) {
+                // -B: never write __pycache__ into the (signed) bundle
+                p.executableURL = bundled
+                p.arguments = ["-B", server, "--port", PORT]
+            } else {
+                p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+                p.arguments = ["python3", server, "--port", PORT]
+            }
             // startup crashes land here; the server also keeps its own
             // rotating log in Application Support
             let logURL = FileManager.default.homeDirectoryForCurrentUser
@@ -89,15 +136,38 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDe
         }
         // token lives outside the source folder (never in the git repo);
         // fall back to the legacy in-repo path for older installs
-        let appSupport = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/claude-devtools/token")
+        let appSupport = APP_SUPPORT.appendingPathComponent("token")
         token = ((try? String(contentsOf: appSupport, encoding: .utf8))
                  ?? (try? String(contentsOf: dir.appendingPathComponent(".token"),
                                  encoding: .utf8)) ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
+        if !serverHoldsToken(token) {
+            NSApp.activate(ignoringOtherApps: true)
+            let a = NSAlert()
+            a.messageText = "Another program is answering on port \(PORT)"
+            a.informativeText = "It is not your Ember server, so the app will not send it your access token. Quit whatever uses the port, or set PORT to another value."
+            a.runModal()
+            NSApp.terminate(nil)
+            return
+        }
+
+        // "At launch, open: browser" (palette): hand the default browser a
+        // one-time login link and quit; the server keeps running for it
+        // (⏻ in the page stops it)
+        if opensInBrowser(), let url = oneTimeLoginURL() {
+            NSWorkspace.shared.open(url)
+            startedServer = false
+            NSApp.terminate(nil)
+            return
+        }
+
         let cfg = WKWebViewConfiguration()
         cfg.preferences.setValue(true, forKey: "developerExtrasEnabled")
+        // "Open Ember in your browser" calls window.open after fetching a login
+        // code, past the click's user gesture. Previews can't use this: their
+        // iframes are sandboxed without allow-popups.
+        cfg.preferences.javaScriptCanOpenWindowsAutomatically = true
         // WKWebView has no web Notification API: the page posts here instead
         cfg.userContentController.add(self, name: "notify")
         UNUserNotificationCenter.current().delegate = self
@@ -119,14 +189,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDe
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
 
-        if !serverHoldsToken(token) {
-            let a = NSAlert()
-            a.messageText = "Another program is answering on port \(PORT)"
-            a.informativeText = "It is not your Ember server, so the app will not send it your access token. Quit whatever uses the port, or set PORT to another value."
-            a.runModal()
-            NSApp.terminate(nil)
-            return
-        }
         webView.load(URLRequest(url: URL(string: BASE + "/launch?k=\(token)")!))
     }
 

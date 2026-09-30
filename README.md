@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/PierreBeaucoral/ember/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/PierreBeaucoral/ember/actions/workflows/ci.yml/badge.svg"></a>
-  <img alt="Version 1.1.0" src="https://img.shields.io/badge/version-1.1.0-dd876d">
+  <img alt="Version 1.2.0" src="https://img.shields.io/badge/version-1.2.0-dd876d">
   <img alt="Python 3.9+" src="https://img.shields.io/badge/python-3.9%2B-3776ab?logo=python&logoColor=white">
   <img alt="Zero dependencies" src="https://img.shields.io/badge/dependencies-0-2ea44f">
   <img alt="macOS | Linux | Windows" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey">
@@ -34,6 +34,9 @@ like RStudio.
 It reads your transcripts **read-only** and runs entirely on your machine.
 **No dependencies, no build step, no API keys, no telemetry.** It is one Python file,
 one HTML file and the Python standard library, and it runs on **macOS, Linux and Windows**.
+
+**[Download the app](https://github.com/PierreBeaucoral/ember/releases/latest)** for
+macOS, Windows or Linux (nothing else to install), or run it from source:
 
 ```bash
 git clone https://github.com/PierreBeaucoral/ember.git && cd ember && python3 server.py
@@ -276,7 +279,9 @@ It also opens by itself at launch while something is missing; tick
   write, `.claude/state/session-guards.json` in the project). All three edit
   `~/.claude/settings.json`, save a copy first as `settings.json.bak-devtools`, and undo
   with `python3 tools/devtools_hooks.py uninstall-statusline` / `uninstall-events` /
-  `uninstall-guard`
+  `uninstall-guard` (with the downloaded Windows or Linux app:
+  `Ember devtools_hooks.py uninstall-…`). They run with the same Python as Ember
+  (the app's own, in a download), so no system Python is needed
 - Ticked add-ons install in a **visible terminal tab**, with the exact commands shown
   in the pane first. Nothing installs without that click
 - **Ticking an installed add-on reinstalls it cleanly** (plugin uninstalled and
@@ -311,7 +316,41 @@ It also opens by itself at launch while something is missing; tick
 
 ## Install and run
 
-Requires **Python 3.9+** and an existing Claude Code installation (`~/.claude`).
+Ember needs an existing Claude Code installation (`~/.claude`). Two ways to run it:
+
+### Download the app
+
+From [the latest release](https://github.com/PierreBeaucoral/ember/releases/latest),
+no Python or anything else to install. Each app opens Ember in its own window.
+
+| OS | File | First launch |
+|---|---|---|
+| macOS (Apple silicon) | `Ember-macos-arm64.zip` | Unzip, drag **Ember** to Applications, open it. macOS says it can't check the app: **System Settings → Privacy & Security → Open Anyway**, or once in Terminal: `xattr -dr com.apple.quarantine /Applications/Ember.app` |
+| Windows 10 / 11 | `Ember-windows-x64.zip` | Unzip anywhere (e.g. `Documents\Ember`), open `Ember.exe`. SmartScreen: **More info → Run anyway** |
+| Linux (x86-64) | `Ember-linux-x86_64.tar.gz` | `tar -xzf Ember-linux-x86_64.tar.gz`, then `Ember/Ember --install` adds it to your applications menu |
+
+- The warnings appear once because the apps are not code-signed (a paid certificate).
+  They are built from this repository by
+  [the release workflow](.github/workflows/release.yml), in public
+- **Window or browser.** The apps open their own window by default. To use your browser
+  instead, run **Desktop app: open the browser at launch** from the command palette
+  (⌘K / Ctrl+K); the app then hands your browser a login link at each launch and quits.
+  **Open Ember in your browser** does it once, from the window
+- **Updates.** Once a day Ember asks GitHub for the latest release and shows a notice
+  with a download link when there is one. Nothing installs by itself. **Check for
+  updates** and **Turn off the daily update check** are in the palette
+- The Windows window uses Edge WebView2, part of Windows 10 and 11. The Linux window uses
+  WebKitGTK; where it is missing, the app opens your browser instead
+- Intel Macs: build the app from source (below), which builds for the Mac it runs on
+- Keep the app where you first open it: the Live limits, Live activity and Session
+  guards add-ons point Claude Code at it. After moving it, tick them again in 🧩
+- The apps keep the Viz inbox in Ember's data folder (`~/Library/Application
+  Support/claude-devtools/viz` on macOS, `%APPDATA%\claude-devtools\viz`,
+  `~/.config/claude-devtools/viz`); sessions find it through `$CLAUDE_DEVTOOLS_VIZ_DIR`
+
+### From source
+
+Requires **Python 3.9+**.
 
 ```bash
 git clone https://github.com/PierreBeaucoral/ember.git
@@ -335,12 +374,15 @@ this for you:
 ### macOS
 
 ```bash
-bash packaging/macos/build-app.sh
+bash packaging/macos/build-app.sh          # self-contained: the release build
+bash packaging/macos/build-app.sh --dev    # thin: runs this checkout's server.py
 ```
 
 Builds `Ember.app` — a native window (WebKit wrapper, no Electron)
 with a Dock icon and ⌘Q. Drag it to `/Applications`. It starts the server if needed and
-never spawns a duplicate.
+never spawns a duplicate. The default build copies the dashboard and a standalone
+Python 3.13 (pinned, checksum-verified, ~25 MB downloaded once) into the app, so it runs
+on any Mac; the `--dev` build uses your `python3` and your edits without a rebuild.
 
 ### Linux
 
@@ -418,6 +460,8 @@ fall back to `claude-devtools-lite/`.
 | Maximize a pane | **⛶** in its header (click again to restore) |
 | Resize panes | Drag the splitters; sizes persist |
 | Quit | **⏻** in the sidebar (or ⌘Q in the macOS app) |
+| Use the browser instead of the app window | ⌘K → **Desktop app: open the browser at launch** (or **Open Ember in your browser** once) |
+| Check for a new version | ⌘K → **Check for updates** |
 
 Green dots mark projects whose transcripts changed since you last opened them, and a
 toast appears when a background session finishes something.
@@ -477,6 +521,10 @@ The dashboard can spawn shells, so it is built to be safe on a shared machine:
   also sends them with a `sandbox` CSP, so a previewed file cannot reach the dashboard's
   API or your token even when opened directly
 
+- The **only request Ember makes on its own** is the daily update check: an HTTPS
+  request to `github.com/PierreBeaucoral/ember/releases/latest`, which carries nothing
+  about you or your sessions. Turn it off from the palette, or set `CDL_UPDATES=0`
+
 **Do not run this with `--host 0.0.0.0`.** That would offer a shell to your network; the
 server prints a warning if you try.
 
@@ -497,12 +545,19 @@ patch rendering, sidechains, compaction detection), 5-hour block grouping, path-
 guards, the secret deny-list, the HTTP auth/CSRF/Host layer, and the Windows backend
 helpers.
 
+**Releases.** Push a tag `vX.Y.Z` (after setting `VERSION` in `server.py` and
+`CITATION.cff`): [the release workflow](.github/workflows/release.yml) builds the three
+apps, smoke-tests each, and attaches them to the release. **Actions → release → Run
+workflow** does the same without publishing (a dry run; the zips stay as artifacts).
+
 | File | Role |
 |---|---|
 | `server.py` | HTTP server, JSONL parsing, usage aggregation, PTY terminals |
 | `winconpty.py` | Windows ConPTY transport (ctypes, no dependencies) |
 | `index.html` | Single-page UI (vanilla JS, no framework) |
 | `native/main.swift` | macOS standalone window (WebKit) |
+| `native/window.py` | Windows / Linux window (pywebview); frozen into `Ember.exe` / `Ember` with the server and the tees by `packaging/pyinstaller/build.py` |
+| `tools/smoke_app.py` | Smoke test of a built app (server, page, tees, window), run by the release workflow |
 | `launchers/`, `packaging/` | Per-platform launchers and app builders |
 | `vendor/` | xterm.js 5.5.0 + fit addon and KaTeX 0.16.11 with its woff2 fonts (both MIT), and pdf.js 3.11.174 (Apache-2.0, `pdfjs-LICENSE.txt`; loaded only when a PDF is opened for comments), vendored for offline use |
 | `tests/` | `pytest tests/` for the server; `node tests/test_frontend.js` for the UI |

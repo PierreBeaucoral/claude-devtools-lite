@@ -1,0 +1,82 @@
+# Builds the desktop apps and attaches them to the GitHub release.
+#   push a tag vX.Y.Z  → build, smoke-test, upload to that release (created if
+#                        missing)
+#   Run workflow (Actions tab) → build and smoke-test only; the zips are kept
+#                        as workflow artifacts for a week (a dry run)
+# Unsigned (signing is paid): macOS asks once in Privacy & Security, Windows
+# SmartScreen says "More info → Run anyway". The README says so.
+name: release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  macos:
+    runs-on: macos-latest          # arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python3 -m pip install Pillow      # the app icon
+      - run: bash packaging/macos/build-app.sh dist
+      - run: python3 tools/smoke_app.py macapp dist/Ember.app
+      - run: ditto -c -k --keepParent dist/Ember.app Ember-macos-arm64.zip
+      - uses: actions/upload-artifact@v4
+        with: {name: macos, path: Ember-macos-arm64.zip, retention-days: 7}
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install pyinstaller pywebview
+      - run: python packaging/pyinstaller/build.py
+      - run: python tools/smoke_app.py frozen dist/Ember/Ember.exe
+      # the WebView2 window itself; informative (runner desktops vary)
+      - run: python tools/smoke_app.py window dist/Ember/Ember.exe
+        continue-on-error: true
+        timeout-minutes: 3
+      - shell: pwsh
+        run: Compress-Archive -Path dist/Ember -DestinationPath Ember-windows-x64.zip
+      - uses: actions/upload-artifact@v4
+        with: {name: windows, path: Ember-windows-x64.zip, retention-days: 7}
+
+  linux:
+    # the oldest supported runner: its glibc sets the oldest distro that runs it
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y libgirepository1.0-dev libcairo2-dev pkg-config \
+            gir1.2-webkit2-4.1 xvfb
+      # PyGObject 3.51+ needs girepository-2.0, which 22.04 does not have
+      - run: python -m pip install pyinstaller pywebview "PyGObject<3.51" pycairo
+      - run: python packaging/pyinstaller/build.py
+      - run: python tools/smoke_app.py frozen dist/Ember/Ember
+      - run: xvfb-run -a python tools/smoke_app.py window dist/Ember/Ember
+        continue-on-error: true
+        timeout-minutes: 3
+      - run: tar -czf Ember-linux-x86_64.tar.gz -C dist Ember
+      - uses: actions/upload-artifact@v4
+        with: {name: linux, path: Ember-linux-x86_64.tar.gz, retention-days: 7}
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [macos, windows, linux]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with: {path: out, merge-multiple: true}
+      - run: |
+          gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$TAG" -R "$GITHUB_REPOSITORY" --title "Ember ${TAG#v}" --generate-notes
+          gh release upload "$TAG" out/* -R "$GITHUB_REPOSITORY" --clobber

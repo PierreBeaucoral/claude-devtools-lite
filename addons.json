@@ -1,5 +1,5 @@
 {
-  "_comment": "Optional Claude Code add-ons offered by the Add-ons pane (🧩). The app only ever runs the install commands written here: edit this list to change what it proposes. check.kind: skill = ~/.claude/skills/<name>/SKILL.md, command = ~/.claude/commands/<name>.md, plugin = <name>@<marketplace> in ~/.claude/plugins/installed_plugins.json, statusline / hook = <name> appears in the statusLine / a hook command of ~/.claude/settings.json. {app} in a command = this checkout's folder. needs = programs that must be on PATH first. install.posix runs in the login shell (macOS/Linux), install.windows in cmd.exe; an add-on's lines are joined with && into ONE line, so each must be safe to chain: group any a || b in parentheses, never use cmd's `if` (it swallows the rest of the line), and prefix `claude` with `call` on Windows (npm installs it as a .cmd). reinstall (optional, same shape as install) is what the pane runs when an installed add-on is ticked again; without it, install is re-run. prerequisites: how to install each program listed in needs, per OS (mac / linux / windows); the pane shows the command and can run it in the visible terminal. On Windows without winget (older Windows 10, managed PCs), install[\"windows-nowinget\"] is used when present: the program's official installer, downloaded with PowerShell and opened for the user to click through.",
+  "_comment": "Optional Claude Code add-ons offered by the Add-ons pane (🧩). The app only ever runs the install commands written here: edit this list to change what it proposes. check.kind: skill = ~/.claude/skills/<name>/SKILL.md, command = ~/.claude/commands/<name>.md, plugin = <name>@<marketplace> in ~/.claude/plugins/installed_plugins.json, statusline / hook = <name> appears in the statusLine / a hook command of ~/.claude/settings.json. {hooks} in a command = how to run tools/devtools_hooks.py with the Python running Ember (the app itself in a frozen build); {app} = this checkout's folder. needs = programs that must be on PATH first. install.posix runs in the login shell (macOS/Linux), install.windows in cmd.exe; an add-on's lines are joined with && into ONE line, so each must be safe to chain: group any a || b in parentheses, never use cmd's `if` (it swallows the rest of the line), and prefix `claude` with `call` on Windows (npm installs it as a .cmd). reinstall (optional, same shape as install) is what the pane runs when an installed add-on is ticked again; without it, install is re-run. prerequisites: how to install each program listed in needs, per OS (mac / linux / windows); the pane shows the command and can run it in the visible terminal. On Windows without winget (older Windows 10, managed PCs), install[\"windows-nowinget\"] is used when present: the program's official installer, downloaded with PowerShell and opened for the user to click through.",
   "addons": [
     {
       "id": "graphify",
@@ -249,10 +249,10 @@
       "needs": [],
       "install": {
         "posix": [
-          "python3 {app}/tools/devtools_hooks.py install-statusline"
+          "{hooks} install-statusline"
         ],
         "windows": [
-          "python {app}\\tools\\devtools_hooks.py install-statusline"
+          "{hooks} install-statusline"
         ]
       }
     },
@@ -270,10 +270,10 @@
       "needs": [],
       "install": {
         "posix": [
-          "python3 {app}/tools/devtools_hooks.py install-events"
+          "{hooks} install-events"
         ],
         "windows": [
-          "python {app}\\tools\\devtools_hooks.py install-events"
+          "{hooks} install-events"
         ]
       }
     },
@@ -291,10 +291,10 @@
       "needs": [],
       "install": {
         "posix": [
-          "python3 {app}/tools/devtools_hooks.py install-guard"
+          "{hooks} install-guard"
         ],
         "windows": [
-          "python {app}\\tools\\devtools_hooks.py install-guard"
+          "{hooks} install-guard"
         ]
       }
     },
