@@ -1328,11 +1328,12 @@ def plan_create(cwd):
 #                                    revision, updated_at, comments[...]}
 #
 # Coordinates are fractions of the image (0–1, origin top-left), so they
-# survive a re-render at a different size. content_hash is the sha256 of the
+# survive a re-render at a different size. On a PDF each comment also has
+# `page` (1-based) and the fractions are of that page. content_hash is the sha256 of the
 # image bytes when the review was saved: a mismatch means the figure was
 # regenerated since, and the UI says so.
 
-REVIEW_TYPES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
+REVIEW_TYPES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".pdf"}
 REVIEW_MAX_COMMENTS = 200
 REVIEW_STATUSES = ("open", "resolved", "wontfix")
 
@@ -1340,7 +1341,7 @@ REVIEW_STATUSES = ("open", "resolved", "wontfix")
 def review_paths(raw):
     img = safe_home_path(raw)
     if img.suffix.lower() not in REVIEW_TYPES or is_sensitive(img.name):
-        raise ValueError("not a reviewable image")
+        raise ValueError("not a reviewable image or PDF")
     if not img.is_file():
         raise FileNotFoundError(raw)
     return img, img.parent / ".review" / (img.name + ".json")
@@ -1380,6 +1381,11 @@ def review_clean(c, n):
     if kind == "region":
         out["w"] = _unit(c.get("w"))
         out["h"] = _unit(c.get("h"))
+    page = c.get("page")
+    if page is not None:
+        if not isinstance(page, int) or isinstance(page, bool) or not 1 <= page <= 100000:
+            raise ValueError("page must be a page number")
+        out["page"] = page
     return out
 
 
@@ -1398,7 +1404,9 @@ def review_write(raw, comments, expect_revision):
            "figure": {"file": img.name, "content_hash": cur["content_hash"]},
            "revision": cur["revision"] + 1,
            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-           "coordinates": "fractions of the image, origin top-left",
+           "coordinates": ("fractions of the page given by `page` (1-based), origin top-left"
+                           if img.suffix.lower() == ".pdf"
+                           else "fractions of the image, origin top-left"),
            "comments": clean}
     f.parent.mkdir(exist_ok=True)
     tmp = f.with_name(f.name + ".cdl-tmp")
@@ -2949,6 +2957,8 @@ class Handler(BaseHTTPRequestHandler):
                     ctype = "text/css"
                 elif name.endswith(".woff2"):
                     ctype = "font/woff2"
+                elif name.endswith(".txt"):
+                    ctype = "text/plain; charset=utf-8"
                 else:
                     ctype = "application/javascript"
                 body = f.read_bytes()

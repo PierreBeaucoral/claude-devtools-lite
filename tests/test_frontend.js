@@ -390,6 +390,32 @@ eq("re-activating the same tab does not reload", app.loaded.length, before);
      redactHome("/Users/pierre/x\n-rw-r--r-- 1 pierre staff"), "~/x\n-rw-r--r-- 1 user staff");
 }
 
+/* ---------------- 💬 Comment follows the preview in front ---------------- */
+{
+  const btn = {style: {display: "none"}}, files = {style: {display: "none"}};
+  const fake = {style: {}, removeAttribute(){}, classList: {toggle(){}, remove(){}, add(){}}};
+  const $ = s => s === "#vizReview" ? btn : s === "#filesview" ? files : fake;
+  const IMG_URL = /\.(png|jpe?g|gif|webp|svg)(&|$)/i;
+  const previewWrap = () => null, previewImg = () => fake;
+  const api = (0, eval)("(function($, IMG_URL, previewWrap, previewImg){"
+    + slice("const REVIEWABLE = {};", "const isPdfName =")
+    + "; return {setPreview, clearPreview, REVIEWABLE, syncReviewBtn};})")($, IMG_URL, previewWrap, previewImg);
+  const url = p => "/api/fs/file?path=" + encodeURIComponent(p) + "&t=1";
+  api.setPreview("#fsframe", "#fspdf", url("/u/p/paper.pdf"), true, false);
+  eq("a PDF in Files is commentable", api.REVIEWABLE["#fsframe"], "/u/p/paper.pdf");
+  eq("…but the button follows the tab in front (Viz)", btn.style.display, "none");
+  files.style.display = "flex"; api.syncReviewBtn();
+  eq("Files in front: the button shows", btn.style.display, "");
+  api.setPreview("#fsframe", "#fspdf", url("/u/p/fig one.png"), false, false);
+  eq("an image path survives the URL round trip", api.REVIEWABLE["#fsframe"], "/u/p/fig one.png");
+  api.setPreview("#fsframe", "#fspdf", url("/u/p/notes.md"), false, false);
+  eq("a markdown file is not commentable", api.REVIEWABLE["#fsframe"], null);
+  eq("…and hides the button", btn.style.display, "none");
+  api.setPreview("#fsframe", "#fspdf", url("/u/p/a.png"), false, false);
+  api.clearPreview("#fsframe", "#fspdf");
+  eq("clearing the preview hides it again", btn.style.display, "none");
+}
+
 /* ---------------- polling: unchanged data -> no repaint ---------------- */
 {
   const dataStamp = (0, eval)(slice("const dataStamp =", "poll(async () => {   // badges") + ";dataStamp");

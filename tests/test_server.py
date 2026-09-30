@@ -1007,6 +1007,20 @@ def test_review_refuses_a_stale_revision(figure):
         srv.review_write(str(figure), [], 0)
 
 
+def test_pdf_review_keeps_page_numbers(plan_project):
+    pdf = plan_project / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4 fake")
+    d = srv.review_write(str(pdf), [
+        {"type": "region", "x": .1, "y": .2, "w": .3, "h": .1, "page": 4, "text": "table 2 notes"},
+        {"type": "point", "x": .5, "y": .5, "text": "no page given"}], 0)
+    assert [c.get("page") for c in d["comments"]] == [4, None]
+    saved = json.loads((plan_project / ".review" / "paper.pdf.json").read_text())
+    assert "page" in saved["coordinates"]
+    for bad in (0, -1, "3", 2.5, True):
+        with pytest.raises(ValueError):
+            srv.review_write(str(pdf), [{"type": "point", "x": 0, "y": 0, "page": bad}], None)
+
+
 def test_review_rejects_bad_input(figure, plan_project):
     with pytest.raises(ValueError):
         srv.review_write(str(figure), [{"type": "arrow", "x": 0, "y": 0}], 0)
@@ -1015,7 +1029,7 @@ def test_review_rejects_bad_input(figure, plan_project):
     notes = plan_project / "notes.md"
     notes.write_text("x")
     with pytest.raises(ValueError):
-        srv.review_read(str(notes))                           # not an image
+        srv.review_read(str(notes))                           # not an image or PDF
     with pytest.raises(ValueError):
         srv.review_read("/etc/hosts.png")                     # outside $HOME
 

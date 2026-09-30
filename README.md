@@ -235,17 +235,21 @@ into any session in an embedded terminal.
 - **Click a preview to expand it**: the pane goes full-screen (Esc, or ⛶, restores it),
   which is where a knowledge graph or a wide figure is actually usable
 
-**Figure comments** (after [exhibit-review](https://github.com/paulgp/exhibit-review))
-- On any image in the Viz pane, **💬 Comment** opens it full-size: click a spot or drag a
-  box, then write what should change. Marks are numbered, and each comment is *open*,
-  *resolved* or *wontfix*
+**Figure and PDF comments** (after [exhibit-review](https://github.com/paulgp/exhibit-review))
+- On any image **or PDF**, in the Viz pane **or the Files pane**, **💬 Comment** opens it
+  full-size: click a spot or drag a box, then write what should change. Marks are
+  numbered, and each comment is *open*, *resolved* or *wontfix*. So any figure or
+  compiled paper in the repo can be marked up, not only what lands in the viz folder
+- **PDFs** open page by page (‹ ›), drawn by the bundled pdf.js, so you point at a spot on
+  page 4 exactly as on a PNG. Each comment remembers its page; the list shows `p.4`, and
+  picking a comment from another page turns to it
 - Comments save automatically to `.review/<figure>.json` next to the figure, with
   coordinates as fractions of the image (so they survive a re-render at another size) and
   the image's sha256. The figure itself is never written
 - **Send to Claude** types a prompt into the active Claude tab (you press Enter), or starts
-  a session in the project: find the script behind the figure, apply the open comments,
-  re-render, mark them resolved in the JSON
-- When the image changes after comments were saved, a **figure regenerated** badge warns
+  a session in the project: find the script behind the figure (or the LaTeX / Quarto
+  source behind the PDF), apply the open comments, re-render, mark them resolved in the JSON
+- When the file changes after comments were saved, a **file regenerated** badge warns
   that old marks may no longer line up. Saves refuse to overwrite a newer revision (for
   example one Claude just wrote)
 
@@ -435,9 +439,11 @@ Keep the working plan in `.claude/plan.md` as markdown checkboxes (`- [ ] step`)
 dashboard's PLAN pane renders it and writes ticks back into it, so re-read it before
 planning and update it as steps complete.
 
-Figure feedback lives in `.review/<figure>.json` next to a figure (coordinates are
-fractions of the image, origin top-left). Before regenerating a figure, read its open
-comments; after applying one, set its `status` to `"resolved"` in that file.
+Figure and PDF feedback lives in `.review/<file>.json` next to the figure or PDF
+(coordinates are fractions of the image, origin top-left; on a PDF each comment also
+has a 1-based `page`, and the fractions are of that page). Before regenerating a figure
+or rebuilding a PDF, read its open comments; after applying one, set its `status` to
+`"resolved"` in that file.
 ```
 
 ## Security
@@ -498,7 +504,7 @@ helpers.
 | `index.html` | Single-page UI (vanilla JS, no framework) |
 | `native/main.swift` | macOS standalone window (WebKit) |
 | `launchers/`, `packaging/` | Per-platform launchers and app builders |
-| `vendor/` | xterm.js 5.5.0 + fit addon and KaTeX 0.16.11 with its woff2 fonts (both MIT), vendored for offline use |
+| `vendor/` | xterm.js 5.5.0 + fit addon and KaTeX 0.16.11 with its woff2 fonts (both MIT), and pdf.js 3.11.174 (Apache-2.0, `pdfjs-LICENSE.txt`; loaded only when a PDF is opened for comments), vendored for offline use |
 | `tests/` | `pytest tests/` for the server; `node tests/test_frontend.js` for the UI |
 
 ## Prior art

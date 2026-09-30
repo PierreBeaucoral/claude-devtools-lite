@@ -298,6 +298,8 @@
   .rvitem { display:flex; gap:8px; align-items:flex-start; padding:5px 4px;
             border-radius:6px; }
   .rvitem.sel { background:var(--panel2); }
+  .rvitem .pg { flex:none; margin-top:4px; color:var(--dim); font-size:10.5px; font-variant-numeric:tabular-nums; }
+  #rvpager { display:inline-flex; align-items:center; gap:4px; font-size:12px; font-variant-numeric:tabular-nums; }
   .rvitem .n { flex:none; min-width:20px; height:20px; border-radius:10px; margin-top:3px;
                background:var(--err); color:var(--on-err); font-size:11px; font-weight:600;
                line-height:20px; text-align:center; }
@@ -686,7 +688,7 @@
           <span class="vtab" id="vtab-files" data-view="files" role="tab" tabindex="-1" aria-selected="false" aria-controls="filesview">🗂 Files</span>
         </span>
         <button class="copy" id="vizReview" style="margin-left:auto;display:none"
-                title="point at parts of this figure and write what should change">💬 Comment</button>
+                title="point at parts of this figure or PDF and write what should change">💬 Comment</button>
         <button class="copy" id="vizPath" style="margin-left:0" title="copy watched folder path">copy path</button>
         <button class="copy maxbtn ibtn" data-cell="cell-viz" title="maximize / restore (Ctrl+Shift+M)" aria-label="Maximize the viz pane" aria-pressed="false">⛶</button>
       </div>
@@ -702,14 +704,18 @@
       <div id="reviewview" style="display:none">
         <div id="rvbar">
           <span id="rvname"></span>
-          <span id="rvstale" title="the image changed since these comments were saved — marks may no longer line up"
-                style="display:none">figure regenerated</span>
+          <span id="rvpager" style="display:none">
+            <button class="copy ibtn" id="rvprev" aria-label="Previous page">‹</button>
+            <span id="rvpage" aria-live="polite"></span>
+            <button class="copy ibtn" id="rvnext" aria-label="Next page">›</button></span>
+          <span id="rvstale" title="the file changed since these comments were saved — marks may no longer line up"
+                style="display:none">file regenerated</span>
           <span id="rvsaved"></span>
           <button class="copy" id="rvsend" title="hand the open comments to Claude Code">Send to Claude</button>
-          <button class="copy" id="rvclose" title="back to the viz list">Done</button>
+          <button class="copy" id="rvclose" title="back to the list">Done</button>
         </div>
         <div id="rvstage"><div id="rvwrap"><img id="rvimg" alt="figure under review" draggable="false"><div id="rvlayer"></div></div></div>
-        <div id="rvhint">Click a spot or drag a box on the figure, then write what should change.</div>
+        <div id="rvhint">Click a spot or drag a box, then write what should change.</div>
         <div id="rvlist"></div>
       </div>
       <div id="filesview" role="tabpanel" aria-labelledby="vtab-files" style="display:none;flex-direction:column;flex:1;min-height:0">
@@ -2795,8 +2801,19 @@ function previewImg(wrap){
   }
   return im;
 }
+/* what each preview pane shows, when it can take comments (image or PDF):
+   💬 Comment works on whichever of Viz / Files is in front */
+const REVIEWABLE = {};
+function syncReviewBtn(){
+  const files = $("#filesview").style.display !== "none";
+  $("#vizReview").style.display = REVIEWABLE[files ? "#fsframe" : "#vizframe"] ? "" : "none";
+}
 function setPreview(frameSel, pdfSel, url, isPdf, dark){
   const fr = $(frameSel), pd = $(pdfSel);
+  const q = new URLSearchParams(url.split("?")[1] || "");
+  REVIEWABLE[frameSel] = url.startsWith("/api/fs/file?") && (isPdf || IMG_URL.test(decodeURIComponent(url)))
+    ? q.get("path") : null;
+  syncReviewBtn();
   const wrap = previewWrap(frameSel); if(wrap) wrap.classList.remove("empty");
   const im = previewImg(wrap);
   const isImg = !isPdf && IMG_URL.test(decodeURIComponent(url));
@@ -2814,6 +2831,7 @@ function setPreview(frameSel, pdfSel, url, isPdf, dark){
   }
 }
 function clearPreview(frameSel, pdfSel){
+  REVIEWABLE[frameSel] = null; syncReviewBtn();
   const wrap = previewWrap(frameSel); if(wrap) wrap.classList.add("empty");
   $(frameSel).removeAttribute("src"); $(frameSel).style.display = "none";
   $(pdfSel).removeAttribute("src");   $(pdfSel).style.display = "none";
@@ -2824,14 +2842,12 @@ const isPdfName = n => /\.pdf(\?|$)/i.test(n || "");
 
 /* ---------- viz inbox ---------- */
 let vizDir = "", vizActive = null, vizNewest = 0, vizPinned = null, vizGraphOffer = null;
-let vizImage = null;          // full path of the image on show, if it is one
 let vizStamp = "";            // what #vizlist last showed: skip no-op rebuilds
 let vizRefreshing = false;    // one scan at a time, even on slow filesystem access
 function vizOverride(){ return localStorage.getItem("cdl-vizdir") || ""; }
 function showPinned(){
   if(!vizPinned) return;
   vizActive = "::pinned";
-  vizImage = null; $("#vizReview").style.display = "none";
   ensureCookie();
   setPreview("#vizframe", "#vizpdf",
              "/api/fs/file?path=" + encodeURIComponent(vizPinned.path),
@@ -2927,8 +2943,6 @@ function graphOfferCard(o){
 
 function showViz(f){
   vizActive = f.name;
-  vizImage = /^image\//.test(f.kind || "") ? joinPath(vizDir, f.name) : null;
-  $("#vizReview").style.display = vizImage ? "" : "none";
   ensureCookie();
   setPreview("#vizframe", "#vizpdf",
              "/api/fs/file?path=" + encodeURIComponent(joinPath(vizDir, f.name))
@@ -2948,18 +2962,71 @@ $("#vizPath").onclick = () => copyText(vizDir)
    server.py), so "Send to Claude" only has to point a session at that file.
    Coordinates are fractions of the image, so marks survive a re-render. */
 const RV = {path: null, rev: 0, comments: [], sel: null, saveTimer: null,
-            file: null, busy: false};
+            file: null, busy: false, from: "viz", pdf: null, page: 1, pages: 1, blob: null};
+const rvPageOf = c => c.page || 1;
+
+/* PDFs: pdf.js (vendor/, Apache-2.0) draws one page at a time into the same
+   <img> a figure uses, so marking works the same. Loaded on first use only. */
+let pdfjsReady = null;
+function loadPdfjs(){
+  if(!pdfjsReady) pdfjsReady = new Promise((res, rej) => {
+    const sc = document.createElement("script");
+    sc.src = "/vendor/pdf.min.js";
+    sc.onload = () => { pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.min.js"; res(pdfjsLib); };
+    sc.onerror = () => { pdfjsReady = null; rej(new Error("could not load the PDF viewer")); };
+    document.head.appendChild(sc);
+  });
+  return pdfjsReady;
+}
+async function rvRenderPage(){
+  const page = await RV.pdf.getPage(RV.page);
+  const base = page.getViewport({scale: 1});
+  const want = Math.max(800, $("#rvstage").clientWidth) * (window.devicePixelRatio || 1);
+  const vp = page.getViewport({scale: Math.min(4, Math.max(1, want / base.width))});
+  const cv = document.createElement("canvas");
+  cv.width = Math.ceil(vp.width); cv.height = Math.ceil(vp.height);
+  // intent "print": the on-screen intent paces itself with requestAnimationFrame,
+  // which stalls for good in a hidden window; the drawn page is the same
+  await page.render({canvasContext: cv.getContext("2d"), viewport: vp, intent: "print"}).promise;
+  const blob = await new Promise(r => cv.toBlob(r, "image/png"));
+  if(RV.blob) URL.revokeObjectURL(RV.blob);
+  RV.blob = URL.createObjectURL(blob);
+  $("#rvimg").src = RV.blob;
+  $("#rvpage").textContent = `p. ${RV.page} / ${RV.pages}`;
+  $("#rvprev").disabled = RV.page <= 1;
+  $("#rvnext").disabled = RV.page >= RV.pages;
+}
+async function rvGoto(n){
+  if(!RV.pdf || n < 1 || n > RV.pages || n === RV.page) return;
+  RV.page = n; RV.sel = null;
+  try{ await rvRenderPage(); }catch(e){ toast("Could not draw page " + n + ": " + e.message, {kind: "err"}); }
+  rvRender();
+}
 
 function rvStatus(msg){ $("#rvsaved").textContent = msg; }
 
-async function openReview(path){
-  RV.path = path; RV.sel = null;
+async function openReview(path, from){
+  RV.path = path; RV.sel = null; RV.from = from || "viz";
+  RV.pdf = null; RV.page = 1; RV.pages = 1;
   let d;
   try{ d = await api("/api/review?path=" + encodeURIComponent(path)); }
   catch(e){ toast("Cannot review this figure: " + e.message, {kind: "err"}); return; }
   RV.rev = d.revision; RV.comments = d.comments; RV.file = d.file;
+  const fileUrl = "/api/fs/file?path=" + encodeURIComponent(path) + "&t=" + Date.now();
+  if(isPdfName(path)){
+    try{
+      const lib = await loadPdfjs();
+      const r = await fetch(fileUrl, {headers: authHeaders()});
+      if(!r.ok) throw new Error("HTTP " + r.status);
+      RV.pdf = await lib.getDocument({data: new Uint8Array(await r.arrayBuffer()),
+                                      isEvalSupported: false}).promise;
+      RV.pages = RV.pdf.numPages;
+    }catch(e){ toast("Cannot open this PDF for comments: " + e.message, {kind: "err"}); return; }
+  }
   $("#vizview").style.display = "none";
+  $("#filesview").style.display = "none";
   $("#reviewview").style.display = "flex";
+  $("#rvpager").style.display = RV.pdf ? "" : "none";
   $("#rvname").textContent = baseName(path);
   $("#rvname").title = path;
   $("#rvstale").style.display = d.stale ? "" : "none";
@@ -2967,15 +3034,20 @@ async function openReview(path){
   ensureCookie();
   const img = $("#rvimg");
   img.onload = rvFit;
-  img.src = "/api/fs/file?path=" + encodeURIComponent(path) + "&t=" + Date.now();
+  img.alt = RV.pdf ? "PDF page under review" : "figure under review";
   if(maxedCell !== "cell-viz") toggleMax("cell-viz");     // room to point at things
+  if(RV.pdf){
+    try{ await rvRenderPage(); }catch(e){ toast("Could not draw the PDF: " + e.message, {kind: "err"}); }
+  } else img.src = fileUrl;
   rvRender();
 }
 function closeReview(){
   rvFlush();
   RV.path = null;
+  if(RV.pdf){ RV.pdf.destroy(); RV.pdf = null; }
+  if(RV.blob){ URL.revokeObjectURL(RV.blob); RV.blob = null; }
   $("#reviewview").style.display = "none";
-  $("#vizview").style.display = "flex";
+  $(RV.from === "files" ? "#filesview" : "#vizview").style.display = "flex";
   if(maxedCell === "cell-viz") toggleMax("cell-viz");
 }
 // the image scales to the stage; the marks layer sits exactly on top of it
@@ -2992,7 +3064,9 @@ function rvRender(){
   RV.comments.forEach((c, i) => {
     const n = i + 1;
     const mk = document.createElement("div");
+    mk.dataset.id = c.id;
     mk.className = `rvmark ${c.type} ${c.status}` + (RV.sel === c.id ? " sel" : "");
+    if(rvPageOf(c) !== RV.page) mk.style.display = "none";
     mk.style.left = (c.x * 100) + "%"; mk.style.top = (c.y * 100) + "%";
     if(c.type === "region"){
       mk.style.width = (c.w * 100) + "%"; mk.style.height = (c.h * 100) + "%";
@@ -3005,7 +3079,8 @@ function rvRender(){
     const it = document.createElement("div");
     it.className = `rvitem ${c.status}` + (RV.sel === c.id ? " sel" : "");
     it.dataset.id = c.id;
-    it.innerHTML = `<span class="n">${n}</span><textarea rows="1"
+    it.innerHTML = `<span class="n"${RV.pdf ? ` title="page ${rvPageOf(c)}"` : ""}>${n}</span>${RV.pdf
+        ? `<span class="pg">p.${rvPageOf(c)}</span>` : ""}<textarea rows="1"
         placeholder="What should change here?"></textarea>
       <select title="status">${["open","resolved","wontfix"].map(s =>
         `<option${s === c.status ? " selected" : ""}>${s}</option>`).join("")}</select>
@@ -3031,12 +3106,18 @@ function rvRender(){
   $("#rvsend").textContent = open ? `Send ${open} to Claude` : "Send to Claude";
 }
 function rvSelect(id, focus){
+  const c = RV.comments.find(x => x.id === id);
+  if(!c) return;
+  if(RV.pdf && rvPageOf(c) !== RV.page){        // a comment on another page: go there
+    rvGoto(rvPageOf(c)).then(() => rvSelect(id, focus));
+    return;
+  }
   RV.sel = id;
   document.querySelectorAll(".rvmark, .rvitem").forEach(el => el.classList.remove("sel"));
-  const i = RV.comments.findIndex(c => c.id === id);
-  if(i < 0) return;
-  $("#rvlayer").children[i].classList.add("sel");
-  const it = $("#rvlist").children[i];
+  const mk = [...$("#rvlayer").children].find(el => el.dataset.id === id);
+  if(mk) mk.classList.add("sel");
+  const it = [...$("#rvlist").children].find(el => el.dataset.id === id);
+  if(!it) return;
   it.classList.add("sel");
   if(focus){ it.scrollIntoView({block: "nearest"}); it.querySelector("textarea").focus(); }
 }
@@ -3100,6 +3181,7 @@ async function rvFlush(){
       ? {id, type: "point", x: s0.x, y: s0.y, text: "", status: "open"}
       : {id, type: "region", x: Math.min(p.x, s0.x), y: Math.min(p.y, s0.y),
          w: Math.abs(p.x - s0.x), h: Math.abs(p.y - s0.y), text: "", status: "open"};
+    if(RV.pdf) c.page = RV.page;
     RV.comments.push(c);
     rvRender(); rvSelect(id, true); rvDirty();
   });
@@ -3112,10 +3194,15 @@ async function rvSend(){
   await rvFlush();
   if(!RV.file) return;
   const open = RV.comments.filter(c => c.status === "open").length;
-  const prompt = `Figure feedback: ${open} open comment(s) on ${RV.path} are in ${RV.file} `
-    + `(x, y, w, h are fractions of the image, origin top-left). Find the script that `
-    + `generates this figure, apply each open comment, re-render it to the same path, `
-    + `then set each addressed comment's status to "resolved" in that JSON.`;
+  const prompt = RV.pdf
+    ? `PDF feedback: ${open} open comment(s) on ${RV.path} are in ${RV.file} `
+      + `(page is 1-based; x, y, w, h are fractions of that page, origin top-left). Find the `
+      + `source that builds this PDF (LaTeX, Quarto, R Markdown…), apply each open comment, `
+      + `rebuild it to the same path, then set each addressed comment's status to "resolved" in that JSON.`
+    : `Figure feedback: ${open} open comment(s) on ${RV.path} are in ${RV.file} `
+      + `(x, y, w, h are fractions of the image, origin top-left). Find the script that `
+      + `generates this figure, apply each open comment, re-render it to the same path, `
+      + `then set each addressed comment's status to "resolved" in that JSON.`;
   const t = TM.terms.get(TM.active);
   if(t && !t.dead && (t.kind === "claude" || t.kind === "resume")){
     closeReview();
@@ -3127,7 +3214,13 @@ async function rvSend(){
   openTerm("claude", {cwd, prompt, label: "claude · figure feedback"});
 }
 
-$("#vizReview").onclick = () => { if(vizImage) openReview(vizImage); };
+$("#vizReview").onclick = () => {
+  const files = $("#filesview").style.display !== "none";
+  const path = REVIEWABLE[files ? "#fsframe" : "#vizframe"];
+  if(path) openReview(path, files ? "files" : "viz");
+};
+$("#rvprev").onclick = () => rvGoto(RV.page - 1);
+$("#rvnext").onclick = () => rvGoto(RV.page + 1);
 $("#rvclose").onclick = closeReview;
 $("#rvsend").onclick = rvSend;
 
@@ -3762,10 +3855,12 @@ if(window.innerWidth < 900) setRight(false);
 let fsPath = null;        // current explorer dir; follows the selected project
 let fsHome = "";
 function vizTab(view){
+  if(RV.path) closeReview();          // saves first; never two views stacked
   setTabs(".vtab", view);
   $("#vizview").style.display = view === "viz" ? "flex" : "none";
   $("#filesview").style.display = view === "files" ? "flex" : "none";
   if(view === "files") loadFs(fsPath);
+  syncReviewBtn();
 }
 document.querySelectorAll(".vtab").forEach(v => v.onclick = () => vizTab(v.dataset.view));
 // Backspace in the explorer goes up a level, as in a file manager
