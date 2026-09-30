@@ -1,5 +1,5 @@
 <#
-  Claude DevTools launcher (Windows).
+  Ember launcher (Windows).
 
   Starts the Python server if it isn't already running, then opens the
   dashboard authenticated via the /launch cookie handoff. Prefers an app-mode
@@ -19,15 +19,16 @@ Add-Type -AssemblyName System.Windows.Forms
 
 function Fail($msg) {
     if ($env:CDL_NO_OPEN) { Write-Output $msg }
-    else { [System.Windows.Forms.MessageBox]::Show($msg, "Claude DevTools") | Out-Null }
+    else { [System.Windows.Forms.MessageBox]::Show($msg, "Ember") | Out-Null }
     exit 1
 }
 
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Repo = (Resolve-Path (Join-Path $Here "..\..")).Path
 $Server = Join-Path $Repo "server.py"
-if (-not (Test-Path $Server)) {
-    $Server = Join-Path $env:USERPROFILE "claude-devtools-lite\server.py"
+foreach ($d in "ember", "claude-devtools-lite") {
+    if (Test-Path $Server) { break }
+    $Server = Join-Path $env:USERPROFILE "$d\server.py"
 }
 if (-not (Test-Path $Server)) { Fail "server.py not found next to this launcher." }
 

@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 400" width="1280" height="400" role="img" aria-labelledby="t d">
+  <title id="t">Ember</title>
+  <desc id="d">Ember — a workspace for Claude Code. Sessions, terminal, plan and token usage in one local window.</desc>
+  <style>
+    .bg { fill: #faf7f2 } .glow { stop-color: #dd876d }
+    .title { fill: #20242b } .tag { fill: #5b5f66 } .chip { fill: #f2eee7; stroke: #e0d9cf } .chipt { fill: #3a3e45 }
+    .grid { stroke: #20242b; opacity: .05 }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #191b20 } .title { fill: #f3efe9 } .tag { fill: #a9adb4 }
+      .chip { fill: #20242b; stroke: #393d44 } .chipt { fill: #d6d2cc } .grid { stroke: #ffffff; opacity: .04 }
+    }
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Helvetica, Arial, sans-serif }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace }
+  </style>
+  <defs>
+    <radialGradient id="g" cx="18%" cy="50%" r="55%">
+      <stop offset="0" class="glow" stop-opacity=".35"/>
+      <stop offset="1" class="glow" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="p" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0H0V32" fill="none" class="grid"/>
+    </pattern>
+  </defs>
+  <rect class="bg" width="1280" height="400" rx="24"/>
+  <rect fill="url(#p)" width="1280" height="400" rx="24"/>
+  <rect fill="url(#g)" width="1280" height="400" rx="24"/>
+
+  <!-- the app mark -->
+  <g transform="translate(96 88) scale(1.75)">
+    <rect x="6" y="6" width="116" height="116" rx="28" fill="#dd876d"/>
+    <path d="M33 43 L54 64 L33 85 M68 85 L94 85" fill="none" stroke="#20242b" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <text x="376" y="190" class="title" font-size="112" font-weight="700" letter-spacing="-4">Ember</text>
+  <text x="380" y="240" class="tag" font-size="30">A workspace for Claude Code.</text>
+
+  <g font-size="19" class="mono">
+    <rect class="chip" x="380" y="280" width="176" height="40" rx="20"/>
+    <text class="chipt" x="468" y="306" text-anchor="middle">0 dependencies</text>
+    <rect class="chip" x="570" y="280" width="148" height="40" rx="20"/>
+    <text class="chipt" x="644" y="306" text-anchor="middle">local-only</text>
+    <rect class="chip" x="732" y="280" width="226" height="40" rx="20"/>
+    <text class="chipt" x="845" y="306" text-anchor="middle">macOS · Linux · Win</text>
+    <rect class="chip" x="972" y="280" width="182" height="40" rx="20"/>
+    <text class="chipt" x="1063" y="306" text-anchor="middle">1 .py + 1 .html</text>
+  </g>
+  <circle cx="1164" cy="96" r="7" fill="#dd876d"><animate attributeName="opacity" values="1;.25;1" dur="2.4s" repeatCount="indefinite"/></circle>
+  <text x="1150" y="102" class="tag mono" font-size="17" text-anchor="end">live</text>
+</svg>

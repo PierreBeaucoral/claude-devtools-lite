@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Claude DevTools launcher (Linux).
+# Ember launcher (Linux).
 #
 # Starts the Python server if it isn't already running, then opens the
 # dashboard authenticated via the /launch cookie handoff. Prefers an app-mode
@@ -13,9 +13,10 @@ URL="http://127.0.0.1:$PORT"
 # resolve the repo next to this script: launchers/linux/ -> repo root
 HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 SERVER="$(cd "$HERE/../.." && pwd)/server.py"
+[ -f "$SERVER" ] || SERVER="$HOME/ember/server.py"
 [ -f "$SERVER" ] || SERVER="$HOME/claude-devtools-lite/server.py"
 if [ ! -f "$SERVER" ]; then
-  echo "server.py not found (looked next to this script and in ~/claude-devtools-lite)" >&2
+  echo "server.py not found (looked next to this script and in ~/ember and ~/claude-devtools-lite)" >&2
   exit 1
 fi
 

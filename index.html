@@ -2,23 +2,25 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>claude-devtools-lite</title>
+<title>Ember — A workspace for Claude Code</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <!-- same mark as the app icons (launchers/linux/claude-devtools.svg); in an
      app-mode Chrome/Edge window on Windows or Linux this is the taskbar icon -->
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128' width='128' height='128'%3E %3Crect x='8' y='8' width='112' height='112' rx='28' fill='%230d1117' stroke='%232d333b' stroke-width='2'/%3E %3Cpath d='M31 44 L49 64 L31 84' fill='none' stroke='%2358a6ff' stroke-width='9' stroke-linecap='round' stroke-linejoin='round'/%3E %3Crect x='60' y='76' width='27' height='9' rx='4.5' fill='%23d29922'/%3E %3Cpath d='M87 30 L91.5 41 L102 43.5 L91.5 46 L87 57 L82.5 46 L72 43.5 L82.5 41 Z' fill='%233fb950'/%3E %3C/svg%3E">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20128%20128%22%20width%3D%22128%22%20height%3D%22128%22%3E%0A%20%20%3Crect%20x%3D%226%22%20y%3D%226%22%20width%3D%22116%22%20height%3D%22116%22%20rx%3D%2228%22%20fill%3D%22%23dd876d%22%2F%3E%0A%20%20%3Cpath%20d%3D%22M33%2043%20L54%2064%20L33%2085%20M68%2085%20L94%2085%22%20fill%3D%22none%22%20stroke%3D%22%2320242b%22%20stroke-width%3D%2210%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%2F%3E%0A%3C%2Fsvg%3E">
 <link rel="stylesheet" href="/vendor/xterm.min.css">
 <link rel="stylesheet" href="/vendor/katex.min.css">
 <style>
   :root {
-    --bg: #0d1117; --panel: #161b22; --panel2: #1c2129; --border: #2d333b;
-    --fg: #d6dde5; --dim: #8b949e; --accent: #58a6ff; --user: #4186f6;
-    --think: #b18cff; --tool: #d29922; --ok: #3fb950; --err: #f85149;
+    --bg: #191b20; --panel: #20242b; --panel2: #292d34; --border: #393d44;
+    --fg: #f3efe6; --dim: #a4a5a9; --accent: #dd876d; --user: #85b5ee;
+    --think: #c1a0ec; --tool: #d8b26b; --ok: #8bc79b; --err: #f18d8d;
     /* controls (inputs, buttons) need 3:1 against the page: --border is only
        a divider. --on-err is text on an --err fill. */
-    --border-strong: #64686e; --on-err: #0b0b0b; --focus: var(--accent);
+    --border-strong: #777b82; --on-err: #20242b; --focus: var(--accent);
     /* derived colours a theme may override (see THEMES in the script) */
-    --termbg: #0a0d12; --bar: #376393; --addfg: #7ee787; --delfg: #ffa198;
+    --termbg: #15171b; --bar: #b36c57; --addfg: #a6ddb0; --delfg: #ffb2a6;
+    /* Generated from packaging/macos/make_icon.py --sync. */
+    --ember-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20128%20128%22%20width%3D%22128%22%20height%3D%22128%22%3E%0A%20%20%3Crect%20x%3D%226%22%20y%3D%226%22%20width%3D%22116%22%20height%3D%22116%22%20rx%3D%2228%22%20fill%3D%22%23dd876d%22%2F%3E%0A%20%20%3Cpath%20d%3D%22M33%2043%20L54%2064%20L33%2085%20M68%2085%20L94%2085%22%20fill%3D%22none%22%20stroke%3D%22%2320242b%22%20stroke-width%3D%2210%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%2F%3E%0A%3C%2Fsvg%3E");
     --stripe: rgba(255,255,255,.02); --shadow: rgba(0,0,0,.55);
     --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
     color-scheme: dark;
@@ -71,11 +73,12 @@
   #main { flex:1; overflow-y:auto; min-height:0; padding:0 0 30px 0; }
 
   #topbar { padding:10px 12px; border-bottom:1px solid var(--border); }
-  #topbar h1 { font-size:14px; margin:0 0 8px; letter-spacing:.4px; }
-  #topbar h1 { display:flex; align-items:center; gap:4px 6px; white-space:nowrap; flex-wrap:wrap; }
-  #topbar h1 .ttl { flex:none; }
-  #topbar h1 .ttl span { color:var(--dim); font-weight:400; }
-  .topbtns { margin-left:auto; display:flex; gap:5px; flex:none; }
+  .ember-mark { display:inline-block; width:34px; height:34px; flex:none;
+                background:var(--ember-icon) center / contain no-repeat; }
+  #topbar h1 { display:flex; align-items:center; gap:9px; font-size:23px;
+               margin:0; letter-spacing:-.7px; line-height:1.2; }
+  .brand-caption { margin:5px 0 12px; color:var(--dim); font-size:12px; }
+  .topbtns { display:flex; align-items:center; gap:5px; flex-wrap:wrap; margin-bottom:10px; }
   .topbtns .copy { margin-left:0; }
   #search { width:100%; padding:6px 9px; background:var(--bg); color:var(--fg);
             border:1px solid var(--border-strong); border-radius:6px; font-size:13px; }
@@ -550,6 +553,15 @@
   .qbody .state .state-actions, #fslist .state .state-actions { justify-content:flex-start; }
   #main:focus-visible, #usagebody:focus-visible { outline-offset:-2px; }
   .state .copy { margin-left:0; }
+  /* The brand stays quiet once a session is open. */
+  .ember-welcome { max-width:440px; margin:0 auto; padding:24px 20px;
+                   text-align:center; color:var(--dim); }
+  .ember-welcome .ember-mark { width:48px; height:48px; }
+  .ember-welcome h2 { color:var(--fg); font-size:23px; letter-spacing:-.6px;
+                       line-height:1.25; margin:10px 0 6px; }
+  .ember-welcome p { margin:8px 0; }
+  .ember-welcome .welcome-start { color:var(--fg); margin-top:16px; }
+  .ember-welcome .welcome-hint { font-size:12px; }
   /* the usage pane scrolls: a shadow at the edge says there is more */
   #usagebody { background:
       linear-gradient(var(--bg) 30%, transparent) top / 100% 24px no-repeat local,
@@ -567,15 +579,15 @@
 <div id="app">
   <div id="sidebar">
     <div id="topbar">
-      <h1><span class="ttl">claude-devtools <span>lite</span></span>
-        <span class="topbtns">
+      <h1><span class="ember-mark" aria-hidden="true"></span>Ember</h1>
+      <p class="brand-caption">A workspace for Claude Code</p>
+        <div class="topbtns" role="group" aria-label="Workspace controls">
           <button class="copy termbtn ibtn" id="btnAddons" title="optional add-ons (graphify, /improve, …)" aria-label="Optional add-ons">🧩</button>
           <button class="copy termbtn ibtn" id="btnTheme" title="change theme" aria-label="Change theme" aria-haspopup="menu">◐</button>
           <button class="copy termbtn ibtn" id="btnRight" title="toggle usage/viz panels" aria-label="Toggle the right column" aria-pressed="true">◫</button>
           <button class="copy termbtn" id="btnTerm" title="open a terminal (Ctrl+2 focuses it)">⌨ CLI</button>
-          <button class="copy termbtn ibtn" id="btnQuit" title="stop the devtools server" aria-label="Quit: stop the devtools server">⏻</button>
-        </span>
-      </h1>
+          <button class="copy termbtn ibtn" id="btnQuit" title="Quit Ember" aria-label="Quit Ember: stop the server">⏻</button>
+        </div>
       <input id="search" placeholder="Filter projects · Enter searches transcripts" autocomplete="off"
              aria-label="Filter projects; Enter searches every transcript">
     </div>
@@ -592,10 +604,12 @@
       </div>
       <div id="sheadbox"></div>
       <div id="headgrip" class="split hsplit" title="drag to resize the header (double-click to collapse)" aria-label="Resize session header" aria-controls="sheadbox"></div>
-      <div id="main" tabindex="-1" aria-label="Session timeline"><div class="placeholder">
-        ← Pick a project and session.<br><br>
-        This dashboard reads <code>~/.claude</code> read-only:<br>
-        timelines, thinking, tool calls, diffs, token usage,<br>subagents, memory, and full-text search.
+      <div id="main" tabindex="-1" aria-label="Session timeline"><div class="ember-welcome">
+        <span class="ember-mark" aria-hidden="true"></span>
+        <h2>Your work, in view.</h2>
+        <p>Follow your Claude Code sessions, inspect each step,<br>and pick up where you left off.</p>
+        <p class="welcome-start">Choose a project and session in the sidebar.</p>
+        <p class="welcome-hint">Session transcripts are read-only. Your dashboard runs locally.</p>
       </div></div>
     </div>
 
@@ -660,6 +674,7 @@
         <button class="copy maxbtn ibtn" data-cell="cell-viz" title="maximize / restore (Ctrl+Shift+M)" aria-label="Maximize the viz pane" aria-pressed="false">⛶</button>
       </div>
       <div id="vizview" role="tabpanel" aria-labelledby="vtab-viz" style="display:flex;flex-direction:column;flex:1;min-height:0">
+        <div id="vizerror" class="vizempty" role="status" hidden></div>
         <div class="qbody" id="vizlist" style="flex:none;max-height:160px"></div>
         <div class="previewwrap empty">
           <iframe id="vizframe" sandbox="allow-scripts" title="viz preview"></iframe>
@@ -822,7 +837,7 @@ function cleanTitle(t){
 /* A 401 means this tab never got the token: how to open one that has it. */
 function reloginHint(){
   const win = /Win/.test(navigator.platform || navigator.userAgent);
-  return `Double-click the <b>Claude DevTools</b> launcher, or run
+  return `Double-click the <b>Ember</b> launcher, or run
     <code>${win ? "python" : "python3"} server.py --launch-url</code> and open the
     link it prints. In the same browser, this tab then reconnects by itself.`;
 }
@@ -1946,17 +1961,42 @@ function strToB64(s){
    syncSize: queue, coalesce, keep ONE request in flight. Resolves once
    everything queued so far has been written. */
 function sendInput(t, s){
+  const showPaused = () => {
+    if(t.dead || (t.inputNotice && t.inputNotice.isConnected)) return;
+    t.inputNotice = toast(t.inputWarning, {kind: "err", action: {
+      label: "Resume typing", run: () => {
+        if(t.dead) return;
+        t.inputPaused = false; t.term.focus();
+      }}});
+  };
+  if(t.dead) return Promise.resolve(false);
+  if(t.inputPaused){ showPaused(); return Promise.resolve(false); }
   t.inbuf = (t.inbuf || "") + s;
   if(!t.inFlight){
     t.inFlight = (async () => {
       try{
         while(t.inbuf && !t.dead){
           const chunk = t.inbuf; t.inbuf = "";
-          await fetch("/api/term/input", {method:"POST",
-            headers: authHeaders({"Content-Type":"application/json"}),
-            body: JSON.stringify({id: t.id, data: strToB64(chunk)})});
+          const ac = new AbortController();
+          const timer = setTimeout(() => ac.abort(), 10000);
+          try{
+            const r = await fetch("/api/term/input", {method:"POST", signal: ac.signal,
+              headers: authHeaders({"Content-Type":"application/json"}),
+              body: JSON.stringify({id: t.id, data: strToB64(chunk)})});
+            if(!r.ok){
+              const j = await r.json();
+              throw new Error(j.error || `Server returned ${r.status}`);
+            }
+          }finally{ clearTimeout(timer); }
         }
-      }catch(e){ /* terminal closed mid-write */ }
+        return !t.dead;
+      }catch(e){
+        t.inbuf = ""; t.inputPaused = true;
+        t.inputWarning = `Typing paused: ${e.name === "AbortError" ? "the server did not answer" : e.message}. ` +
+          "Pending typing was discarded. Some text may already have arrived; check the terminal before resuming.";
+        showPaused();
+        return false;
+      }
       finally{ t.inFlight = null; }
     })();
   }
@@ -2052,6 +2092,15 @@ const THEMES = {
   // borderStrong: control outlines (inputs, buttons) at >=3:1; onErr: text on
   // an --err fill. Text tokens clear 4.5:1 on bg, panel AND panel2
   // (tests/test_frontend.js recomputes every ratio).
+  "Ember Dark": {bg:"#191b20", panel:"#20242b", panel2:"#292d34", border:"#393d44",
+    borderStrong:"#777b82", fg:"#f3efe6", dim:"#a4a5a9", accent:"#dd876d", user:"#85b5ee",
+    think:"#c1a0ec", tool:"#d8b26b", ok:"#8bc79b", err:"#f18d8d", onErr:"#20242b",
+    termbg:"#15171b", bar:"#b36c57", addfg:"#a6ddb0", delfg:"#ffb2a6"},
+  "Ember Light": {light:true, bg:"#faf7f2", panel:"#f2eee7", panel2:"#e9e4dc",
+    border:"#d5cec4", borderStrong:"#8b8175", fg:"#292d34", dim:"#645e58",
+    accent:"#a34831", user:"#285f98", think:"#7746a0", tool:"#7a570f", ok:"#286a40",
+    err:"#b13139", onErr:"#ffffff", termbg:"#faf7f2", bar:"#b46046",
+    addfg:"#205b32", delfg:"#8e2830"},
   "GitHub Dark": {bg:"#0d1117", panel:"#161b22", panel2:"#1c2129", border:"#2d333b",
     borderStrong:"#64686e", fg:"#d6dde5", dim:"#8b949e", accent:"#58a6ff", user:"#4186f6",
     think:"#b18cff", tool:"#d29922", ok:"#3fb950", err:"#f85149", onErr:"#0b0b0b",
@@ -2087,7 +2136,7 @@ const THEMES = {
     think:"#ff7fa3", tool:"#ff9d00", ok:"#3ad900", err:"#ff709e", onErr:"#0b0b0b",
     termbg:"#002240", bar:"#0088ff", addfg:"#3ad900", delfg:"#ff6f9a"},
 };
-const DEFAULT_THEME = "GitHub Dark";
+const DEFAULT_THEME = "Ember Dark";
 function themeName(){
   const n = localStorage.getItem("cdl-theme");
   return THEMES[n] ? n : DEFAULT_THEME;
@@ -2408,7 +2457,7 @@ async function closeTermAsk(id){
 
 $("#btnQuit").onclick = async () => {
   const n = TM.terms.size;
-  if(!await ask("Quit Claude DevTools?", n
+  if(!await ask("Quit Ember?", n
       ? `${n} terminal session(s) will be closed gracefully — Claude Code gets to run its SessionEnd hooks (this can take a few seconds).`
       : "The devtools server stops; relaunch the app to come back.", "Quit", true))
     return;
@@ -2417,7 +2466,7 @@ $("#btnQuit").onclick = async () => {
   try{ await fetch("/api/shutdown", {method:"POST",
     headers:authHeaders({"Content-Type":"application/json"}), body:"{}"}); }catch(e){}
   document.body.innerHTML = `<div class="placeholder" style="padding-top:30vh">
-    ⏻ Server stopped. Close this tab — double-click <b>Claude DevTools</b> to relaunch.</div>`;
+    ⏻ Server stopped. Close this tab — double-click <b>Ember</b> to relaunch.</div>`;
 };
 $("#btnTerm").onclick = () => {
   if(TM.terms.size){ activateTerm(TM.active || TM.terms.keys().next().value); }
@@ -2740,6 +2789,7 @@ const isPdfName = n => /\.pdf(\?|$)/i.test(n || "");
 let vizDir = "", vizActive = null, vizNewest = 0, vizPinned = null, vizGraphOffer = null;
 let vizImage = null;          // full path of the image on show, if it is one
 let vizStamp = "";            // what #vizlist last showed: skip no-op rebuilds
+let vizRefreshing = false;    // one scan at a time, even on slow filesystem access
 function vizOverride(){ return localStorage.getItem("cdl-vizdir") || ""; }
 function showPinned(){
   if(!vizPinned) return;
@@ -2753,9 +2803,13 @@ function showPinned(){
     el.classList.toggle("active", el.textContent.startsWith(vizPinned.label)));
 }
 async function refreshViz(){
+  if(vizRefreshing) return;
+  vizRefreshing = true;
+  const ov = vizOverride();
   try{
-    const ov = vizOverride();
     const v = await api("/api/viz" + (ov ? "?dir=" + encodeURIComponent(ov) : ""));
+    if(ov !== vizOverride()) return;
+    $("#vizerror").hidden = true;
     vizDir = v.dir;
     renderStatus();
     const st = dataStamp(v.dir, v.files.map(f => f.name + ":" + f.mtime), vizPinned, vizActive,
@@ -2795,7 +2849,14 @@ async function refreshViz(){
       vizNewest = newest.mtime;
       showViz(newest);
     }
-  }catch(e){ /* server briefly down; retry next tick */ }
+  }catch(e){
+    if(ov === vizOverride()){
+      const warning = $("#vizerror");
+      warning.textContent = "Cannot refresh previews: " + e.message +
+        ". Displayed previews may be out of date. Retrying automatically.";
+      warning.hidden = false;
+    }
+  }finally{ vizRefreshing = false; }
 }
 /* a project without graphify-out/graph.html gets asked once whether to build
    one; ticking "don't ask again" silences it for that folder only */
@@ -3914,8 +3975,7 @@ async function runInNewShell(label, lines){
   await openTerm("shell", {label});
   const t = TM.terms.get(TM.active);
   if(!t || t.label !== label) return false;   // spawn failed; openTerm said why
-  await sendInput(t, lines.join("\r") + "\r");
-  return true;
+  return await sendInput(t, lines.join("\r") + "\r");
 }
 async function waitFor(cond, ms){
   for(const end = Date.now() + ms; Date.now() < end; ){

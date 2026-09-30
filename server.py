@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-claude-devtools-lite — local, read-only inspector for Claude Code sessions.
+Ember — local, read-only inspector for Claude Code sessions.
 
 Reads ~/.claude/projects/<slug>/*.jsonl transcripts (plus subagent transcripts
 and project memory) and serves a single-page dashboard on localhost.
@@ -55,7 +55,7 @@ import winconpty  # noqa: E402
 HAS_TERMINAL = HAS_PTY or winconpty.unsupported_reason() is None
 
 
-VERSION = "0.10.0"      # single source: build-app.sh and the HTTP header read it
+VERSION = "1.0.0"      # single source: build-app.sh and the HTTP header read it
 HERE = Path(__file__).resolve().parent
 CLAUDE_ROOT = Path(os.environ.get("CLAUDE_ROOT", str(Path.home() / ".claude")))
 
@@ -1069,17 +1069,32 @@ def fit_graph_html(body):
 
 
 def viz_list(dir_override=None):
+    """List previews, retrying one interrupted scan without duplicating entries."""
     d = safe_home_path(dir_override) if dir_override else VIZ_DIR
     if not d.is_dir():
         return [], d        # a watched folder that was deleted: empty, not a crash
+    for attempt in range(2):
+        try:
+            return _scan_viz(d), d
+        except InterruptedError:
+            if attempt:
+                raise
+
+
+def _scan_viz(d):
+    """Take one scan; files removed during the scan are harmless."""
     out = []
     for f in d.iterdir():
-        if f.is_file() and f.suffix.lower() in VIZ_TYPES:
-            out.append({"name": f.name, "size": f.stat().st_size,
-                        "mtime": f.stat().st_mtime,
-                        "kind": VIZ_TYPES[f.suffix.lower()]})
+        try:
+            if f.is_file() and f.suffix.lower() in VIZ_TYPES:
+                st = f.stat()
+                out.append({"name": f.name, "size": st.st_size,
+                            "mtime": st.st_mtime,
+                            "kind": VIZ_TYPES[f.suffix.lower()]})
+        except FileNotFoundError:
+            continue
     out.sort(key=lambda x: x["mtime"], reverse=True)
-    return out[:50], d
+    return out[:50]
 
 
 def fs_listing(raw_path):
@@ -1132,7 +1147,7 @@ PLAN_HEAD_RE = re.compile(r"^(#{1,6})\s+(.*)$")
 
 PLAN_TEMPLATE = """# Plan
 
-<!-- claude-devtools-lite reads this file into its PLAN pane.
+<!-- Ember reads this file into its PLAN pane.
      Keep one task per line as a markdown checkbox; tick them off as you go. -->
 
 Status: DRAFT
@@ -1864,7 +1879,7 @@ IMPROVE_TIMEOUT = "1800"                # seconds; enforced by a watchdog
 
 IMPROVE_PROMPT = """/improve
 
-This run was started automatically by claude-devtools-lite when a Claude Code
+This run was started automatically by Ember when a Claude Code
 session closed. There is no live conversation to review, so analyse the
 transcript of the session that just ended instead:
 
@@ -1976,7 +1991,7 @@ def spawn_improve(cwd):
     header = (f"# Retrospective — {Path(cwd).name}\n\n"
               f"*{time.strftime('%Y-%m-%d %H:%M')} · session "
               f"`{transcript.stem}` · read-only run started by "
-              f"claude-devtools-lite when the session closed.*\n\n---\n\n")
+              f"Ember when the session closed.*\n\n---\n\n")
     try:
         fh = open(out, "w", encoding="utf-8")
         fh.write(header)
@@ -2151,10 +2166,10 @@ class Term:
         return bytes(self.buf[pos - self.discarded:]), self.produced()
 
     def write(self, data: bytes):
-        try:
-            self._write(data)
-        except OSError:
-            pass
+        """Report transport failures to the caller instead of claiming success."""
+        if not self.alive or self._finished:
+            raise BrokenPipeError("Terminal has closed")
+        self._write(data)
 
     def resize(self, cols, rows):
         try:
@@ -2190,6 +2205,8 @@ class Term:
 class PosixTerm(Term):
     """macOS / Linux: fork a real pty."""
 
+    WRITE_TIMEOUT = 2.0
+
     def _spawn(self, argv, cwd, env, cols, rows):
         pid, fd = pty.fork()
         if pid == 0:  # child
@@ -2205,16 +2222,49 @@ class PosixTerm(Term):
                 os.write(2, f"exec failed: {e}\r\n".encode())
                 os._exit(127)
         self.pid, self.fd = pid, fd
+        self._write_lock = threading.Lock()
+        os.set_blocking(fd, False)
         self._set_size(cols, rows)
 
     def _read(self):
-        r, _, _ = select.select([self.fd], [], [], 1.0)
-        if not r:
-            return None                     # idle tick
-        return os.read(self.fd, 65536)
+        try:
+            r, _, _ = select.select([self.fd], [], [], 1.0)
+            if r:
+                return os.read(self.fd, 65536)
+        except (BlockingIOError, InterruptedError):
+            pass
+        return None                         # idle / readiness changed
 
     def _write(self, data):
-        os.write(self.fd, data)
+        """Serialize complete writes; give up only after WRITE_TIMEOUT with no
+        progress, so a slow-but-reading child can take a large paste."""
+        deadline = time.monotonic() + self.WRITE_TIMEOUT
+        if not self._write_lock.acquire(timeout=self.WRITE_TIMEOUT):
+            raise TimeoutError("Terminal input is busy; queued input was not sent")
+        try:
+            pending = memoryview(data)
+            while pending:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("Terminal stopped accepting input; some text may have been sent")
+                try:
+                    _, ready, _ = select.select([], [self.fd], [], remaining)
+                    if not ready:
+                        continue
+                    # _finish marks the transport closed under this same lock;
+                    # never write to an fd that cleanup may have closed/reused.
+                    with self.cond:
+                        if self._finished or not self.alive:
+                            raise BrokenPipeError("Terminal has closed")
+                        n = os.write(self.fd, pending)
+                    if not n:
+                        raise BrokenPipeError("Terminal stopped accepting input")
+                    pending = pending[n:]
+                    deadline = time.monotonic() + self.WRITE_TIMEOUT
+                except (BlockingIOError, InterruptedError):
+                    continue
+        finally:
+            self._write_lock.release()
 
     def _set_size(self, cols, rows):
         fcntl.ioctl(self.fd, termios.TIOCSWINSZ,
@@ -2534,7 +2584,7 @@ def page_csp(body):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "claude-devtools-lite/" + VERSION
+    server_version = "ember/" + VERSION
     root = CLAUDE_ROOT  # overridden in main()
 
     def log_message(self, fmt, *args):
@@ -2992,7 +3042,14 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
             if p == "/api/term/input":
-                t.write(base64.b64decode(body.get("data", "")))
+                try:
+                    t.write(base64.b64decode(body.get("data", "")))
+                except TimeoutError as e:
+                    self._err(504, str(e))
+                    return
+                except OSError as e:
+                    self._err(410, f"Terminal input failed: {e}")
+                    return
                 self._json({"ok": True})
                 return
             if p == "/api/term/resize":
@@ -3092,7 +3149,7 @@ def print_launch_url(port):
             mac = json.loads(r.read())["mac"]
         if not hmac.compare_digest(mac, hello_mac(tok, nonce)):
             print(f"error: the server on port {port} is not this user's "
-                  f"claude-devtools — refusing to send it the token", file=sys.stderr)
+                  f"Ember — refusing to send it the token", file=sys.stderr)
             return 2
         req = urllib.request.Request(
             f"{base}/api/launch-code", method="POST", data=b"{}",
@@ -3127,7 +3184,7 @@ def quick_edit_off():
 
 
 def main():
-    ap = argparse.ArgumentParser(description="claude-devtools-lite")
+    ap = argparse.ArgumentParser(description="Ember — a workspace for Claude Code")
     ap.add_argument("--port", type=int, default=int(os.environ.get("PORT", 3456)))
     ap.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"))
     ap.add_argument("--root", default=str(CLAUDE_ROOT))
@@ -3163,7 +3220,7 @@ def main():
     # never print the token: this output is often redirected to a log file.
     # ASCII only: a redirected Windows stdout is cp1252 and can't encode "→"
     py = "python" if os.name == "nt" else "python3"
-    print(f"claude-devtools-lite running on http://{args.host}:{args.port}/ "
+    print(f"Ember running on http://{args.host}:{args.port}/ "
           f"- leave this window open (Ctrl+C stops it)")
     print(f"  to log in, run in another terminal and open the link it prints:\n"
           f"    {py} server.py --launch-url --port {args.port}")

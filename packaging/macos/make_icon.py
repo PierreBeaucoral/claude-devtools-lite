@@ -1,76 +1,115 @@
 #!/usr/bin/env python3
-"""Render the Claude DevTools app icon.
+"""Generate Ember's coral terminal mark from shared geometry.
 
-    python3 make_icon.py /path/to/AppIcon.icns     # macOS (needs iconutil)
-    python3 make_icon.py /path/to/claude-devtools.ico   # Windows, any OS
+    python3 packaging/macos/make_icon.py --sync
+    python3 packaging/macos/make_icon.py /path/to/AppIcon.icns
+    python3 packaging/macos/make_icon.py /path/to/ember.ico
 
-Needs Pillow. The .ico is committed at launchers/windows/claude-devtools.ico,
-so Windows users never need to run this. The app works fine without an icon.
+--sync updates the Linux SVG, Windows ICO, favicon and in-app mark together.
+Needs Pillow; macOS ICNS export also needs iconutil. App runtime needs neither.
+Legacy asset filenames remain stable for existing desktop launchers.
 """
+import re
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from urllib.parse import quote
 
 from PIL import Image, ImageDraw
 
 
-SUPERSAMPLE = 4          # draw big, shrink: smooth edges at 16–48 px
+# Canonical identity: all platform and in-app marks derive from these values.
+CORAL = "#dd876d"
+CHARCOAL = "#20242b"
+TILE = (6, 6, 122, 122)
+RADIUS = 28
+STROKE = 10
+PROMPT = ((33, 43), (54, 64), (33, 85))
+CURSOR = ((68, 85), (94, 85))
+SUPERSAMPLE = 4
+SIZES = (16, 20, 24, 32, 40, 48, 64, 128, 256)
+
+
+def svg():
+    """Return the vector mark used in the browser and Linux launcher."""
+    paths = " ".join("M" + " L".join(f"{x} {y}" for x, y in points)
+                     for points in (PROMPT, CURSOR))
+    x, y, right, bottom = TILE
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" '
+            f'width="128" height="128">\n'
+            f'  <rect x="{x}" y="{y}" width="{right-x}" height="{bottom-y}" '
+            f'rx="{RADIUS}" fill="{CORAL}"/>\n'
+            f'  <path d="{paths}" fill="none" stroke="{CHARCOAL}" '
+            f'stroke-width="{STROKE}" stroke-linecap="round" stroke-linejoin="round"/>\n'
+            f'</svg>\n')
 
 
 def draw(size):
-    """The icon at `size` px, anti-aliased by supersampling. Small sizes get
-    heavier strokes and a bigger spark, or they vanish in a 16-px taskbar."""
-    bold = 1.5 if size <= 24 else 1.25 if size <= 48 else 1.0
-    return _draw(size * SUPERSAMPLE, bold).resize((size, size), Image.LANCZOS)
-
-
-def _draw(size, bold=1.0):
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    """Render the mark at each requested size with supersampled round strokes."""
+    scale = size * SUPERSAMPLE / 128
+    img = Image.new("RGBA", (size * SUPERSAMPLE, size * SUPERSAMPLE), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    m, r = size * 0.06, size * 0.22
-    d.rounded_rectangle([m, m, size - m, size - m], radius=r,
-                        fill=(13, 17, 23, 255), outline=(45, 51, 59, 255),
-                        width=max(1, size // 128))
-    lw = max(2, int(size * 0.075 * bold))
-    x0, y0 = size * 0.24, size * 0.34                      # prompt chevron
-    d.line([(x0, y0), (x0 + size * 0.14, size * 0.5), (x0, size * 0.66)],
-           fill=(88, 166, 255, 255), width=lw, joint="curve")
-    d.rounded_rectangle([size * 0.47, size * 0.60,         # cursor
-                         size * 0.68, size * 0.60 + lw],
-                        radius=lw / 2, fill=(210, 153, 34, 255))
-    cx, cy, s = size * 0.68, size * 0.34, size * 0.10 * bold   # spark
-    d.polygon([(cx, cy - s), (cx + s * .35, cy - s * .1), (cx + s, cy),
-               (cx + s * .35, cy + s * .1), (cx, cy + s),
-               (cx - s * .35, cy + s * .1), (cx - s, cy),
-               (cx - s * .35, cy - s * .1)], fill=(63, 185, 80, 255))
-    return img
+    d.rounded_rectangle([v * scale for v in TILE], radius=RADIUS * scale, fill=CORAL)
+    width = max(1, round(STROKE * scale))
+    for path in (PROMPT, CURSOR):
+        points = [(x * scale, y * scale) for x, y in path]
+        d.line(points, fill=CHARCOAL, width=width, joint="curve")
+        for x, y in points:
+            r = width / 2
+            d.ellipse((x-r, y-r, x+r, y+r), fill=CHARCOAL)
+    return img.resize((size, size), Image.LANCZOS)
+
+
+def write_ico(out):
+    """Write independently rendered Windows taskbar and Explorer sizes."""
+    imgs = [draw(s) for s in SIZES]
+    imgs[-1].save(out, format="ICO", sizes=[(s, s) for s in SIZES],
+                  append_images=imgs[:-1])
+
+
+def sync_assets():
+    """Regenerate shipped assets and replace only the two embedded mark slots."""
+    repo = Path(__file__).resolve().parents[2]
+    source = svg()
+    url = "data:image/svg+xml," + quote(source.strip(), safe="")
+    html_path = repo / "index.html"
+    html = html_path.read_text(encoding="utf-8")
+    html, icons = re.subn(r'<link rel="icon" type="image/svg\+xml" href="[^"]*">',
+                         f'<link rel="icon" type="image/svg+xml" href="{url}">', html)
+    html, marks = re.subn(r'--ember-icon: url\("[^"]*"\);',
+                         f'--ember-icon: url("{url}");', html)
+    if (icons, marks) != (1, 1):
+        raise ValueError("Expected exactly one favicon and one --ember-icon slot")
+    (repo / "launchers/linux/claude-devtools.svg").write_text(source, encoding="utf-8")
+    write_ico(repo / "launchers/windows/claude-devtools.ico")
+    html_path.write_text(html, encoding="utf-8")
+    print("Updated Ember SVG, ICO, favicon and in-app mark.")
 
 
 def main():
-    if len(sys.argv) < 2:
+    """Synchronize shipped assets or export a platform icon."""
+    if len(sys.argv) != 2:
         print(__doc__)
         return 1
+    if sys.argv[1] == "--sync":
+        sync_assets()
+        return 0
     out = Path(sys.argv[1])
     out.parent.mkdir(parents=True, exist_ok=True)
     if out.suffix.lower() == ".ico":
-        # every size Explorer asks for, each drawn at its own size rather
-        # than scaled down from 256 by Windows
-        sizes = (16, 20, 24, 32, 40, 48, 64, 128, 256)
-        imgs = [draw(s) for s in sizes]
-        imgs[-1].save(out, format="ICO", sizes=[(s, s) for s in sizes],
-                      append_images=imgs[:-1])
-        print(f"wrote {out}")
-        return 0
-    with tempfile.TemporaryDirectory() as tmp:
-        iconset = Path(tmp) / "AppIcon.iconset"
-        iconset.mkdir()
-        for s in (16, 32, 64, 128, 256, 512, 1024):
-            draw(s).save(iconset / f"icon_{s}x{s}.png")
-            if s <= 512:
+        write_ico(out)
+    elif out.suffix.lower() == ".icns":
+        with tempfile.TemporaryDirectory() as tmp:
+            iconset = Path(tmp) / "AppIcon.iconset"
+            iconset.mkdir()
+            for s in (16, 32, 64, 128, 256, 512):
+                draw(s).save(iconset / f"icon_{s}x{s}.png")
                 draw(s * 2).save(iconset / f"icon_{s}x{s}@2x.png")
-        subprocess.run(["iconutil", "-c", "icns", str(iconset), "-o", str(out)],
-                       check=True)
+            subprocess.run(["iconutil", "-c", "icns", str(iconset), "-o", str(out)],
+                           check=True)
+    else:
+        raise ValueError("Output must be .ico or .icns")
     print(f"wrote {out}")
     return 0
 

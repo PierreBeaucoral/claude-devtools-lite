@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""claude-devtools-lite's two optional Claude Code tees. Stdlib only.
+"""Ember's two optional Claude Code tees. Stdlib only.
 
     devtools_hooks.py statusline        statusLine command: saves Claude Code's
                                         status JSON (official 5h / 7-day limit %,

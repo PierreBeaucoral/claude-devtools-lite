@@ -196,13 +196,24 @@ function eq0(name, got, want) { report(name, got === want, `got ${JSON.stringify
     }
   report("diff lines: added/deleted text >= 4.5:1 on its tinted fill", !dbad.length, dbad.join("; "));
   report("every theme passes WCAG AA contrast (" + Object.keys(THEMES).length + " themes)", !bad.length, bad.join("; "));
-  // the stylesheet defaults are GitHub Dark: keep them in step with the table
-  const gd = THEMES["GitHub Dark"], root = slice(":root {", "color-scheme: dark;");
+  // the stylesheet defaults are Ember Dark: keep them in step with the table
+  const gd = THEMES["Ember Dark"], root = slice(":root {", "color-scheme: dark;");
   const drift = ["bg", "panel", "panel2", "border", "fg", "dim", "accent", "user", "think", "tool",
                  "ok", "err", "termbg", "bar", "addfg", "delfg"].filter(k => !root.includes(`--${k}: ${gd[k]};`))
     .concat(root.includes(`--border-strong: ${gd.borderStrong};`) ? [] : ["border-strong"])
     .concat(root.includes(`--on-err: ${gd.onErr};`) ? [] : ["on-err"]);
-  report(":root defaults match the GitHub Dark theme", !drift.length, drift.join(", "));
+  report(":root defaults match the Ember Dark theme", !drift.length, drift.join(", "));
+}
+
+/* Rebranding must not replace an existing user's chosen theme. */
+{
+  const getTheme = new Function("localStorage",
+    slice("const THEMES = {", "/* Claude Code draws its diffs") + ";return themeName();");
+  report("new users get Ember Dark", getTheme({getItem: () => null}) === "Ember Dark");
+  report("unknown saved theme falls back to Ember Dark", getTheme({getItem: () => "missing"}) === "Ember Dark");
+  for (const name of ["GitHub Dark", "GitHub Light", "Solarized Dark", "Solarized Light",
+                      "Dracula", "Monokai", "Tomorrow Night", "Cobalt", "Ember Light"])
+    report("saved theme preserved: " + name, getTheme({getItem: () => name}) === name);
 }
 
 /* ---------------- CSP-safe markup ---------------- */
@@ -367,6 +378,67 @@ eq("re-activating the same tab does not reload", app.loaded.length, before);
   await last; while (t.inFlight) await t.inFlight;
   eq("terminal input arrives in order", got.join(""), typed);
   report("fast typing is coalesced into fewer requests", got.length < typed.length, `${got.length} requests`);
+
+  // Failed requests must stop the queue, report failure to callers (including
+  // the add-on installer), and never replay text after an explicit resume.
+  const notices = [], sent = [];
+  let respond;
+  const failedIO = (0, eval)(`(function(fetch, authHeaders, strToB64, toast){` +
+    slice("function sendInput(t, s){", "/* Keep the PTY's size") +
+    `; return {sendInput}; })`)(
+      (url, o) => { sent.push(JSON.parse(o.body).data); return new Promise(r => { respond = r; }); },
+      h => h, s => s, (message, opts) => { notices.push({message, opts}); return {isConnected: true}; });
+  const failedTerm = {id: "t2", term: {focus(){}}};
+  const failedWrite = failedIO.sendInput(failedTerm, "first");
+  failedIO.sendInput(failedTerm, "queued");
+  respond({ok: false, status: 504, json: async () => ({error: "blocked"})});
+  eq("failed input returns false", await failedWrite, false);
+  eq("failure discards queued typing", failedTerm.inbuf, "");
+  eq("typing stays paused after failure", await failedIO.sendInput(failedTerm, "more"), false);
+  eq("queued input never sent", sent.join(""), "first");
+  report("input failure is visible", notices.length === 1 && notices[0].message.includes("blocked"));
+  failedTerm.inputNotice.isConnected = false;
+  await failedIO.sendInput(failedTerm, "discard this too");
+  eq("dismissed pause warning can be recovered by typing", notices.length, 2);
+  notices[0].opts.action.run();
+  const resumed = failedIO.sendInput(failedTerm, "fresh");
+  respond({ok: true});
+  eq("explicit resume accepts fresh input", await resumed, true);
+  eq("resume does not replay discarded typing", sent.join(""), "firstfresh");
+
+  const timedIO = (0, eval)(`(function(fetch, authHeaders, strToB64, toast, setTimeout){` +
+    slice("function sendInput(t, s){", "/* Keep the PTY's size") +
+    `; return {sendInput}; })`)(
+      (url, o) => new Promise((resolve, reject) => o.signal.addEventListener("abort", () => {
+        const e = new Error("aborted"); e.name = "AbortError"; reject(e);
+      })), h => h, s => s, (message, opts) => notices.push({message, opts}),
+      fn => setTimeout(fn, 1));
+  const timedTerm = {id: "t3"};
+  eq("unresponsive request is aborted", await timedIO.sendInput(timedTerm, "x"), false);
+  report("timeout pauses typing and releases queue", timedTerm.inputPaused && !timedTerm.inFlight);
+
+  // A slow filesystem gets at most one scan; warnings preserve the preview
+  // and disappear after recovery even when the file list has not changed.
+  const warning = {hidden: true, textContent: ""};
+  let scans = 0, complete;
+  const viz = (0, eval)(`(function(api, $, vizOverride, dataStamp, renderStatus){
+    let vizRefreshing = false, vizStamp = "same", vizDir = "", vizPinned = null,
+        vizActive = null, vizGraphOffer = null;
+    const addonInstalled = () => false;` +
+    slice("async function refreshViz(){", "/* a project without graphify-out") +
+    `; return refreshViz; })`)(
+      () => { scans++; return new Promise((resolve, reject) => { complete = {resolve, reject}; }); },
+      () => warning, () => "", () => "same", () => {});
+  const pendingScan = viz();
+  await viz();
+  eq("viz scans do not overlap", scans, 1);
+  complete.reject(new Error("Interrupted system call"));
+  await pendingScan;
+  report("viz failure shows persistent warning", !warning.hidden && warning.textContent.includes("Interrupted"));
+  const recovered = viz();
+  complete.resolve({dir: "/viz", files: []});
+  await recovered;
+  report("unchanged successful scan clears warning", warning.hidden);
 
   console.log(fails ? `\n${fails} failed` : `\nall passed`);
   process.exit(fails ? 1 : 0);

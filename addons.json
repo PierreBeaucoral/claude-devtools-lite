@@ -241,7 +241,7 @@
       "name": "Live limits (statusline tee)",
       "used_by_app": false,
       "unlocks": "Usage pane shows Claude Code's own 5-hour and 7-day limit %, reset times, context % and cost instead of the P90 estimate. Your existing statusline keeps working (it is wrapped). Undo: devtools_hooks.py uninstall-statusline.",
-      "source": "https://github.com/PierreBeaucoral/claude-devtools-lite/blob/main/tools/devtools_hooks.py",
+      "source": "https://github.com/PierreBeaucoral/ember/blob/main/tools/devtools_hooks.py",
       "check": {
         "kind": "statusline",
         "name": "devtools_hooks.py"
@@ -261,7 +261,7 @@
       "name": "Live activity (hook event tee)",
       "used_by_app": false,
       "unlocks": "An async hook records what each session is doing (tool names, never their inputs) so the sidebar shows live activity and you get a toast when a session waits for your permission. Undo: devtools_hooks.py uninstall-events.",
-      "source": "https://github.com/PierreBeaucoral/claude-devtools-lite/blob/main/tools/devtools_hooks.py",
+      "source": "https://github.com/PierreBeaucoral/ember/blob/main/tools/devtools_hooks.py",
       "check": {
         "kind": "hook",
         "name": "devtools_hooks.py"

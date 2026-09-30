@@ -1,4 +1,4 @@
-// Claude DevTools — standalone macOS window for claude-devtools-lite.
+// Ember — standalone macOS window for the Ember workspace.
 // A native WKWebView wrapper: starts the Python server if needed, opens the
 // dashboard with the auth cookie, and on quit shuts the server down gracefully
 // (Claude Code sessions get to run their SessionEnd hooks) — but only if this
@@ -11,13 +11,18 @@ let PORT = ProcessInfo.processInfo.environment["PORT"] ?? "3456"
 let BASE = "http://127.0.0.1:\(PORT)"
 
 func serverDir() -> URL {
+    // new clone name first, then the pre-rename one
     let bundleParent = Bundle.main.bundleURL.deletingLastPathComponent()
-    let sibling = bundleParent.appendingPathComponent("claude-devtools-lite")
-    if FileManager.default.fileExists(atPath: sibling.appendingPathComponent("server.py").path) {
-        return sibling
+    let desktop = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop")
+    for base in [bundleParent, desktop] {
+        for name in ["ember", "claude-devtools-lite"] {
+            let dir = base.appendingPathComponent(name)
+            if FileManager.default.fileExists(atPath: dir.appendingPathComponent("server.py").path) {
+                return dir
+            }
+        }
     }
-    return FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Desktop/claude-devtools-lite")
+    return desktop.appendingPathComponent("claude-devtools-lite")
 }
 
 func serverUp() -> Bool {
@@ -103,7 +108,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDe
                                 width: w, height: h),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false)
-        window.title = "Claude DevTools"
+        window.title = "Ember"
         window.minSize = NSSize(width: 900, height: 600)
         window.contentView = webView
         window.makeKeyAndOrderFront(nil)
@@ -112,7 +117,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDe
         if !serverHoldsToken(token) {
             let a = NSAlert()
             a.messageText = "Another program is answering on port \(PORT)"
-            a.informativeText = "It is not your claude-devtools server, so the app will not send it your access token. Quit whatever uses the port, or set PORT to another value."
+            a.informativeText = "It is not your Ember server, so the app will not send it your access token. Quit whatever uses the port, or set PORT to another value."
             a.runModal()
             NSApp.terminate(nil)
             return
@@ -191,7 +196,7 @@ app.delegate = delegate
 let mainMenu = NSMenu()
 let appItem = NSMenuItem(); mainMenu.addItem(appItem)
 let appMenu = NSMenu()
-appMenu.addItem(withTitle: "Quit Claude DevTools",
+appMenu.addItem(withTitle: "Quit Ember",
                 action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 appItem.submenu = appMenu
 let editItem = NSMenuItem(); mainMenu.addItem(editItem)

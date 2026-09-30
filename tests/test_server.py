@@ -1,4 +1,4 @@
-"""Regression tests for claude-devtools-lite's server.
+"""Regression tests for Ember's server.
 
 Run:  python3 -m pytest tests/ -q
 Covers the JSONL parsing invariants (usage dedup, tool pairing, sidechains,
@@ -1235,6 +1235,149 @@ def test_viz_missing_override_dir_returns_empty():
     d = Path.home() / ".cdl-test-gone-viz"
     files, where = srv.viz_list(str(d))
     assert files == [] and where == d
+
+
+def test_viz_retries_interrupted_scan_without_duplicates(tmp_path, monkeypatch):
+    """An interruption after one result restarts with an empty accumulator."""
+    f = tmp_path / "figure.png"
+    f.write_bytes(b"image")
+    monkeypatch.setattr(srv, "VIZ_DIR", tmp_path)
+    calls = []
+
+    def interrupted(path):
+        calls.append(path)
+        yield f
+        if len(calls) == 1:
+            raise InterruptedError(4, "Interrupted system call")
+
+    monkeypatch.setattr(Path, "iterdir", interrupted)
+    files, where = srv.viz_list()
+    assert where == tmp_path and len(calls) == 2
+    assert [x["name"] for x in files] == ["figure.png"]
+
+
+def test_viz_persistent_interruption_stops_retrying(tmp_path, monkeypatch):
+    monkeypatch.setattr(srv, "VIZ_DIR", tmp_path)
+    calls = []
+
+    def interrupted(path):
+        calls.append(path)
+        raise InterruptedError(4, "Interrupted system call")
+
+    monkeypatch.setattr(Path, "iterdir", interrupted)
+    with pytest.raises(InterruptedError):
+        srv.viz_list()
+    assert len(calls) == 2
+
+
+@posix_only
+def test_terminal_backpressure_has_deadline(monkeypatch):
+    """A real PTY with nobody draining input must not hold an HTTP thread."""
+    import tty
+    master, slave = srv.pty.openpty()
+    tty.setraw(slave)
+    os.set_blocking(master, False)
+    t = srv.PosixTerm.__new__(srv.PosixTerm)
+    t.fd, t.alive, t._finished = master, True, False
+    t.cond, t._write_lock = threading.Condition(), threading.Lock()
+    t.WRITE_TIMEOUT = 0.1
+    start = time.monotonic()
+    try:
+        with pytest.raises(TimeoutError):
+            t.write(b"x" * 2_000_000)
+        assert time.monotonic() - start < 1.0
+        assert not t._write_lock.locked()
+    finally:
+        os.close(master)
+        os.close(slave)
+
+
+@posix_only
+def test_terminal_slow_reader_gets_whole_paste():
+    """The deadline counts time without progress, not total time: a child
+    draining slowly must receive a paste that takes longer than the timeout."""
+    import tty
+    master, slave = srv.pty.openpty()
+    tty.setraw(slave)
+    os.set_blocking(master, False)
+    t = srv.PosixTerm.__new__(srv.PosixTerm)
+    t.fd, t.alive, t._finished = master, True, False
+    t.cond, t._write_lock = threading.Condition(), threading.Lock()
+    t.WRITE_TIMEOUT = 0.3
+    paste, got = b"y" * 16_384, bytearray()
+
+    def drain():                    # ~1 KB per 50 ms: ~0.8 s for the whole paste
+        while len(got) < len(paste):
+            got.extend(os.read(slave, 1024))
+            time.sleep(0.05)
+
+    reader = threading.Thread(target=drain, daemon=True)
+    reader.start()
+    start = time.monotonic()
+    try:
+        t.write(paste)
+        assert time.monotonic() - start > t.WRITE_TIMEOUT
+        reader.join(2)
+        assert bytes(got) == paste
+    finally:
+        os.close(master)
+        os.close(slave)
+
+
+@posix_only
+def test_terminal_partial_writes_and_transient_readiness(monkeypatch):
+    t = srv.PosixTerm.__new__(srv.PosixTerm)
+    t.fd, t.alive, t._finished = 123, True, False
+    t.cond, t._write_lock = threading.Condition(), threading.Lock()
+    got, calls = bytearray(), []
+    monkeypatch.setattr(srv.select, "select", lambda *args: ([], [123], []))
+
+    def partial(fd, data):
+        calls.append(1)
+        if len(calls) == 2:
+            raise BlockingIOError()
+        if len(calls) == 3:
+            raise InterruptedError()
+        got.extend(data[:2])
+        return min(2, len(data))
+
+    monkeypatch.setattr(srv.os, "write", partial)
+    t.write(b"abcdefg")
+    assert got == b"abcdefg"
+    t._finished = True
+    with pytest.raises(BrokenPipeError):
+        t.write(b"must not reach a recycled fd")
+    assert got == b"abcdefg"
+
+
+@posix_only
+def test_nonblocking_terminal_still_exchanges_input_and_output():
+    """Exercise the real reader pump after making the PTY nonblocking."""
+    t = srv.PosixTerm(["/bin/sh", "-c", 'read line; printf "received:%s\\n" "$line"'], "/tmp")
+    try:
+        t.write(b"hello\n")
+        deadline = time.monotonic() + 3
+        with t.cond:
+            while b"received:hello" not in t.buf and time.monotonic() < deadline:
+                t.cond.wait(0.05)
+            assert b"received:hello" in t.buf
+    finally:
+        t.close_gracefully(grace=0.1)
+
+
+@pytest.mark.parametrize("error, status", [(TimeoutError("blocked"), 504),
+                                          (BrokenPipeError("closed"), 410)])
+def test_terminal_input_http_reports_failure(http_server, monkeypatch, error, status):
+    class FailedTerm:
+        def write(self, data):
+            raise error
+
+    monkeypatch.setattr(srv, "TERMS", {"failed": FailedTerm()})
+    code, body = fetch(http_server + "/api/term/input", method="POST",
+                       headers={"X-Devtools-Token": "a" * 48,
+                                "Content-Type": "application/json"},
+                       body=json.dumps({"id": "failed", "data": "eA=="}).encode())
+    assert code == status and str(error) in json.loads(body)["error"]
 
 
 def test_non_command_hooks_are_named_by_type():

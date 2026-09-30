@@ -1,32 +1,61 @@
-# claude-devtools-lite
+<p align="center">
+  <img src="docs/assets/ember-banner.svg" alt="Ember — a workspace for Claude Code" width="100%">
+</p>
 
-A local dashboard for inspecting **Claude Code** sessions — timelines, thinking blocks,
-tool calls, diffs, token usage, subagents, and memory — with an **embedded terminal**,
-a **live plan checklist**, a **file explorer**, and a **visual output pane**, laid out
+<p align="center">
+  <a href="https://github.com/PierreBeaucoral/ember/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/PierreBeaucoral/ember/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="Version 1.0.0" src="https://img.shields.io/badge/version-1.0.0-dd876d">
+  <img alt="Python 3.9+" src="https://img.shields.io/badge/python-3.9%2B-3776ab?logo=python&logoColor=white">
+  <img alt="Zero dependencies" src="https://img.shields.io/badge/dependencies-0-2ea44f">
+  <img alt="macOS | Linux | Windows" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey">
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-blue"></a>
+</p>
+
+<p align="center">
+  <b>Your Claude Code sessions, a real terminal, your plan and your token budget: one local window.</b><br>
+  <sub>Formerly <code>claude-devtools-lite</code>. Same repo, new name; old links redirect.</sub>
+</p>
+
+<p align="center">
+  <a href="#install-and-run">Install</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#optional-add-ons">Add-ons</a> ·
+  <a href="#usage">Usage</a> ·
+  <a href="#security">Security</a>
+</p>
+
+---
+
+Ember is a local dashboard for **Claude Code** sessions (timelines, thinking blocks,
+tool calls, diffs, token usage, subagents, memory) with an **embedded terminal**,
+a **live plan checklist**, a **file explorer** and a **visual output pane**, laid out
 like RStudio.
 
 It reads your transcripts **read-only** and runs entirely on your machine.
-**No dependencies, no build step, no API keys, no telemetry** — one Python file, one HTML
-file, and the Python standard library. Works on **macOS, Linux, and Windows**.
+**No dependencies, no build step, no API keys, no telemetry.** It is one Python file,
+one HTML file and the Python standard library, and it runs on **macOS, Linux and Windows**.
 
-```
-┌────────────┬───────────────────────────┬──────────────────┐
-│            │  SESSION                  │  TOKEN USE       │
-│  projects  │  prompts, thinking,       │  5h block, P90   │
-│  sessions  │  tool calls, diffs        │  limit, sparkline│
-│  search    │                           ├──────────────────┤
-│  memory    │                           │  PLAN / CONFIG   │
-│            ├───────────────────────────┤  checklist, what │
-│            │                           │  ~/.claude costs │
-│            │  TERMINAL                 ├──────────────────┤
-│            │  real claude CLI / shell  │  VIZ / FILES     │
-│            │  tabs, resume a session   │  charts, graphs, │
-│            │                           │  file explorer   │
-└────────────┴───────────────────────────┴──────────────────┘
+```bash
+git clone https://github.com/PierreBeaucoral/ember.git && cd ember && python3 server.py
 ```
 
-Every pane can be **maximized (⛶)** or **resized by dragging** the splitters; the layout
-is saved between sessions.
+<p align="center">
+  <img src="docs/assets/layout.svg" alt="Ember layout: sidebar, session timeline above the terminal, token use, plan and viz panes on the right" width="100%">
+</p>
+
+Every pane can be **maximized (⛶)** or **resized by dragging** the splitters, and the layout
+is saved between sessions. The coral accent marks navigation, focus and activity; diff,
+warning and success colors keep their own meanings. **Ember Dark** and **Ember Light**
+join the eight classic editor themes.
+
+| | |
+|---|---|
+| 🔍 **See what really happened** | Every prompt, thinking block, tool call and diff, plus context-window compaction |
+| ⌨️ **Jump back in** | `claude --resume` any session in an embedded PTY terminal, up to 6 tabs |
+| ✅ **Shared plan** | `.claude/plan.md` as a live checklist that you and Claude both tick |
+| 📊 **Know your budget** | 5-hour block, 7-day usage, P90 limit estimate, per-model breakdown |
+| 🧩 **Know your context tax** | What every agent, skill, rule and MCP server in `~/.claude` costs per turn |
+| 🖼️ **See the output** | Figures Claude writes to `$CLAUDE_DEVTOOLS_VIZ_DIR` render within 5 s |
 
 ## Why
 
@@ -86,6 +115,10 @@ into any session in an embedded terminal.
   `CTRL_CLOSE_EVENT` on Windows) so Claude Code's `SessionEnd` hooks run before exit
 - Terminal tabs **survive a page reload**: the page re-attaches to running shells and
   replays their scrollback
+- On macOS/Linux, terminal writes stop after 2 seconds if the child is not accepting
+  input. Failed input pauses typing and discards queued keystrokes; check for partially
+  delivered text before choosing **Resume typing**. Unanswered input requests time out
+  in the interface after 10 seconds. Discarded text is never replayed automatically.
 - Text is kept readable in every theme, including Claude Code's own truecolor diff
   output on light backgrounds
 - With the optional *Live activity* add-on, the sidebar shows what each session is
@@ -101,7 +134,7 @@ into any session in an embedded terminal.
   Ctrl+1–5 focus a pane, ⌘⇧M maximizes it
 - A **status bar** shows the connection, project, terminal, plan progress and 5-hour
   usage at a glance; each segment jumps to its pane
-- All eight themes meet WCAG AA contrast; notifications are announced to screen readers
+- All ten themes meet WCAG AA contrast; notifications are announced to screen readers
 
 **Plan pane**
 - A third right-hand quadrant showing the project's plan as a **live checklist**.
@@ -149,6 +182,9 @@ into any session in an embedded terminal.
 - A watched folder: any `.html`, `.png`, `.svg`, `.md`, `.pdf`, `.csv` written there
   appears within 5 seconds and renders automatically. Tell a running Claude session
   *"write the chart to $CLAUDE_DEVTOOLS_VIZ_DIR"* and watch it appear.
+- Interrupted folder scans are retried once, with one scan in flight per page.
+  Persistent failures show a warning while keeping the last preview visible; the
+  warning clears after a successful refresh.
 - Projects with a [graphify](https://github.com/anthropics/skills) knowledge graph
   (`graphify-out/graph.html`) display it automatically; projects without one are asked
   whether to build one (**Build graph** launches the skill), and **Don't ask again for
@@ -177,8 +213,8 @@ into any session in an embedded terminal.
   example one Claude just wrote)
 
 **Themes**
-- **◐** in the sidebar switches the whole app, terminal included: GitHub Dark (default),
-  GitHub Light, Solarized Dark / Light, Dracula, Monokai, Tomorrow Night, Cobalt — the
+- **◐** in the sidebar switches the whole app, terminal included: Ember Dark (default),
+  Ember Light, GitHub Dark / Light, Solarized Dark / Light, Dracula, Monokai, Tomorrow Night, Cobalt — the
   editor themes RStudio users know. The choice is remembered per browser
 - Claude Code picks its own colours: with a light theme here, run `/theme light` there
 
@@ -230,8 +266,8 @@ It also opens by itself at launch while something is missing; tick
 Requires **Python 3.9+** and an existing Claude Code installation (`~/.claude`).
 
 ```bash
-git clone https://github.com/PierreBeaucoral/claude-devtools-lite.git
-cd claude-devtools-lite
+git clone https://github.com/PierreBeaucoral/ember.git
+cd ember
 python3 server.py
 ```
 
@@ -254,7 +290,7 @@ this for you:
 bash packaging/macos/build-app.sh
 ```
 
-Builds `Claude DevTools.app` — a native window (WebKit wrapper, ~90 KB, no Electron)
+Builds `Ember.app` — a native window (WebKit wrapper, no Electron)
 with a Dock icon and ⌘Q. Drag it to `/Applications`. It starts the server if needed and
 never spawns a duplicate.
 
@@ -264,7 +300,7 @@ never spawns a duplicate.
 launchers/linux/install.sh
 ```
 
-Adds "Claude DevTools" to your application menu (per-user, no `sudo`). Opens an app-mode
+Adds "Ember" to your application menu (per-user, no `sudo`). Opens an app-mode
 browser window (Chrome/Chromium/Brave/Edge) or your default browser. Full feature parity
 with macOS.
 
@@ -277,7 +313,7 @@ powershell -ExecutionPolicy Bypass -File launchers\windows\install.ps1
 Creates Desktop and Start-menu shortcuts with the app's own icon
 (`launchers\windows\claude-devtools.ico`; re-run the script to refresh existing
 shortcuts), or double-click
-`launchers\windows\Claude DevTools.cmd`.
+`launchers\windows\Ember.cmd`. The old `Claude DevTools.cmd` still forwards to Ember.
 
 The embedded terminal works on **Windows 10 1809+** through ConPTY, driven via `ctypes`
 — still no third-party packages. Verify it on your machine:
@@ -288,6 +324,28 @@ python tools\selftest_windows.py
 
 On older Windows builds the server detects the missing API, explains it in the terminal
 pane, and everything else keeps working.
+
+### Updating from Claude DevTools
+
+Rebuild the macOS app or rerun your platform's installer to refresh its name and icon.
+On macOS, use the newly built `Ember.app` in place of `Claude DevTools.app`; the build
+does not remove your old app. Windows installation replaces this checkout's old
+shortcuts; Linux updates the existing desktop entry.
+
+Saved themes are preserved. Choose **◐ → Ember Dark** or **Ember Light** to adopt the
+new palette. Existing data directories, authentication, browser preferences and
+`CLAUDE_DEVTOOLS_*` environment variables keep their original identifiers for
+compatibility; no session migration is needed.
+
+The repository moved from `claude-devtools-lite` to `ember`, and GitHub redirects the
+old URL. To point an existing clone at the new name:
+
+```bash
+git remote set-url origin https://github.com/PierreBeaucoral/ember.git
+```
+
+You don't need to rename the folder: the launchers look for `ember/` first and then
+fall back to `claude-devtools-lite/`.
 
 ## Usage
 
@@ -322,9 +380,9 @@ Add this to your `~/.claude/CLAUDE.md` so sessions launched from the terminal pa
 their visual output to the viz inbox on their own:
 
 ```markdown
-## claude-devtools-lite UI awareness
+## Ember UI awareness
 
-When `CLAUDE_DEVTOOLS_UI=1` is set, this session runs inside the claude-devtools-lite
+When `CLAUDE_DEVTOOLS_UI=1` is set, this session runs inside the Ember
 dashboard. To show the user a visual output (figure, chart, HTML report), also write a
 self-contained file into `$CLAUDE_DEVTOOLS_VIZ_DIR` — it renders automatically in the
 Viz pane. Prefer inline-only `.html`, `.png`, or `.svg`, with descriptive filenames.
@@ -368,6 +426,12 @@ The dashboard can spawn shells, so it is built to be safe on a shared machine:
 server prints a warning if you try.
 
 ## Development
+
+The canonical icon geometry and colors live in `packaging/macos/make_icon.py`.
+After editing the mark, run `python3 packaging/macos/make_icon.py --sync` (requires
+Pillow) to regenerate the Linux SVG, Windows ICO, favicon, and in-app mark together.
+The macOS builder uses the same generator for its ICNS. The shipped assets need no
+extra runtime dependencies. Legacy platform asset filenames are intentional.
 
 ```bash
 python3 -m pytest tests/ -q      # server suite (also run by CI on macOS, Linux, Windows)
