@@ -9,7 +9,8 @@ answers, check it holds our token, open the dashboard with a one-time login
 code, and on close stop the server gracefully — only if this window started
 it. With "At launch, open: browser" (palette), or when no web view is
 available, the default browser gets the login link instead and the server
-keeps running (⏻ in the page stops it).
+keeps running (⏻ in the page stops it); in the latter case the reason is
+shown and kept in window.log.
 
 The frozen executable is also the server and the Claude Code tees:
     Ember --server [--port N]          what the window starts
@@ -106,12 +107,59 @@ def shutdown_server():
         pass
 
 
-def have_webview():
+def webview_error():
+    """None when pywebview imports, else the exception saying why not."""
     try:
         import webview  # noqa: F401
-        return True
-    except Exception:           # ImportError, or a broken GUI backend
-        return False
+        return None
+    except Exception as e:      # ImportError, or a broken GUI backend
+        return e
+
+
+def have_webview():
+    return webview_error() is None
+
+
+def unblock_bundle():
+    """Files extracted from a downloaded zip carry Windows' "from the
+    internet" mark (a Zone.Identifier stream), and .NET Framework refuses to
+    load a marked assembly (HRESULT 0x80131515): pythonnet's Python.Runtime.dll
+    and WebView2's DLLs failed, so the window fell back to the browser. Clear
+    the mark on the bundle's own binaries, as Properties → Unblock does; the
+    user already chose to run Ember.exe. Returns how many were cleared."""
+    if os.name != "nt" or not FROZEN:
+        return 0
+    n = 0
+    for root, _, files in os.walk(Path(sys.executable).parent):
+        for f in files:
+            if f.lower().endswith((".dll", ".pyd", ".exe")):
+                try:
+                    os.remove(os.path.join(root, f) + ":Zone.Identifier")
+                    n += 1
+                except OSError:     # no mark, or a read-only install
+                    pass
+    return n
+
+
+def browser_instead(url, err):
+    """No window (pywebview missing, no WebView2 runtime, .NET refusing its
+    DLLs…): open the browser, and say why: a windowed exe has no stderr, so
+    the reason used to vanish. Details go to window.log in the data dir."""
+    import traceback
+    detail = "".join(traceback.format_exception(type(err), err, err.__traceback__))
+    log = server.APP_DIR / "window.log"
+    try:
+        log.write_text(time.strftime("%Y-%m-%d %H:%M:%S ") + detail, encoding="utf-8")
+    except OSError:
+        pass
+    print(f"no web view ({err}); opening the browser instead", file=sys.stderr)
+    webbrowser.open(url)        # the server stays up for the browser tab
+    if os.name == "nt":
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(
+            None, "Ember could not open its own window, so it opened your browser "
+            f"instead.\n\n{type(err).__name__}: {err}\n\nDetails: {log}", "Ember", 0x30)
+    return 0
 
 
 def fail(msg):
@@ -148,9 +196,13 @@ def open_app():
     except (OSError, ValueError, KeyError) as e:
         return fail(f"Could not log in to Ember's server: {e}")
 
-    if server.open_in() == "browser" or not have_webview():
+    if server.open_in() == "browser":
         webbrowser.open(url)        # the server stays up for the browser tab
         return 0
+    unblock_bundle()
+    err = webview_error()
+    if err:
+        return browser_instead(url, err)
 
     import webview
     # target=_blank (transcript links, "Open in browser") → default browser
@@ -162,9 +214,7 @@ def open_app():
         # a persistent profile: themes and layout live in localStorage
         webview.start(private_mode=False, storage_path=str(server.APP_DIR / "webview"))
     except Exception as e:      # e.g. no WebView2 runtime, no WebKitGTK
-        print(f"no web view ({e}); opening the browser instead", file=sys.stderr)
-        webbrowser.open(server.launch_url(PORT))
-        return 0
+        return browser_instead(server.launch_url(PORT), e)
     if started:
         shutdown_server()
     return 0

@@ -35,9 +35,10 @@ jobs:
       - run: python -m pip install pyinstaller pywebview
       - run: python packaging/pyinstaller/build.py
       - run: python tools/smoke_app.py frozen dist/Ember/Ember.exe
-      # the WebView2 window itself; informative (runner desktops vary)
+      # the WebView2 window itself, from files marked "downloaded from the
+      # internet" as in a user's unzipped copy (it used to fall back to the
+      # browser there); blocking: a release without its window is broken
       - run: python tools/smoke_app.py window dist/Ember/Ember.exe
-        continue-on-error: true
         timeout-minutes: 3
       - shell: pwsh
         run: Compress-Archive -Path dist/Ember -DestinationPath Ember-windows-x64.zip

@@ -73,23 +73,44 @@ into any session in an embedded terminal.
 **Session inspection**
 - Every project and session under `~/.claude/projects/`, with real working-directory
   paths (decoded from the transcripts, not the lossy folder slugs)
-- Full timeline: user prompts, assistant messages (rendered markdown), collapsible
-  **thinking** blocks, and every **tool call** paired with its result
+- **One card per turn**: each prompt is followed by a card that sums up what Claude did
+  (models, thinking / tool calls / messages / agents, errors, context size, wall time).
+  Inside, every step is **one line**: thinking with its first line, each tool call with its
+  argument, an estimated token count (`~1.2k`), a status dot and **how long the tool took**;
+  click a line to open it. The final answer stays readable in full under the card
+- **Skills, slash commands, hooks and API errors are named, not dumped**: a skill's
+  injected instructions become one `Skill /name ~11k` line instead of pages of text,
+  `/improve config audit` shows as a command, failed hooks (`SessionStart · exit 127`)
+  and API errors (`rate_limit`) show in red, and a message you typed while Claude was
+  working appears where it landed
 - **LaTeX renders as math** — `$$…$$`, `\[…\]`, `\(…\)` and `$…$` are typeset with
   KaTeX, so derivations and estimators read like a paper, not like source. Prices
   (`$5`) and shell variables (`$HOME`) are left alone
 - **Markdown tables render as tables**, including the ragged ones Claude often emits
   (a `|---|---|` line shorter than its own header); math inside cells is typeset too
-- **Subagents appear where they were launched**: each `Task` call carries an expandable
-  card showing the agent type, its task, whether it failed, and what it cost — entries,
-  tool calls, output tokens, peak context, wall time. Expanding nests the agent's
-  transcript inline, fetched on demand, so you keep your place in the parent session
+- **Subagents appear where they were launched**: each `Task` call is a coloured row with
+  the agent type, model, outcome and cost (peak context, tool calls, wall time) before
+  you open it. Opening shows its prompt, its result and the execution trace (the agent's
+  own steps as lines, fetched on demand), so you keep your place in the parent session
+- **What is in the context window**: a *Context +N* badge on each turn lists what that
+  turn added (CLAUDE.md and rules files, the skill list, MCP instructions, @-files, tool
+  output, thinking), and the **◧ context** panel shows the window as of the last request,
+  by source, with ~token estimates, links to the turn, and how much of the real context
+  the transcript does not account for (tool schemas, framing)
+- **Prompt cache timer**: the session header counts down how long the prompt cache stays
+  warm (5 min or 1 h, read from the transcript) and warns when the next prompt will
+  re-write the whole context to cache
 - **Real diffs** for `Edit`/`Write` calls, rendered from the recorded patch hunks
-- **Context-window chart**: one bar per API request, with automatic **compaction
-  detection** (red bars where the context dropped sharply)
-- Token totals per session, deduplicated by request ID, plus a tool-call histogram
-- **Subagent transcripts** open in the same viewer, and the header chips are named by
-  agent type rather than uuid
+- **Context-window chart**: one bar per API request, stacked into cache read, cache
+  write and uncached input, with automatic **compaction detection** (red bars where the
+  context dropped sharply). **Click a bar to jump to that turn** in the timeline
+- Token totals per session, deduplicated by request ID, plus a tool-call histogram whose
+  chips are clickable: each click jumps to the next call of that tool. **errors / agents /
+  skills** chips (and the keys **e**, **a**, **s**; **j**/**k** for turns) jump the same way,
+  and each turn has a **link** you can paste to reopen the session at that turn
+- Sessions that ended on an **API error** (rate limit, expired login) say so in the sidebar
+- **Subagent transcripts** open in the same viewer; agents not launched from the
+  timeline (teammates, older layouts) get a header link named by agent type
 - **The sidebar filters as you type** (project paths, and session titles in opened
   projects); **Enter** runs the full-text search — in the open project first (fast), with
   one click to widen to every project — and it covers **subagent transcripts** too.
@@ -97,12 +118,17 @@ into any session in an embedded terminal.
 - **Live-follow**: a session that is still being written updates in place every few
   seconds (● live), scrolling with it only if you were at the bottom
 - Reopening a session is instant: the parsed transcript is cached until the file changes
-- Project **memory** files rendered in place
+- Project **memory** files rendered in place: front matter as a type badge and
+  description, and `[[name]]` / `[text](file.md)` links that open the linked memory file.
+  A **memory check** lists files missing from the `MEMORY.md` index, files without
+  name/description/type front matter, and links to memories not written yet
 - Big transcripts (20 MB+, thousands of entries) load lazily and stay responsive
 
 **Token usage**
 - Current 5-hour block with reset countdown, output tokens today and over 7 days,
   an hourly sparkline, and a by-model breakdown
+- **History**: a 30 / 90 / 180-day calendar heatmap of output tokens per day, with the
+  split by project and by model
 - **Official limits**, with the optional *Live limits* add-on: Claude Code's own 5-hour
   and 7-day usage %, their reset times, and the session's context % and cost, taken from
   the data Claude Code hands its statusline (your existing statusline keeps working)
@@ -340,7 +366,11 @@ no Python or anything else to install. Each app opens Ember in its own window.
   with a download link when there is one. Nothing installs by itself. **Check for
   updates** and **Turn off the daily update check** are in the palette
 - The Windows window uses Edge WebView2, part of Windows 10 and 11. The Linux window uses
-  WebKitGTK; where it is missing, the app opens your browser instead
+  WebKitGTK; where it is missing, the app opens your browser instead and says why (the
+  details are kept in `window.log` in Ember's data folder)
+- Only the downloaded app (`Ember.exe`, `Ember`, `Ember.app`) opens its own window. Run
+  from source (`Ember.cmd`, the `install.ps1` shortcuts, `python server.py`), Ember opens
+  in a browser window: Edge or Chrome in app mode, else your default browser
 - Intel Macs: build the app from source (below), which builds for the Mac it runs on
 - Keep the app where you first open it: the Live limits, Live activity and Session
   guards add-ons point Claude Code at it. After moving it, tick them again in 🧩
@@ -404,6 +434,9 @@ Creates Desktop and Start-menu shortcuts with the app's own icon
 (`launchers\windows\claude-devtools.ico`; re-run the script to refresh existing
 shortcuts), or double-click
 `launchers\windows\Ember.cmd`. The old `Claude DevTools.cmd` still forwards to Ember.
+These open Ember in a browser window (Edge or Chrome in app mode). For Ember's own
+window, use `Ember.exe` from the [release zip](https://github.com/PierreBeaucoral/ember/releases/latest)
+— and replace the old shortcuts, which still point at the browser launcher.
 
 The embedded terminal works on **Windows 10 1809+** through ConPTY, driven via `ctypes`
 — still no third-party packages. Verify it on your machine:

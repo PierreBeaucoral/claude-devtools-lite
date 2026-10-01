@@ -70,7 +70,7 @@
   .tabs { display:flex; gap:4px; align-items:center; flex:none; }
   .qbody { flex:1; overflow-y:auto; padding:10px 12px; font-size:12.5px; min-height:0; }
   .maxbtn { flex:none; }
-  #main { flex:1; overflow-y:auto; min-height:0; padding:0 0 30px 0; }
+  #main { flex:1; overflow-y:auto; min-height:0; padding:0 0 30px 0; container-type:inline-size; }
 
   #topbar { padding:10px 12px; border-bottom:1px solid var(--border); }
   .ember-mark { display:inline-block; width:34px; height:34px; flex:none;
@@ -124,8 +124,29 @@
   /* chart */
   #chart { padding:10px 20px 0; }
   #chart svg { width:100%; height:110px; display:block; }
-  .cbar { fill:var(--bar); } .cbar:hover { fill:var(--accent); }
-  .cbar.compact { fill:var(--err); }
+  .cbar { fill:var(--bar); cursor:pointer; outline:none; }
+  .cbar .hit { fill:transparent; }
+  .cbar .s-read { opacity:.45; } .cbar .s-in { fill:var(--think); }
+  .cbar:hover rect:not(.hit), .cbar:focus-visible rect:not(.hit) { fill:var(--accent); opacity:1; }
+  .cbar.compact rect:not(.hit) { fill:var(--err); }
+  .chip[data-tool], .chip[data-nav] { cursor:pointer; font-family:inherit; }
+  .chip[data-tool]:hover, .chip[data-nav]:hover { color:var(--fg); border-color:var(--accent); }
+  .chip.nav { color:var(--fg); } .chip.nav.error { color:var(--err); border-color:color-mix(in srgb, var(--err) 50%, var(--border)); }
+  .cachet { margin-left:8px; font-family:var(--mono); }
+  .cachet.warm { color:var(--ok); } .cachet.soon { color:var(--tool); } .cachet.cold { color:var(--dim); }
+  .keyhint { margin-left:auto; opacity:.85; }
+  .apierr { color:var(--err); }
+  .memfm { display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; margin:0 0 10px;
+           padding:6px 10px; border:1px solid var(--border); border-radius:6px;
+           background:var(--panel); font-size:12px; color:var(--dim); }
+  .memfm b { color:var(--fg); }
+  a.memref { color:var(--accent); cursor:pointer; text-decoration:underline dotted; }
+  .memref.missing { color:var(--dim); cursor:help; }
+  .memlint { margin:12px 0; padding:8px 12px; border:1px solid var(--border); border-radius:8px;
+             background:var(--panel); font-size:12.5px; line-height:1.6; }
+  .memlint.warn { border-left:3px solid var(--tool); }
+  .memlint .mlhead { font-weight:600; color:var(--fg); }
+  .memlint .dim { color:var(--dim); }
   #chartlabel { color:var(--dim); font-size:11px; padding:2px 20px 0; }
 
   /* timeline */
@@ -153,11 +174,109 @@
   /* timeline filters flip one class on #timeline (no per-entry loops) */
   #timeline.hideThink .entry.thinking, #timeline.hideTools .entry.tool,
   #timeline.hideSys .entry.command, #timeline.hideSys .entry.system,
-  #timeline.hideAgents .agentcard { display:none; }
+  #timeline.hideSys .entry.sysish, #timeline.hideAgents .agentcard { display:none; }
   .collapsible > .body { display:none; }
   .collapsible.openx > .body { display:block; }
   .caret { transition:transform .12s; display:inline-block; }
-  .openx .caret { transform:rotate(90deg); }
+  .openx > .head > .caret, .openx > .achead > .caret { transform:rotate(90deg); }
+
+  .histdlg { width:min(820px, 94vw); max-height:88vh; overflow:auto; padding:14px 18px 16px; }
+  .hhead { display:flex; align-items:center; gap:10px; }
+  .hhead h3 { margin:0; font-size:15px; flex:1; }
+  .hrange { display:flex; gap:6px; }
+  .hrange .copy[aria-pressed="true"] { color:var(--accent); border-color:var(--accent); }
+  .hstats { display:flex; gap:10px; flex-wrap:wrap; margin:12px 0 8px; }
+  .hgridwrap { overflow-x:auto; padding:2px 0; }
+  .hgrid text { fill:var(--dim); font-size:9px; }
+  .hl0 { fill:var(--panel2); background:var(--panel2); } .hl1 { fill:color-mix(in srgb, var(--accent) 30%, var(--panel2)); background:color-mix(in srgb, var(--accent) 30%, var(--panel2)); }
+  .hl2 { fill:color-mix(in srgb, var(--accent) 55%, var(--panel2)); background:color-mix(in srgb, var(--accent) 55%, var(--panel2)); }
+  .hl3 { fill:color-mix(in srgb, var(--accent) 78%, var(--panel2)); background:color-mix(in srgb, var(--accent) 78%, var(--panel2)); }
+  .hl4 { fill:var(--accent); background:var(--accent); }
+  .hlegend { display:flex; align-items:center; gap:3px; color:var(--dim); font-size:11px; margin:4px 0 12px; }
+  .hlegend i { width:11px; height:11px; border-radius:2px; display:inline-block; }
+  .hcols { display:grid; grid-template-columns:2fr 1fr; gap:22px; }
+  @media (max-width: 640px){ .hcols { grid-template-columns:1fr; } }
+  .hbar { display:grid; grid-template-columns:minmax(0, 1.2fr) 1fr auto; gap:8px; align-items:center; font-size:12px; padding:2px 0; }
+  .hbar > span:first-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .hbarbox { height:8px; background:var(--panel2); border-radius:4px; overflow:hidden; }
+  .hbarbox span { display:block; height:100%; background:var(--bar); }
+  .hbar b { font-family:var(--mono); font-size:11.5px; color:var(--accent); }
+  .hnote { color:var(--dim); font-size:11.5px; margin:12px 0 0; }
+  /* turns: one card per prompt (header, one-line rows, final answer) */
+  .turn { margin:12px 0 20px; }
+  .tcard { margin:8px 0; border:1px solid var(--border); border-radius:8px; background:var(--panel); }
+  .thead { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:6px 12px;
+           font-size:12px; color:var(--dim); cursor:pointer; border-radius:8px; }
+  .thead:hover { background:var(--panel2); }
+  .thead b { color:var(--ok); } .thead b.tstart { color:var(--dim); }
+  .tmodel { font-family:var(--mono); font-size:11px; color:var(--fg); }
+  .terr { color:var(--err); }
+  .tright { margin-left:auto; display:flex; gap:10px; align-items:center; font-family:var(--mono); font-size:11px; }
+  .tcard:not(.shut) > .thead .caret { transform:rotate(90deg); }
+  .tcard.shut > .trows, .tcard.shut > .ctxpop { display:none; }
+  .ctxbadge { background:color-mix(in srgb, var(--think) 16%, transparent); color:var(--think); cursor:pointer;
+              border:1px solid color-mix(in srgb, var(--think) 45%, transparent); border-radius:10px;
+              font:11px/1.6 -apple-system, "Segoe UI", sans-serif; padding:0 8px; }
+  .ctxpop { margin:0 12px 8px; padding:8px 10px; max-width:560px; font-size:12px;
+            border:1px solid var(--border); border-radius:6px; background:var(--bg); }
+  .cphead { font-weight:600; margin-bottom:4px; color:var(--fg); }
+  .cprow { display:flex; gap:8px; align-items:baseline; padding:1px 0; color:var(--dim); }
+  .cprow > span:first-child { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .cprow i { font-style:normal; font-size:10.5px; color:var(--dim); }
+  .cptok { font-family:var(--mono); font-size:11px; color:var(--tool); flex:none; }
+  .cptotal { border-top:1px solid var(--border); margin-top:4px; padding-top:4px; color:var(--fg); }
+  .cpjump { cursor:pointer; font-size:11px; text-decoration:underline dotted; flex:none; }
+  .trows { border-top:1px solid var(--border); padding:3px 0; }
+  .tcard .entry.row { margin:0; border:0; border-radius:0; background:transparent; overflow:visible; }
+  .tcard .entry.row > .head { padding:2px 12px 2px 14px; cursor:pointer; }
+  .tcard .entry.row > .head:hover { background:var(--panel2); }
+  .tcard .entry.row > .body { padding:2px 14px 10px 34px; }
+  .entry.row .tag { flex:none; font-size:11.5px; letter-spacing:0; }
+  .entry.row.meta .tag { color:var(--accent); }
+  .entry.row.user .tag { color:var(--user); }
+  .entry.row.hook .tag, .entry.row.error > .head .tag { color:var(--err); }
+  .rprev { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+           color:var(--fg); font-size:12.5px; }
+  .entry.row.thinking .rprev { color:var(--dim); font-style:italic; }
+  .entry.row.tool .rprev { font-family:var(--mono); font-size:12px; }
+  .rmeta { flex:none; display:flex; gap:9px; align-items:center; font-family:var(--mono);
+           font-size:11px; color:var(--dim); }
+  .rdot { width:6px; height:6px; border-radius:50%; background:var(--ok); display:inline-block; flex:none; }
+  .rdot.err { background:var(--err); } .rdot.none { background:var(--border-strong); }
+  .rdot.run { background:var(--tool); animation:rdotpulse 1.2s ease-in-out infinite; }
+  @keyframes rdotpulse { 50% { opacity:.25; } }
+  .rbar { display:flex; justify-content:flex-end; }
+  .entry.user.cmd .slash { color:var(--accent); font-size:1em; }
+  .flash { outline:2px solid var(--tool); outline-offset:-2px; }
+  .tcard .entry.row.agentcard { margin:3px 12px 3px 14px; border-radius:6px; overflow:hidden;
+    border:1px solid color-mix(in srgb, var(--hue) 30%, var(--border)); border-left:3px solid var(--hue);
+    background:color-mix(in srgb, var(--hue) 5%, transparent); }
+  .tcard .entry.row.agentcard.failed { border-left-color:var(--err); }
+  .agentcard .hue { width:9px; height:9px; border-radius:50%; background:var(--hue, var(--think)); flex:none; }
+  .agentcard .atag { color:var(--hue, var(--think)); font-size:11px; padding:0 6px; border-radius:4px;
+    border:1px solid color-mix(in srgb, var(--hue, var(--think)) 50%, transparent); }
+  .acmeta { font-size:12px; color:var(--dim); padding:6px 0; }
+  .acmeta b { color:var(--fg); font-weight:500; }
+  .acsec > summary { cursor:pointer; font-size:12px; color:var(--dim); padding:3px 0; }
+  .achtrace { font-size:11px; color:var(--dim); letter-spacing:.4px; text-transform:uppercase; margin:10px 0 2px; }
+  /* the visible-context panel sits beside the timeline, or above it when narrow */
+  #tlwrap { display:flex; align-items:flex-start; }
+  #tlwrap > #timeline { flex:1; min-width:0; }
+  #ctxpanel { flex:none; width:310px; position:sticky; top:8px; max-height:calc(100vh - 120px); overflow-y:auto;
+              margin:14px 14px 0 0; padding:10px 12px; font-size:12px;
+              border:1px solid var(--border); border-radius:8px; background:var(--panel); }
+  #ctxpanel[hidden] { display:none; }
+  @container (max-width: 900px){
+    #tlwrap { flex-direction:column-reverse; }
+    #ctxpanel { position:static; width:auto; max-height:none; margin:14px 20px 0; align-self:stretch; }
+  }
+  .cpanelhead { display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; }
+  .cpsum { color:var(--fg); margin-bottom:4px; }
+  .cpnote { color:var(--dim); font-size:11.5px; margin:4px 0; }
+  .cpcat { border-top:1px solid var(--border); padding:4px 0; }
+  .cpcat > summary { display:flex; gap:6px; cursor:pointer; font-weight:600; color:var(--fg); }
+  .cpcat > summary > span:first-child { flex:1; }
+  .cpn { color:var(--dim); font-weight:400; }
 
   .toolsum { font-family:var(--mono); font-size:12px; color:var(--fg);
              overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
@@ -220,10 +339,9 @@
   .agentcard .adesc { color:var(--dim); overflow:hidden; text-overflow:ellipsis;
                       white-space:nowrap; flex:1; min-width:60px; }
   .agentcard .caret { transition:transform .12s; }
-  .agentcard.openx .caret { transform:rotate(90deg); }
   .adot { width:6px; height:6px; border-radius:50%; flex:none; }
   .adot.ok { background:var(--ok); } .adot.err { background:var(--err); }
-  .astats { display:flex; gap:11px; flex:none; color:var(--dim); font-size:11px; }
+  .astats { display:flex; gap:11px; flex:none; align-items:center; color:var(--dim); font-size:11px; }
   .astats .cost { color:var(--tool); }
   .acbody { display:none; padding:2px 11px 10px; border-top:1px solid color-mix(in srgb, var(--think) 30%, var(--border)); }
   .agentcard.openx .acbody { display:block; }
@@ -504,7 +622,7 @@
   .copy:focus-visible, .ptab:focus-visible, .vtab:focus-visible, .ttab:focus-visible { outline-offset:2px; }
   /* rows sit flush against their neighbours: ring them inside */
   .proj:focus-visible, .sess:focus-visible, .memlink:focus-visible, .entry .head:focus-visible,
-  .achead:focus-visible, .cfgrow:focus-visible, .cfggroup:focus-visible, .plan-task:focus-visible,
+  .achead:focus-visible, .thead:focus-visible, .cfgrow:focus-visible, .cfggroup:focus-visible, .plan-task:focus-visible,
   .fname:focus-visible, .vizfile:focus-visible, .menu .mi:focus-visible, .sresult:focus-visible { outline:2px solid var(--focus); outline-offset:-2px; }
   .menu .mi:focus { background:var(--panel); color:var(--accent); outline-offset:-2px; }
   .fsrow .fact:focus-visible { outline-offset:1px; }
@@ -1310,7 +1428,7 @@ function renderTree(){
         el.setAttribute("aria-selected", on);
         const title = cleanTitle(s.title) || "(untitled session)";
         el.innerHTML = `<div class="t" title="${esc(title)}">${esc(title)}</div>
-          <div class="m">${fmtDate(s.mtime)} · ${fmtBytes(s.size)}${s.has_subagents?" · 🤖":""}</div>`;
+          <div class="m">${fmtDate(s.mtime)} · ${fmtBytes(s.size)}${s.has_subagents?" · 🤖":""}${s.api_error ? ` · <span class="apierr" title="the session ended on an API error: ${esc(s.api_error)}">● ${esc(s.api_error.replace(/_/g, " "))}</span>` : ""}</div>`;
         el.onclick = e => { e.stopPropagation(); openSession(p.slug, s.id); };
         child(el, "s:" + p.slug + "/" + s.id);
       }
@@ -1408,24 +1526,25 @@ async function restoreFromHash(){
   const h = location.hash;
   const p = (h.match(/[#&]p=([^&]+)/) || [])[1];
   const s = (h.match(/[#&]s=([^&]+)/) || [])[1];
+  const e = (h.match(/[#&]e=(\d+)/) || [])[1];         // a turn link
   if(!p) return;
   const slug = decodeURIComponent(p);
   await toggleProject(slug);
-  if(s) openSession(slug, decodeURIComponent(s));
+  if(s) openSession(slug, decodeURIComponent(s), null, e);
 }
 
 /* ---------- session view ---------- */
 // a slow reply must never paint over a newer click: each loader keeps a
 // sequence number and drops replies that are no longer the latest
 let openSeq = 0, fsSeq = 0;
-async function openSession(slug, id, findText){
+async function openSession(slug, id, findText, jump){
   const my = ++openSeq;
   state.active = slug+"/"+id; renderTree(); updateHash();
   showState($("#main"), "loading", "Parsing session…");
   try{
     const s = await api(`/api/session?project=${encodeURIComponent(slug)}&id=${encodeURIComponent(id)}`);
     if(my !== openSeq) return;
-    renderSession(s, {slug, id, find: findText});
+    renderSession(s, {slug, id, find: findText, jump});
   }catch(e){
     if(my === openSeq) showState($("#main"), "error", "Could not open this session: " + e.message,
                                  {label: "Retry", run: () => openSession(slug, id, findText)});
@@ -1459,8 +1578,136 @@ const statsHtml = t => `
       <div class="stat">cache read <b>${fmtTok(t.cache_read)}</b></div>
       <div class="stat">cache write <b>${fmtTok(t.cache_creation)}</b></div>
       <div class="stat">peak context <b>${fmtTok(t.peak_context)}</b></div>`;
-const chipsHtml = tc => Object.entries(tc||{}).sort((a,b)=>b[1]-a[1])
-  .map(([k,v])=>`<span class="chip">${esc(k)} ×${v}</span>`).join("");
+// errors / agents / skills first (jump chips), then the tool histogram
+const chipsHtml = s => Object.keys(NAVLAB).map(k => [k, s.entries.filter(NAV[k]).length]).filter(([, n]) => n)
+  .map(([k, n]) => `<button class="chip nav ${k}" data-nav="${k}" title="jump to the next one (key ${k[0]})">${NAVLAB[k]} ×${n}</button>`).join("")
+  + Object.entries(s.tool_counts||{}).sort((a,b)=>b[1]-a[1])
+  .map(([k,v])=>`<button class="chip" data-tool="${esc(k)}" title="jump to the next ${esc(k)} call">${esc(k)} ×${v}</button>`).join("");
+
+/* ---------- turns ----------------------------------------------------------
+   A turn is a prompt and everything Claude did until the next prompt. Each
+   renders as one card: a header that sums the turn up, one line per step
+   (opened on click, built on first open), and the final answer in full.
+   Pure helpers first (tests/test_frontend.js lifts them). */
+const isPrompt = e => (e.kind === "user" && !e.queued && !/^\s*<system-reminder>/.test(e.text || ""))
+                   || (e.kind === "command" && !!e.cmd);
+function groupTurns(entries){
+  const turns = [];
+  entries.forEach((e, i) => {
+    const p = isPrompt(e), last = turns[turns.length - 1];
+    if(!last || p) turns.push({start: i, end: i + 1, prompt: p ? i : null});
+    else last.end = i + 1;
+  });
+  return turns;
+}
+// index of the turn holding entry idx (turns are sorted by start)
+function turnOf(turns, idx){
+  let lo = 0, hi = turns.length - 1;
+  while(lo < hi){ const mid = (lo + hi + 1) >> 1; if(turns[mid].start <= idx) lo = mid; else hi = mid - 1; }
+  return lo;
+}
+const shortModel = m => String(m || "").replace(/^claude-/, "").replace(/-\d{8}$/, "")
+                                       .replace(/-(\d+)-(\d+)$/, "-$1.$2");
+// header numbers of one turn: counts, the final answer, models, tokens, time
+function turnInfo(s, t){
+  const c = {thinking: 0, tools: 0, messages: 0, agents: 0, errors: 0, final: -1};
+  let lastTool = -1;
+  for(let i = t.start; i < t.end; i++){
+    const e = s.entries[i];
+    if(e.kind === "thinking") c.thinking++;
+    else if(e.kind === "tool"){ c.tools++; lastTool = i;
+      if(e.agent_id) c.agents++; if(e.is_error) c.errors++; }
+    else if(e.kind === "assistant"){ if(e.api_error) c.errors++; else { c.messages++; c.final = i; } }
+    else if(e.kind === "hook") c.errors++;
+  }
+  if(c.final < lastTool) c.final = -1;        // tools ran after it: not an answer
+  const reqs = (s.context_series || []).filter(p => p.entry != null && p.entry >= t.start && p.entry < t.end);
+  c.models = [...new Set(reqs.map(p => shortModel(p.model)).filter(Boolean))];
+  c.out = reqs.reduce((a, p) => a + (p.output || 0), 0);
+  c.ctx = reqs.length ? reqs[reqs.length - 1].context : 0;
+  const t0 = Date.parse(s.entries[t.start].ts), t1 = Date.parse(s.entries[t.end - 1].ts);
+  c.secs = t1 > t0 ? (t1 - t0) / 1000 : 0;
+  return c;
+}
+
+/* ---------- context attribution --------------------------------------------
+   What entered the context window: attachment records one by one (the server
+   tags each with the timeline index it precedes), timeline entries grouped
+   by category. Token counts are ~4 chars/token estimates. */
+const CTX_CATS = [["system", "System prompt"], ["claude-md", "CLAUDE.md & rules"],
+  ["skills", "Skills"], ["mcp", "MCP & deferred tools"], ["agents", "Agents & reports"],
+  ["hooks", "Hook context"], ["mentions", "@-files"], ["user", "User messages"],
+  ["tools", "Tool calls & outputs"], ["text", "Thinking + text"], ["summary", "Compaction summary"]];
+const CTX_NAME = Object.fromEntries(CTX_CATS);
+function entryCat(e){
+  if(e.kind === "tool") return "tools";
+  if(e.kind === "thinking" || (e.kind === "assistant" && !e.api_error)) return "text";
+  if(e.kind === "user" || e.kind === "command") return "user";
+  if(e.kind === "meta") return {skill: "skills", agent: "agents", summary: "summary"}[e.sub] || "user";
+  return null;
+}
+function contextIn(s, a, b){
+  // the system prompt is snapshotted on every prompt: new only when it changed
+  let prev = null;
+  const items = (s.context || []).filter(x => {
+    if(x.cat === "system"){ const same = prev && prev.tok === x.tok; prev = x; if(same) return false; }
+    return x.entry >= a && x.entry < b;
+  });
+  const groups = {};
+  for(let i = a; i < b; i++){
+    const e = s.entries[i], cat = entryCat(e);
+    if(!cat || !e.tok) continue;
+    const g = groups[cat] || (groups[cat] = {cat, tok: 0, n: 0, entry: i});
+    g.tok += e.tok; g.n++;
+  }
+  const list = Object.values(groups);
+  return {items, groups: list,
+          tok: items.reduce((a, x) => a + x.tok, 0) + list.reduce((a, g) => a + g.tok, 0)};
+}
+// the window as of the last request: everything since the last compaction,
+// a re-sent attachment (CLAUDE.md after a compaction) counted once
+function visibleContext(s, turns){
+  let from = 0;
+  s.entries.forEach((e, i) => { if(e.kind === "compact" || (e.kind === "meta" && e.sub === "summary")) from = i; });
+  const latest = new Map();
+  for(const x of s.context || []) if(x.entry >= from) latest.set(x.cat + "\n" + x.label, x);
+  const cats = {};
+  const add = (cat, row) => { const c = cats[cat] || (cats[cat] = {cat, tok: 0, rows: []});
+                              c.tok += row.tok; c.rows.push(row); };
+  for(const x of latest.values()) add(x.cat, {label: x.label, scope: x.scope, tok: x.tok, entry: x.entry});
+  for(const t of turns){
+    if(t.end <= from) continue;
+    for(const g of contextIn(s, Math.max(t.start, from), t.end).groups)
+      add(g.cat, {turn: t, tok: g.tok, n: g.n, entry: g.entry});
+  }
+  const list = CTX_CATS.map(([k]) => cats[k]).filter(Boolean);
+  const series = s.context_series || [], last = series[series.length - 1];
+  return {cats: list, total: list.reduce((a, c) => a + c.tok, 0), real: last ? last.context : 0, from};
+}
+// first index from `start` on where the re-sent tail differs from what we had
+function firstChange(old, next, start){
+  const n = Math.min(old.length, next.length);
+  for(let i = start; i < n; i++) if(JSON.stringify(old[i]) !== JSON.stringify(next[i])) return i;
+  return n;
+}
+/* ---------- end of the pure turn helpers ---------- */
+
+const fmtDur = sec => sec < 1 ? (sec * 1000 | 0) + "ms" : sec < 60 ? (sec < 10 ? sec.toFixed(1) : Math.round(sec)) + "s"
+  : sec < 3600 ? `${Math.floor(sec / 60)}m ${Math.round(sec % 60)}s` : `${Math.floor(sec / 3600)}h ${Math.floor(sec / 60) % 60}m`;
+const firstLine = s => ((String(s || "").split("\n").map(x => x.trim()).find(Boolean)) || "")
+  .replace(/^[#>*\-\s]+/, "").replace(/[*_`]+/g, "").slice(0, 220);
+const tilde = n => n ? "~" + fmtTok(n) : "";
+
+// jump targets for the header chips and the j/k/e/a/s keys
+const NAV = {
+  error: e => (e.kind === "tool" && e.is_error) || e.kind === "hook" || !!e.api_error,
+  agent: e => e.kind === "tool" && !!e.agent_id,
+  skill: e => (e.kind === "meta" && e.sub === "skill") || (e.kind === "tool" && e.name === "Skill"),
+};
+const NAVLAB = {error: "⚠ errors", agent: "agents", skill: "skills"};
+
+let VIEW = null;                // the session or subagent on screen
+let CTX_PANEL = (() => { try{ return localStorage.getItem("ember-ctxpanel") === "1"; }catch(e){ return false; } })();
 
 function renderSession(s, ctx){
   LIVE = null;
@@ -1474,17 +1721,20 @@ function renderSession(s, ctx){
   head.innerHTML = `
     <h2>${esc(cleanTitle(s.title) || s.id)}
       ${!ctx.isAgent ? '<button class="copy termbtn" id="btnResume" style="font-size:12px;vertical-align:middle" title="claude --resume '+esc(s.id)+'">⌨ resume in CLI</button>' : ''}
-      <button class="copy termbtn" id="btnExport" style="font-size:12px;vertical-align:middle" title="save this session as one HTML file to share">⇩ export</button></h2>
+      <button class="copy termbtn" id="btnExport" style="font-size:12px;vertical-align:middle" title="save this session as one HTML file to share">⇩ export</button>
+      <button class="copy termbtn" id="btnCtx" style="font-size:12px;vertical-align:middle" aria-pressed="${CTX_PANEL}" title="what is in the context window, by source">◧ context</button></h2>
     <div class="meta">${esc(s.model||"")} · <span class="nent">${s.entries.length}</span> timeline entries
       ${s.sidechain_msgs? " · "+s.sidechain_msgs+" sidechain msgs":""}
-      <span class="live" hidden title="following this session: new entries appear as they are written">● live</span></div>
+      <span class="live" hidden title="following this session: new entries appear as they are written">● live</span>
+      <span class="cachet"></span></div>
     <div class="stats">${statsHtml(t)}</div>
-    <div class="chips">${chipsHtml(s.tool_counts)}</div>
+    <div class="chips">${chipsHtml(s)}</div>
     <div class="toggles">
       <label><input type="checkbox" id="tgThink" checked> thinking</label>
       <label><input type="checkbox" id="tgTools" checked> tool calls</label>
       <label><input type="checkbox" id="tgSys"> system / commands</label>
       <label><input type="checkbox" id="tgAgents" checked> agents</label>
+      <span class="keyhint" title="with the timeline focused">j/k turns · e errors · a agents · s skills (⇧ = back)</span>
     </div>`;
   mountHeader(head);
   head.querySelector("#btnExport").onclick = () => exportSession(s);
@@ -1493,62 +1743,58 @@ function renderSession(s, ctx){
     {project: ctx.slug, session: s.id,
      label: "resume · " + (projName(ctx.slug) || s.id.slice(0,8))});
 
+  const V = {s, ctx, head, depth: 0, turns: groupTurns(s.entries), turnEls: [], rendered: 0,
+             rows: new Map(), open: new Set(), shut: new Set(), navPos: {}};
+  VIEW = V;
+
   if((s.context_series||[]).length){
-    main.appendChild(renderChart(s.context_series));
+    main.appendChild(renderChart(s.context_series, i => jumpTo(V, i)));
     const lbl = document.createElement("div"); lbl.id="chartlabel";
-    lbl.textContent = "Context window per request (input + cache read + cache write). Red bars = probable compaction.";
+    lbl.textContent = "Context window per request: faint = cache read, solid = cache write, top = uncached input. Red = probable compaction. Click a bar to jump to that turn.";
     main.appendChild(lbl);
   }
 
-  if((s.subagents||[]).length){
-    // name the chips after the agent that ran, not its uuid — the Task calls in
-    // the timeline already carry the type and description
-    const byId = {};
-    for(const e of s.entries)
-      if(e.kind === "tool" && e.agent_id) byId[e.agent_id] = agentLabel(e);
+  // agents whose Task call is not in this timeline (teammates, older
+  // layouts) keep a header link; the others have their row where they ran
+  const launched = new Set(s.entries.filter(e => e.agent_id).map(e => agentFile(e.agent_id)));
+  const loose = (s.subagents || []).filter(a => !launched.has(a.file));
+  if(loose.length){
     const box = document.createElement("div");
     box.style.cssText = "padding:10px 20px 0";
-    box.innerHTML = `<span style="color:var(--dim);font-size:12px">subagents:</span> `;
-    for(const a of s.subagents){
-      const id = a.file.replace(/^agent-|\.jsonl$/g, "");
-      const lab = byId[id];
+    box.innerHTML = `<span style="color:var(--dim);font-size:12px">other subagents:</span> `;
+    for(const a of loose){
       const el = ctl(document.createElement("span"));
       el.className = "agentbox";
-      el.textContent = `🤖 ${lab ? lab.type : id} (${fmtBytes(a.size)})`;
-      el.title = lab ? lab.desc : a.file;
+      el.textContent = `🤖 ${(a.stats && a.stats.type) || a.file.replace(/^agent-|\.jsonl$/g, "")} (${fmtBytes(a.size)})`;
+      el.title = a.file;
       el.onclick = () => openSubagent(ctx.slug, ctx.id, a.file);
       box.appendChild(el);
     }
     main.appendChild(box);
   }
 
+  const wrap = document.createElement("div"); wrap.id = "tlwrap";
   const tl = document.createElement("div"); tl.id = "timeline";
-  main.appendChild(tl);
+  const panel = document.createElement("aside"); panel.id = "ctxpanel"; panel.hidden = !CTX_PANEL;
+  panel.setAttribute("aria-label", "Visible context");
+  wrap.append(tl, panel);
+  main.appendChild(wrap);
+  V.tl = tl; V.panel = panel;
 
-  // chunked rendering: big sessions (3000+ entries) would freeze the DOM
-  const CHUNK = 150;
-  let rendered = 0;
   const moreBtn = document.createElement("button");
   moreBtn.className = "copy";
   moreBtn.style.cssText = "display:block;margin:14px auto;padding:6px 18px;font-size:13px";
-  const renderChunk = () => {
-    const frag = document.createDocumentFragment();
-    const end = Math.min(rendered + CHUNK, s.entries.length);
-    for(; rendered < end; rendered++) frag.appendChild(renderEntry(s.entries[rendered], ctx, 0));
-    tl.appendChild(frag);
-    moreBtn.textContent = `show more (${s.entries.length - rendered} remaining)`;
-    moreBtn.style.display = rendered >= s.entries.length ? "none" : "block";
-  };
-  moreBtn.onclick = renderChunk;
+  moreBtn.onclick = () => renderChunk(V);
   main.appendChild(moreBtn);
-  // auto-load next chunk when the button scrolls into view
+  V.more = moreBtn;
+  // auto-load the next turns when the button scrolls into view
   new IntersectionObserver(es => {
-    if(es[0].isIntersecting && rendered < s.entries.length) renderChunk();
+    if(es[0].isIntersecting && V.rendered < V.turns.length) renderChunk(V);
   }, {root: main, rootMargin: "600px"}).observe(moreBtn);
   // fallback: near-bottom scroll also loads (IO can be unreliable in hidden panes)
   main.onscroll = () => {
-    if(rendered < s.entries.length &&
-       main.scrollTop + main.clientHeight > main.scrollHeight - 900) renderChunk();
+    if(V.rendered < V.turns.length &&
+       main.scrollTop + main.clientHeight > main.scrollHeight - 900) renderChunk(V);
   };
 
   const applyToggles = () => {
@@ -1559,51 +1805,315 @@ function renderSession(s, ctx){
   };
   ["tgThink","tgTools","tgSys","tgAgents"].forEach(id=>$("#"+id).onchange=applyToggles);
   applyToggles();
-  renderChunk();
+  V.applyToggles = applyToggles;
+  renderChunk(V);
+  renderCtxPanel(V);
+  head.querySelector("#btnCtx").onclick = ev => {
+    CTX_PANEL = !CTX_PANEL;
+    try{ localStorage.setItem("ember-ctxpanel", CTX_PANEL ? "1" : "0"); }catch(e){}
+    ev.currentTarget.setAttribute("aria-pressed", CTX_PANEL);
+    panel.hidden = !CTX_PANEL;
+    renderCtxPanel(V);
+  };
   main.scrollTop = 0;
   if(!ctx.isAgent)
-    LIVE = {s, ctx, tl, head, more: moreBtn, my: openSeq, key: "", busy: false,
-            primed: false, lastChange: 0,
-            get rendered(){ return rendered; }, set rendered(v){ rendered = v; }};
+    LIVE = Object.assign(V, {my: openSeq, key: "", busy: false, primed: false, lastChange: 0});
+  tickCache();
 
-  // search deep-link: render up to the first matching entry, scroll, flash it
+  // header chips: a tool chip, or errors/agents/skills, jumps to the next one
+  head.querySelector(".chips").onclick = ev => {
+    const c = ev.target.closest(".chip[data-tool], .chip[data-nav]"); if(!c) return;
+    if(c.dataset.nav){ jumpNav(V, c.dataset.nav, 1); return; }
+    const name = c.dataset.tool;
+    if(!$("#tgTools").checked){ $("#tgTools").checked = true; applyToggles(); }
+    const i = nextIndex(V, "tool:" + name, e => e.kind === "tool" && e.name === name, 1);
+    if(i < 0) return;
+    c.title = `${name}: call ${s.entries.slice(0, i+1).filter(e => e.kind === "tool" && e.name === name).length} of ${s.tool_counts[name]} — click for the next`;
+    jumpTo(V, i, false);
+  };
+
+  // search deep-link: jump to the first matching entry; turn link: that entry
   if(ctx.find){
     const q = ctx.find.toLowerCase();
-    const idx = s.entries.findIndex(e =>
+    jumpTo(V, s.entries.findIndex(e =>
       (e.text && e.text.toLowerCase().includes(q)) ||
-      (e.kind === "tool" && (JSON.stringify(e.input||{}) + (e.result||"")).toLowerCase().includes(q)));
-    if(idx >= 0){
-      while(rendered <= idx) renderChunk();
-      const el = tl.children[idx];
-      if(el){
-        el.classList.add("openx");
-        const h = el.querySelector(".head[aria-expanded]");
-        if(h) h.setAttribute("aria-expanded", "true");
-        setTimeout(() => {
-          el.scrollIntoView({block: "center"});
-          el.style.outline = "2px solid var(--tool)";
-          setTimeout(() => el.style.outline = "", 2500);
-        }, 60);
-      }
-    }
-  }
+      (e.kind === "tool" && (JSON.stringify(e.input||{}) + (e.result||"")).toLowerCase().includes(q))));
+  } else if(ctx.jump != null) jumpTo(V, +ctx.jump, false);
 }
+
+function renderChunk(V){
+  const CHUNK = 150;                      // entries per chunk: big sessions stay responsive
+  const frag = document.createDocumentFragment();
+  let n = 0;
+  while(V.rendered < V.turns.length && n < CHUNK){
+    const t = V.turns[V.rendered];
+    const el = renderTurn(V, V.rendered);
+    V.turnEls[V.rendered++] = el;
+    frag.appendChild(el);
+    n += t.end - t.start;
+  }
+  V.tl.appendChild(frag);
+  const next = V.turns[V.rendered];
+  V.more.textContent = `show more (${next ? V.s.entries.length - next.start : 0} entries remaining)`;
+  V.more.style.display = next ? "block" : "none";
+}
+
+function renderTurn(V, k){
+  const {s, ctx} = V, t = V.turns[k];
+  const box = document.createElement("div"); box.className = "turn";
+  const keep = (i, el) => { el.dataset.i = i; V.rows.set(i, el); return el; };
+  if(t.prompt != null) box.appendChild(keep(t.prompt, renderEntry(s.entries[t.prompt], ctx, 0)));
+  const first = t.prompt != null ? t.prompt + 1 : t.start;
+  if(first >= t.end) return box;
+  const info = turnInfo(s, t), cin = contextIn(s, t.start, t.end);
+  const nIn = cin.items.length + cin.groups.length;
+  const card = document.createElement("div");
+  card.className = "tcard" + (V.shut.has(t.start) ? " shut" : "");
+  const counts = [[info.thinking, "thinking"], [info.tools, "tool call"], [info.messages, "message"],
+                  [info.agents, "agent"]].filter(([n]) => n).map(([n, w]) => `${n} ${w}${n > 1 ? "s" : ""}`);
+  const head = ctl(document.createElement("div"), "button");
+  head.className = "thead";
+  head.setAttribute("aria-expanded", !V.shut.has(t.start));
+  head.innerHTML = `<span class="caret">▸</span>${t.prompt == null ? '<b class="tstart">Session start</b>' : "<b>Claude</b>"}
+    ${info.models.length ? `<span class="tmodel">${esc(info.models.join(" → "))}</span>` : ""}
+    <span class="tcounts">${counts.join(", ")}${info.errors ? ` · <span class="terr">${info.errors} error${info.errors > 1 ? "s" : ""}</span>` : ""}</span>
+    <span class="tright">
+      ${nIn ? `<button class="ctxbadge" title="what this turn added to the context window">Context +${nIn}</button>` : ""}
+      ${info.ctx ? `<span title="context window at the end of this turn; ${fmtTok(info.out)} output tokens">${fmtTok(info.ctx)}</span>` : ""}
+      ${info.secs ? `<span title="wall time of the turn">⏱ ${fmtDur(info.secs)}</span>` : ""}
+      ${s.entries[t.start].ts ? `<span class="ts">${fmtDate(s.entries[t.start].ts)}</span>` : ""}
+      ${ctx.isAgent ? "" : '<button class="copy tlink" title="copy a link to this turn">link</button>'}
+    </span>`;
+  const pop = document.createElement("div"); pop.className = "ctxpop"; pop.hidden = true;
+  const rows = document.createElement("div"); rows.className = "trows";
+  for(let i = first; i < t.end; i++) if(i !== info.final) rows.appendChild(keep(i, renderRow(V, i)));
+  card.append(head, pop, rows);
+  head.onclick = ev => {
+    if(ev.target.closest(".ctxbadge")){
+      pop.hidden = !pop.hidden;
+      if(!pop.hidden) pop.innerHTML = ctxPopHtml(cin);
+      return;
+    }
+    if(ev.target.closest(".tlink")){
+      const url = location.href.replace(/#.*$/, "") + `#p=${encodeURIComponent(ctx.slug)}&s=${encodeURIComponent(ctx.id)}&e=${t.start}`;
+      copyText(url, "a link to this turn");
+      return;
+    }
+    const shut = card.classList.toggle("shut");
+    shut ? V.shut.add(t.start) : V.shut.delete(t.start);
+    head.setAttribute("aria-expanded", !shut);
+  };
+  pop.onclick = ev => { const a = ev.target.closest("[data-jump]"); if(a) jumpTo(V, +a.dataset.jump); };
+  box.appendChild(card);
+  if(info.final >= 0) box.appendChild(keep(info.final, renderEntry(s.entries[info.final], ctx, 0)));
+  return box;
+}
+
+function ctxPopHtml(cin){
+  const line = (name, tok, extra) => `<div class="cprow"><span>${esc(name)}</span>${extra || ""}<span class="cptok">${tilde(tok)}</span></div>`;
+  const byCat = {}, seen = new Map();          // a re-sent attachment: once, ×n
+  for(const x of cin.items){
+    const k = x.cat + "\n" + x.label, was = seen.get(k);
+    if(was){ was.n++; continue; }
+    const row = {...x, n: 1}; seen.set(k, row);
+    (byCat[x.cat] = byCat[x.cat] || []).push(row);
+  }
+  let html = `<div class="cphead">New context in this turn</div>`;
+  for(const [cat, name] of CTX_CATS){
+    for(const x of byCat[cat] || [])
+      html += line((x.label === name ? name : `${name}: ${shortPathLabel(x.label)}`) + (x.n > 1 ? ` ×${x.n}` : ""), x.tok);
+    const g = cin.groups.find(g => g.cat === cat);
+    if(g) html += line(`${name} (${g.n})`, g.tok, ` <a class="cpjump" data-jump="${g.entry}">go</a>`);
+  }
+  return html + `<div class="cprow cptotal"><span>Total new</span><span class="cptok">${tilde(cin.tok)}</span></div>`;
+}
+const shortPathLabel = p => /[\\/]/.test(p) ? pathParts(p).slice(-3).join("/") : p;
+
+function renderCtxPanel(V){
+  const P = V.panel;
+  if(!P || P.hidden) return;
+  const vc = visibleContext(V.s, V.turns);
+  const pct = vc.real ? Math.round(100 * vc.total / vc.real) : null;
+  const turnNo = new Map(); let n = 0;
+  for(const t of V.turns) turnNo.set(t, t.prompt != null ? ++n : 0);
+  let html = `<div class="cpanelhead"><b>Visible context</b>
+      <button class="copy ibtn" data-close title="close">×</button></div>
+    <div class="cpsum">Visible ~${fmtTok(vc.total)}${vc.real ? ` · last request ${fmtTok(vc.real)}` : ""}${pct != null ? ` · <b>${Math.min(pct, 100)}%</b>` : ""}</div>
+    ${vc.real > vc.total ? `<div class="cpnote">~${fmtTok(vc.real - vc.total)} is not in the transcript: tool schemas, message framing, and estimate error.</div>` : ""}
+    ${vc.from ? `<div class="cpnote">Since the compaction at entry ${vc.from}. <a class="cpjump" data-jump="${vc.from}">go</a></div>` : ""}`;
+  for(const c of vc.cats){
+    html += `<details class="cpcat" open><summary><span>${esc(CTX_NAME[c.cat])}</span><span class="cpn">${c.rows.length}</span><span class="cptok">${tilde(c.tok)}</span></summary>`;
+    for(const r of c.rows.sort((a, b) => b.tok - a.tok).slice(0, 60)){
+      const where = r.turn ? `Turn ${turnNo.get(r.turn) || "0"}` : "";
+      html += `<div class="cprow" title="${esc(r.label || "")}"><span>${r.label ? esc(shortPathLabel(r.label)) + (r.scope ? ` <i>${esc(r.scope)}</i>` : "") : `${r.n} item${r.n > 1 ? "s" : ""}`}</span>
+        <a class="cpjump" data-jump="${r.entry}">${where || "go"}</a><span class="cptok">${tilde(r.tok)}</span></div>`;
+    }
+    html += `</details>`;
+  }
+  if(!vc.cats.length) html += `<div class="cpnote">This transcript records no context attachments (older Claude Code versions).</div>`;
+  P.innerHTML = html;
+  P.onclick = ev => {
+    if(ev.target.closest("[data-close]")){ V.head.querySelector("#btnCtx").click(); return; }
+    const a = ev.target.closest("[data-jump]"); if(a) jumpTo(V, +a.dataset.jump);
+  };
+}
+
+const ROWLAB = {thinking: "Thinking", assistant: "Output", user: "You", command: "Command",
+                system: "System", hook: "Hook failed"};
+const METALAB = {skill: "Skill", agent: "Agent", summary: "Summary", note: "Note"};
+function rowPreview(e){
+  if(e.kind === "tool") return toolSummary(e);
+  if(e.kind === "meta") return (e.title || firstLine(e.text)).replace(/^Skill /, "");
+  if(e.kind === "hook") return `${e.name}${e.exit != null ? " · exit " + e.exit : ""} — ${firstLine(e.text)}`;
+  if(e.kind === "command") return e.cmd ? `${e.cmd} ${e.args || ""}` : firstLine(e.out || e.text);
+  if(e.api_error) return `${e.api_error}: ${firstLine(e.text)}`;
+  return firstLine(e.text);
+}
+function renderRow(V, i){
+  const e = V.s.entries[i];
+  if(e.kind === "compact") return renderEntry(e, V.ctx, 0);
+  if(e.kind === "tool" && e.agent_id && V.ctx.slug && V.ctx.id && V.depth < 2) return agentRow(V, e, i);
+  const bad = (e.kind === "tool" && e.is_error) || e.kind === "hook" || !!e.api_error;
+  const el = document.createElement("div");
+  el.className = `entry row collapsible ${e.kind}` + (e.sub ? " m-" + e.sub : "") + (bad ? " error" : "")
+               + (e.kind === "meta" && e.sub === "note" ? " sysish" : "");
+  const label = e.kind === "tool" ? e.name : e.kind === "meta" ? METALAB[e.sub] || "Note"
+              : e.api_error ? "API error" : e.queued ? "You (while working)" : ROWLAB[e.kind] || e.kind;
+  const dot = e.kind !== "tool" ? "" : e.result == null && !e.patch
+    ? '<span class="rdot none" title="no result recorded (still running, or interrupted)"></span>'
+    : `<span class="rdot ${e.is_error ? "err" : "ok"}"></span>`;
+  const head = ctl(document.createElement("div"));
+  head.className = "head";
+  head.setAttribute("aria-expanded", "false");
+  head.innerHTML = `<span class="caret">▸</span><span class="tag">${esc(label)}</span>
+    <span class="rprev">${esc(rowPreview(e))}</span>
+    <span class="rmeta">${e.tok ? `<span title="estimated tokens">${tilde(e.tok)}</span>` : ""}${dot}${e.dur != null ? `<span title="time to result">${fmtDur(e.dur)}</span>` : ""}</span>`;
+  el.appendChild(head);
+  let built = false;
+  el._open = on => {
+    if(on && !built){ built = true; el.appendChild(rowBody(e)); }
+    el.classList.toggle("openx", on);
+    head.setAttribute("aria-expanded", on);
+    on ? V.open.add(i) : V.open.delete(i);
+  };
+  head.onclick = () => el._open(!el.classList.contains("openx"));
+  if(V.open.has(i)) el._open(true);
+  return el;
+}
+function rowBody(e){
+  if(e.kind === "tool") return toolBody(e);
+  const body = document.createElement("div"); body.className = "body";
+  const text = e.kind === "command" ? (e.cmd ? `${e.cmd} ${e.args || ""}` : e.out || e.text)
+             : e.kind === "hook" ? (e.command ? "$ " + e.command + "\n\n" : "") + (e.text || "") : e.text || "";
+  const bar = document.createElement("div"); bar.className = "rbar";
+  const asMd = e.kind === "assistant" || e.kind === "user" || (e.kind === "meta" && e.sub !== "note");
+  bar.appendChild(copyBtn(text, asMd));
+  body.appendChild(bar);
+  if(asMd){ const d = document.createElement("div"); d.className = "md"; d.innerHTML = md(text); body.appendChild(d); }
+  else { const pre = document.createElement("pre"); pre.textContent = text; body.appendChild(pre); }
+  return body;
+}
+function toolBody(e){
+  const body = document.createElement("div"); body.className = "body";
+  const bar = document.createElement("div"); bar.className = "rbar";
+  bar.appendChild(copyBtn(e.result || JSON.stringify(e.input, null, 2)));
+  body.appendChild(bar);
+  const inp = document.createElement("pre");
+  inp.textContent = JSON.stringify(e.input, null, 2);
+  body.appendChild(inp);
+  if(e.patch) body.appendChild(renderPatch(e.patch, e.file_path));
+  else if(e.name==="Edit" && e.input && e.input.old_string !== undefined)
+    body.appendChild(renderEditFallback(e.input));
+  if(e.result){
+    const cap = document.createElement("div");
+    cap.style.cssText="font-size:11px;color:var(--dim);margin-top:6px"; cap.textContent="result";
+    body.appendChild(cap);
+    const pre = document.createElement("pre"); pre.textContent = e.result;
+    body.appendChild(pre);
+  }
+  return body;
+}
+
+// render up to entry idx, open it, scroll to it and flash it; rows hidden by
+// a toggle are skipped for the next visible one in the same turn
+function jumpTo(V, idx, open = true){
+  if(!V.turns.length || idx < 0 || idx >= V.s.entries.length) return;
+  const k = turnOf(V.turns, idx), t = V.turns[k];
+  while(V.rendered <= k) renderChunk(V);
+  if(V.shut.has(t.start)) V.turnEls[k].querySelector(".thead").click();
+  let el = null;
+  for(let j = idx; j < t.end && !el; j++){ const c = V.rows.get(j); if(c && c.offsetParent !== null) el = c; }
+  el = el || V.turnEls[k];
+  if(open && el._open) el._open(true);
+  setTimeout(() => {
+    el.scrollIntoView({block: "center"});
+    el.classList.add("flash");
+    setTimeout(() => el.classList.remove("flash"), 2500);
+  }, 60);
+}
+function nextIndex(V, key, pred, dir){
+  const E = V.s.entries, n = E.length, from = V.navPos[key] ?? (dir > 0 ? -1 : n);
+  for(let k = 1; k <= n; k++){
+    const i = ((from + dir * k) % n + n) % n;
+    if(pred(E[i])){ V.navPos[key] = i; return i; }
+  }
+  return -1;
+}
+function jumpNav(V, kind, dir){
+  if(kind === "agent" && !$("#tgAgents").checked){ $("#tgAgents").checked = true; V.applyToggles(); }
+  if(kind !== "agent" && !$("#tgTools").checked){ $("#tgTools").checked = true; V.applyToggles(); }
+  const i = nextIndex(V, kind, NAV[kind], dir);
+  if(i >= 0) jumpTo(V, i, kind === "error");
+}
+// j/k: the next/previous turn below/above the top of the timeline
+function jumpTurn(V, dir){
+  const main = $("#main"), top = main.getBoundingClientRect().top + 8;
+  if(dir > 0 && V.rendered < V.turns.length) renderChunk(V);
+  const els = V.turnEls.filter(Boolean);
+  const el = dir > 0 ? els.find(x => x.getBoundingClientRect().top > top + 4)
+                     : [...els].reverse().find(x => x.getBoundingClientRect().top < top - 4);
+  if(el) main.scrollTop += el.getBoundingClientRect().top - top;
+}
+document.addEventListener("keydown", e => {
+  if(!VIEW || e.ctrlKey || e.metaKey || e.altKey || !e.target.closest) return;
+  if(!e.target.closest("#cell-main") || e.target.closest("input, textarea, select, [contenteditable], dialog")) return;
+  const k = e.key.toLowerCase(), dir = e.shiftKey ? -1 : 1;
+  if(k === "j" || k === "k") jumpTurn(VIEW, k === "j" ? 1 : -1);
+  else if(k === "e" || k === "a" || k === "s") jumpNav(VIEW, {e: "error", a: "agent", s: "skill"}[k], dir);
+  else return;
+  e.preventDefault();
+});
+
+// prompt cache: warm until the last request + its TTL (5 min or 1 h); a
+// prompt sent after that writes the whole context to the cache again
+function cacheState(t, now){
+  const last = Date.parse(t.last_request_ts || "");
+  if(!t.cache_ttl || !last) return null;
+  const left = t.cache_ttl - (now - last) / 1000;
+  return {left, ttl: t.cache_ttl, ago: (now - last) / 1000};
+}
+function tickCache(){
+  const V = VIEW, el = V && !V.ctx.isAgent && V.head && V.head.isConnected && V.head.querySelector(".cachet");
+  if(!el) return;
+  const c = cacheState(V.s.totals || {}, Date.now());
+  const series = V.s.context_series || [], ctxNow = series.length ? series[series.length - 1].context : 0;
+  if(!c || c.ago > 6 * 3600){ el.textContent = ""; return; }
+  const mmss = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+  el.className = "cachet " + (c.left <= 0 ? "cold" : c.left < 60 ? "soon" : "warm");
+  el.textContent = c.left > 0 ? `◷ cache warm ${mmss(c.left)}` : `◷ cache cold (${fmtDur(-c.left)} ago)`;
+  el.title = `Prompt cache, ${c.ttl >= 3600 ? "1 h" : "5 min"} lifetime from the last request. `
+    + (c.left > 0 ? "A prompt sent now reads the context from cache." : `The next prompt writes ~${fmtTok(ctxNow)} tokens of context to cache again.`);
+}
+poll(tickCache, 1000);
 
 /* ---------- live-follow (ENG-16) -----------------------------------------
    While the open session was written to in the last 10 minutes (and the tab
    is visible), poll /api/session/tail every 3 s. The server re-sends the
    last few entries (their tool results can land late) from `start`: splice
-   them in, repaint only the rows that changed, append the new ones. */
+   them in, re-render the turns from the first changed one, keep what was open. */
 let LIVE = null;
 const LIVE_WINDOW = 600;
 const spliceTail = (entries, r) => entries.slice(0, r.start).concat(r.entries);
-// rendered rows to repaint (changed in the overlap), and rows that vanished
-function tailDiff(old, next, start, rendered){
-  const replace = [], upto = Math.min(rendered, old.length, next.length);
-  for(let i = start; i < upto; i++)
-    if(JSON.stringify(old[i]) !== JSON.stringify(next[i])) replace.push(i);
-  return {replace, drop: Math.max(0, Math.min(rendered, old.length) - next.length)};
-}
 const sessMtime = (slug, id) => ((state.sessions[slug] || []).find(x => x.id === id) || {}).mtime || 0;
 async function liveTick(){
   const L = LIVE;
@@ -1627,50 +2137,58 @@ async function liveTick(){
   finally{ L.busy = false; }
 }
 function applyTail(L, r){
-  const main = $("#main"), tl = L.tl, s = L.s;
+  const main = $("#main"), s = L.s;
   const atBottom = main.scrollTop + main.clientHeight >= main.scrollHeight - 40;
   const old = s.entries;
   s.entries = spliceTail(old, r);
-  const d = tailDiff(old, s.entries, r.start, L.rendered);
-  for(const i of d.replace){
-    const was = tl.children[i];
-    if(!was) continue;
-    const el = renderEntry(s.entries[i], L.ctx, 0);
-    if(was.classList.contains("openx")){           // keep an expanded row expanded
-      el.classList.add("openx");
-      const h = el.querySelector(".head[aria-expanded]");
-      if(h) h.setAttribute("aria-expanded", "true");
-    }
-    was.replaceWith(el);
-  }
-  for(let k = 0; k < d.drop; k++) tl.lastElementChild.remove();
-  const allShown = L.rendered >= old.length;
-  L.rendered = Math.min(L.rendered, s.entries.length);
-  if(allShown){                                    // follow the tail
+  Object.assign(s, {totals: r.totals, tool_counts: r.tool_counts, context_series: r.context_series,
+                    context: r.context || s.context, subagents: r.subagents || s.subagents});
+  const allShown = L.rendered >= L.turns.length;
+  const first = firstChange(old, s.entries, r.start);
+  L.turns = groupTurns(s.entries);
+  if(L.turns.length && (first < old.length || s.entries.length !== old.length)){
+    // turns before the one holding the last unchanged entry are untouched
+    const k = Math.min(turnOf(L.turns, Math.max(0, first - 1)), L.turnEls.length);
+    const keep = allShown ? L.turns.length : Math.min(L.rendered, L.turns.length);
+    for(let j = k; j < L.turnEls.length; j++) if(L.turnEls[j]) L.turnEls[j].remove();
+    L.turnEls.length = k;
+    const from = L.turns[k] ? L.turns[k].start : s.entries.length;
+    for(const j of [...L.rows.keys()]) if(j >= from) L.rows.delete(j);
+    L.rendered = k;
     const frag = document.createDocumentFragment();
-    for(let i = L.rendered; i < s.entries.length; i++) frag.appendChild(renderEntry(s.entries[i], L.ctx, 0));
-    tl.appendChild(frag);
-    L.rendered = s.entries.length;
-  } else {
-    L.more.textContent = `show more (${s.entries.length - L.rendered} remaining)`;
+    while(L.rendered < keep){ const el = renderTurn(L, L.rendered); L.turnEls[L.rendered++] = el; frag.appendChild(el); }
+    L.tl.appendChild(frag);
+    const next = L.turns[L.rendered];
+    L.more.textContent = `show more (${next ? s.entries.length - next.start : 0} entries remaining)`;
+    L.more.style.display = next ? "block" : "none";
   }
-  s.totals = r.totals; s.tool_counts = r.tool_counts; s.context_series = r.context_series;
   L.head.querySelector(".nent").textContent = s.entries.length;
   L.head.querySelector(".stats").innerHTML = statsHtml(r.totals || {});
-  L.head.querySelector(".chips").innerHTML = chipsHtml(r.tool_counts);
+  L.head.querySelector(".chips").innerHTML = chipsHtml(s);
   if((r.context_series || []).length){
-    const c = renderChart(r.context_series), was = main.querySelector("#chart");
+    const c = renderChart(r.context_series, i => jumpTo(L, i)), was = main.querySelector("#chart");
     if(was) was.replaceWith(c); else main.insertBefore(c, main.firstChild);
   }
+  renderCtxPanel(L);
+  tickCache();
   if(atBottom) main.scrollTop = main.scrollHeight;
 }
 poll(liveTick, 3000);
 
-function copyBtn(text){
+// copy; `rich` also puts the rendered markdown on the clipboard, so a paste
+// into Notion, Docs or Mail keeps headings, lists and tables
+function copyBtn(text, rich){
   const b = document.createElement("button");
   b.className = "copy"; b.textContent = "copy";
   b.onclick = ev => { ev.stopPropagation();
-    copyText(text).then(()=>{ b.textContent="✓"; setTimeout(()=>b.textContent="copy",900); }, ()=>{}); };
+    const done = () => { b.textContent="✓"; setTimeout(()=>b.textContent="copy",900); };
+    if(rich && navigator.clipboard && navigator.clipboard.write && window.ClipboardItem){
+      navigator.clipboard.write([new ClipboardItem({
+        "text/html": new Blob([md(text)], {type: "text/html"}),
+        "text/plain": new Blob([text], {type: "text/plain"})})])
+        .then(done, () => copyText(text).then(done, () => {}));
+    } else copyText(text).then(done, ()=>{});
+  };
   return b;
 }
 
@@ -1682,10 +2200,10 @@ function toolSummary(e){
 }
 
 /* ---------- subagents, shown where they were launched ----------
-   A Task call and its agent transcript are the same event, so the agent gets a
-   card inside the tool entry instead of a uuid chip in the header 400 entries
-   away. The transcript is fetched on first expand — parsing every agent up
-   front would stall a session with a dozen of them. */
+   A Task call and its agent transcript are the same event, so the agent is a
+   row of the turn that launched it: type, model, outcome and cost up front
+   (from the server's one-pass stats), its prompt, result and transcript on
+   expand. The transcript is fetched on first expand. */
 const agentCache = new Map();          // "slug/session/file" -> parsed transcript
 
 function agentFile(id){ return "agent-" + id + ".jsonl"; }
@@ -1695,83 +2213,98 @@ function agentLabel(e){
   return {type: i.subagent_type || e.name || "agent",
           desc: String(i.description || i.prompt || "").slice(0, 200)};
 }
+// a background agent's Task result is only "launched": its report comes later
+const ASYNC_ACK = /^\s*Async agent launched|"status":\s*"async_launched"/i;
+const AGENT_HUES = ["--user", "--ok", "--tool", "--think", "--accent"];
+const agentHue = type => AGENT_HUES[[...type].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7) % AGENT_HUES.length];
 
-function agentCard(e, ctx, depth){
+function agentRow(V, e, i){
+  const {ctx} = V;
   const {type, desc} = agentLabel(e);
+  const file = agentFile(e.agent_id);
+  const sub = (V.s.subagents || []).find(a => a.file === file);
+  const st = (sub && sub.stats) || {};
+  // running = its transcript is still being written; no file and no result = unknown
+  const running = !e.is_error && !!sub && Date.now() / 1000 - sub.mtime < 90
+                  && (e.result == null || ASYNC_ACK.test(e.result));
   const card = document.createElement("div");
-  card.className = "agentcard" + (e.is_error ? " failed" : "");
+  card.className = "entry row tool agent agentcard" + (e.is_error ? " failed error" : "");
+  card.style.setProperty("--hue", `var(${agentHue(st.type || type)})`);
   const head = ctl(document.createElement("div"));
   head.className = "achead";
   head.setAttribute("aria-expanded", "false");
-  head.innerHTML = `<span class="caret">▸</span>
-    <span class="atag">🤖 ${esc(type)}</span>
-    <span class="adot ${e.is_error ? "err" : "ok"}"></span>
+  head.innerHTML = `<span class="caret">▸</span><span class="hue"></span>
+    <span class="atag">${esc(st.type || type)}</span>
+    ${st.model ? `<span class="tmodel">${esc(shortModel(st.model))}</span>` : ""}
     <span class="adesc">${esc(desc)}</span>
-    <span class="astats"></span>`;
+    <span class="astats">
+      ${running ? '<span class="rdot run" title="running"></span>'
+        : e.result == null && !sub ? '<span class="rdot none" title="no result recorded"></span>'
+        : `<span class="rdot ${e.is_error ? "err" : "ok"}" title="${e.is_error ? "failed" : "done"}"></span>`}
+      ${st.peak ? `<span class="cost" title="peak context of the agent">${fmtTok(st.peak)}</span>` : ""}
+      ${st.tools ? `<span>${st.tools} tools</span>` : ""}
+      ${st.duration ? `<span>${fmtDur(st.duration)}</span>` : ""}</span>`;
   card.appendChild(head);
   const body = document.createElement("div");
   body.className = "acbody";
   card.appendChild(body);
 
-  const key = `${ctx.slug}/${ctx.id}/${agentFile(e.agent_id)}`;
+  const key = `${ctx.slug}/${ctx.id}/${file}`;
   let loaded = false;
-  head.onclick = async (ev) => {
-    ev.stopPropagation();                       // don't collapse the parent tool entry
-    head.setAttribute("aria-expanded", card.classList.toggle("openx"));
-    if(loaded || !card.classList.contains("openx")) return;
+  card._open = async on => {
+    card.classList.toggle("openx", on);
+    head.setAttribute("aria-expanded", on);
+    on ? V.open.add(i) : V.open.delete(i);
+    if(loaded || !on) return;
     loaded = true;
-    body.innerHTML = `<div class="acnote">reading agent transcript…</div>`;
+    const p = e.input && (e.input.prompt || e.input.description);
+    body.innerHTML = `<div class="acmeta">Type <b>${esc(st.type || type)}</b>${st.model ? ` · Model <b>${esc(st.model)}</b>` : ""}${st.output != null ? ` · Output <b>${fmtTok(st.output)}</b>` : ""}${st.peak ? ` · Peak context <b>${fmtTok(st.peak)}</b>` : ""}${st.duration ? ` · Duration <b>${fmtDur(st.duration)}</b>` : ""} · ID <code>${esc(e.agent_id)}</code></div>`;
+    if(p){
+      const d = document.createElement("details"); d.className = "acsec";
+      d.innerHTML = `<summary>Prompt <span class="cptok">${tilde(Math.round(String(p).length / 4))}</span></summary>`;
+      const pre = document.createElement("pre"); pre.textContent = p; d.appendChild(pre);
+      body.appendChild(d);
+    }
+    if(e.result && !ASYNC_ACK.test(e.result)){
+      const d = document.createElement("details"); d.className = "acsec";
+      d.innerHTML = `<summary>Result</summary><div class="md">${md(e.result)}</div>`;
+      body.appendChild(d);
+    }
+    const open = document.createElement("button");
+    open.className = "copy"; open.textContent = "open full transcript ↗";
+    open.onclick = ev2 => { ev2.stopPropagation(); openSubagent(ctx.slug, ctx.id, file); };
+    body.appendChild(open);
+    const trace = document.createElement("div"); trace.className = "acnote";
+    trace.textContent = "reading agent transcript…";
+    body.appendChild(trace);
     let s = agentCache.get(key);
     try{
       if(!s){
         s = await api(`/api/subagent?project=${encodeURIComponent(ctx.slug)}`
-                    + `&session=${encodeURIComponent(ctx.id)}`
-                    + `&agent=${encodeURIComponent(agentFile(e.agent_id))}`);
+                    + `&session=${encodeURIComponent(ctx.id)}&agent=${encodeURIComponent(file)}`);
         agentCache.set(key, s);
       }
-    }catch(err){
-      body.innerHTML = `<div class="acnote">transcript not on disk (${esc(err.message)})</div>`;
-      return;
-    }
-    const t = s.totals || {};
-    const tools = Object.values(s.tool_counts || {}).reduce((a,b)=>a+b, 0);
-    const stamps = s.entries.map(x => x.ts).filter(Boolean);
-    const span = stamps.length > 1
-      ? (new Date(stamps[stamps.length-1]) - new Date(stamps[0])) / 1000 : 0;
-    head.querySelector(".astats").innerHTML =
-      `<span>${s.entries.length} entries</span><span>${tools} tools</span>
-       <span class="cost">${fmtTok(t.output_tokens)} out</span>
-       <span class="cost">${fmtTok(t.peak_context)} peak</span>
-       ${span > 0 ? `<span>${fmtDur(span)}</span>` : ""}`;
-
-    body.innerHTML = "";
-    const open = document.createElement("button");
-    open.className = "copy"; open.textContent = "open full transcript ↗";
-    open.onclick = ev2 => { ev2.stopPropagation();
-      openSubagent(ctx.slug, ctx.id, agentFile(e.agent_id)); };
-    body.appendChild(open);
-
-    // nested agents get a link, not another lazy tree — two levels is plenty
-    const CAP = 200;
-    const frag = document.createDocumentFragment();
-    for(const sub of s.entries.slice(0, CAP)) frag.appendChild(renderEntry(sub, ctx, depth + 1));
-    body.appendChild(frag);
+    }catch(err){ trace.textContent = `transcript not on disk (${err.message})`; return; }
+    // the trace: the agent's steps as rows; nested agents one level deeper
+    const SV = {s, ctx, depth: V.depth + 1, rows: new Map(), open: new Set()};
+    const CAP = 200, frag = document.createDocumentFragment();
+    frag.appendChild(Object.assign(document.createElement("div"),
+      {className: "achtrace", textContent: `Execution trace · ${s.entries.length} steps`}));
+    for(let j = 0; j < Math.min(CAP, s.entries.length); j++) frag.appendChild(renderRow(SV, j));
+    trace.replaceWith(frag);
     if(s.entries.length > CAP){
       const more = document.createElement("div");
       more.className = "acnote";
-      more.textContent = `${s.entries.length - CAP} more entries — open the full transcript`;
+      more.textContent = `${s.entries.length - CAP} more steps — open the full transcript`;
       body.appendChild(more);
     }
   };
+  head.onclick = ev => { ev.stopPropagation(); card._open(!card.classList.contains("openx")); };
+  if(V.open.has(i)) card._open(true);
   return card;
 }
 
-function fmtDur(sec){
-  if(sec < 60) return Math.round(sec) + "s";
-  const m = Math.floor(sec / 60);
-  return m < 60 ? `${m}m ${Math.round(sec % 60)}s` : `${Math.floor(m/60)}h ${m % 60}m`;
-}
-
+// a whole entry as a box: prompts, final answers, exports
 function renderEntry(e, ctx, depth){
   ctx = ctx || {}; depth = depth || 0;
   const div = document.createElement("div");
@@ -1787,49 +2320,30 @@ function renderEntry(e, ctx, depth){
     head.innerHTML = `<span class="caret">▸</span><span class="tag">${esc(e.name)}</span>
       <span class="toolsum">${esc(toolSummary(e))}</span>
       ${e.is_error?'<span style="color:var(--err)">error</span>':""} ${ts}`;
-    head.appendChild(copyBtn(e.result || JSON.stringify(e.input,null,2)));
     ctl(head).setAttribute("aria-expanded", "false");
     head.onclick = () => head.setAttribute("aria-expanded", div.classList.toggle("openx"));
     div.appendChild(head);
-    const body = document.createElement("div"); body.className = "body";
-    const inp = document.createElement("pre");
-    inp.textContent = JSON.stringify(e.input, null, 2);
-    body.appendChild(inp);
-    if(e.patch) body.appendChild(renderPatch(e.patch, e.file_path));
-    else if(e.name==="Edit" && e.input && e.input.old_string !== undefined)
-      body.appendChild(renderEditFallback(e.input));
-    if(e.result){
-      const cap = document.createElement("div");
-      cap.style.cssText="font-size:11px;color:var(--dim);margin-top:6px"; cap.textContent="result";
-      body.appendChild(cap);
-      const pre = document.createElement("pre"); pre.textContent = e.result;
-      body.appendChild(pre);
-    }
-    div.appendChild(body);
-    // the agent card sits outside the collapsible body: an agent's cost and
-    // outcome should be visible without opening the Task call first
-    if(e.agent_id && ctx.slug && ctx.id && depth < 2) div.appendChild(agentCard(e, ctx, depth));
-    else if(e.agent_id){
-      const n = document.createElement("div");
-      n.className = "acnote";
-      n.textContent = "agent " + e.agent_id;
-      body.appendChild(n);
-    }
+    div.appendChild(toolBody(e));
     return div;
   }
 
-  const label = {user:"USER", assistant:"CLAUDE", thinking:"THINKING",
-                 command:"COMMAND", system:"SYSTEM"}[e.kind] || e.kind.toUpperCase();
+  if(e.kind === "command" && e.cmd) div.className = "entry user cmd";    // a slash command is a prompt
+  const label = e.kind === "command" && e.cmd ? "YOU" : e.kind === "meta" ? (METALAB[e.sub] || "NOTE").toUpperCase()
+    : e.api_error ? "API ERROR" : e.kind === "hook" ? "HOOK FAILED"
+    : {user:"USER", assistant:"CLAUDE", thinking:"THINKING", command:"COMMAND", system:"SYSTEM"}[e.kind] || e.kind.toUpperCase();
   const head = document.createElement("div"); head.className = "head";
   head.innerHTML = `<span class="tag">${esc(label)}</span>
     ${e.system_reminder?'<span class="chip">system-reminder</span>':""} ${ts}`;
-  head.appendChild(copyBtn(e.text||""));
+  head.appendChild(copyBtn(e.text||"", e.kind === "assistant" && !e.api_error));
   div.appendChild(head);
   const body = document.createElement("div"); body.className = "body md";
-  if(e.kind === "thinking" || e.kind === "command" || e.kind === "system" || e.system_reminder){
+  if(e.kind === "command" && e.cmd){
+    body.innerHTML = `<code class="slash">${esc(e.cmd)}</code> ${md(e.args || "")}`;
+  } else if(e.kind === "thinking" || e.kind === "command" || e.kind === "system" || e.kind === "hook"
+            || e.system_reminder || e.api_error || (e.kind === "meta" && e.sub === "note")){
     const pre = document.createElement("pre");
     pre.style.background = "transparent"; pre.style.border = "none"; pre.style.padding = "0";
-    pre.textContent = e.text; body.appendChild(pre);
+    pre.textContent = e.kind === "command" ? (e.out || e.text) : e.text; body.appendChild(pre);
     if(e.kind === "thinking"){
       div.classList.add("collapsible");
       head.style.cursor = "pointer";
@@ -1840,6 +2354,7 @@ function renderEntry(e, ctx, depth){
   } else {
     body.innerHTML = md(e.text || "");
   }
+  if(e.api_error) div.classList.add("error");
   div.appendChild(body);
   return div;
 }
@@ -1872,23 +2387,88 @@ function renderEditFallback(input){
   return box;
 }
 
-function renderChart(series){
+/* One stacked bar per API request: cache read (faint), cache write, uncached
+   input (top). Clicking a bar calls onJump(timeline index of that request). */
+function renderChart(series, onJump){
   const wrap = document.createElement("div"); wrap.id = "chart";
   const W = 1000, H = 110, max = Math.max(...series.map(p=>p.context), 1);
   const bw = Math.max(1.5, Math.min(14, W/series.length - 1));
-  const step = W / series.length;
+  const step = W / series.length, k = (H-18) / max;
   let bars = "";
   series.forEach((p,i)=>{
-    const h = Math.max(2, p.context/max * (H-18));
-    bars += `<rect class="cbar${p.compaction?" compact":""}" x="${(i*step).toFixed(1)}" y="${(H-h).toFixed(1)}"
-      width="${bw}" height="${h.toFixed(1)}"><title>req ${i+1} — ${fmtTok(p.context)} ctx (${fmtTok(p.cache_read)} cached, ${fmtTok(p.cache_creation)} new cache, out ${fmtTok(p.output)})${p.compaction?" — COMPACTION":""}</title></rect>`;
+    const x = (i*step).toFixed(1);
+    let y = H;
+    const seg = (v, cls) => { const h = v*k; y -= h;
+      return h > 0 ? `<rect class="${cls}" x="${x}" y="${y.toFixed(1)}" width="${bw}" height="${h.toFixed(1)}"/>` : ""; };
+    const segs = seg(p.cache_read, "s-read") + seg(p.cache_creation, "s-write") + seg(p.input, "s-in");
+    bars += `<g class="cbar${p.compaction?" compact":""}" data-i="${i}"${p.entry != null ? ' tabindex="0" role="button"' : ""}>
+      <rect class="hit" x="${x}" y="0" width="${Math.max(bw, step).toFixed(1)}" height="${H}"/>${segs}
+      <title>req ${i+1} — ${fmtTok(p.context)} ctx: ${fmtTok(p.cache_read)} cache read, ${fmtTok(p.cache_creation)} cache write, ${fmtTok(p.input)} uncached; out ${fmtTok(p.output)}${p.compaction?" — COMPACTION":""}${p.entry != null ? "\nclick to jump to this turn" : ""}</title></g>`;
   });
   wrap.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
     <text x="4" y="12" style="fill:var(--dim)" font-size="11">peak ${fmtTok(max)} tokens</text>${bars}</svg>`;
+  const go = ev => { const g = ev.target.closest(".cbar"), p = g && series[+g.dataset.i];
+    if(p && p.entry != null && onJump){ ev.preventDefault(); onJump(p.entry); } };
+  wrap.onclick = go;
+  wrap.onkeydown = ev => { if(ev.key === "Enter" || ev.key === " ") go(ev); };
   return wrap;
 }
 
 /* ---------- memory ---------- */
+// Split a leading `---` front-matter block off a memory file. Flat key: value
+// lines only; nested keys (metadata:\n  type: user) are lifted to the top.
+function memFront(src){
+  const m = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(src);
+  if(!m) return {meta: {}, body: src};
+  const meta = {};
+  for(const line of m[1].split(/\r?\n/)){
+    const kv = /^\s*([\w-]+):\s*(.*?)\s*$/.exec(line);
+    if(!kv || !kv[2]) continue;
+    const v = kv[2], q = /^"(.*)"$/.exec(v) || /^'(.*)'$/.exec(v);
+    meta[kv[1]] = !q ? v : v[0] === '"' ? q[1].replace(/\\(["\\])/g, "$1")
+                                                      : q[1].replace(/''/g, "'");
+  }
+  return {meta, body: src.slice(m[0].length)};
+}
+// Turn [[slug]] and [text](file.md) in md() output into links to sibling
+// memory files. `files` maps lower-cased slug / file name -> file name.
+// Code blocks and spans are left alone; html is already escaped by md().
+function memLinks(html, files){
+  const ref = (key, label) => {
+    const f = files[key.toLowerCase()] || files[key.toLowerCase().replace(/\.md$/, "")];
+    return f ? `<a class="memref" data-mem="${esc(f)}" title="${esc(f)}">${label}</a>`
+             : `<span class="memref missing" title="no memory file named ${key} yet">${label}</span>`;
+  };
+  return html.split(/(<pre[\s\S]*?<\/pre>|<code>[\s\S]*?<\/code>)/).map((part, i) => i % 2 ? part :
+    part.replace(/\[\[([^\]\n|]+?)(?:\|([^\]\n]+))?\]\]/g, (_, k, lab) => ref(k.trim(), lab || k.trim()))
+        .replace(/\[([^\]\n]+)\]\(([\w.-]+\.md)\)/g, (_, lab, f) => ref(f, lab))
+  ).join("");
+}
+
+// Memory health: files missing from the MEMORY.md index, files without the
+// name/description/type front matter, and [[links]] with no file yet (allowed:
+// they mark a memory worth writing, so they are listed, not flagged)
+function memLint(parsed){
+  const names = new Set(), out = {unindexed: [], nofront: [], unwritten: []};
+  for(const {f, meta} of parsed){
+    names.add(f.name.toLowerCase()); names.add(f.name.toLowerCase().replace(/\.md$/, ""));
+    if(meta.name) names.add(String(meta.name).toLowerCase());
+  }
+  const index = parsed.find(p => p.f.name === "MEMORY.md");
+  const idx = index ? index.f.content.toLowerCase() : "";
+  for(const {f, meta, body} of parsed){
+    if(f.name === "MEMORY.md") continue;
+    const stem = f.name.toLowerCase().replace(/\.md$/, "");
+    if(index && !idx.includes(f.name.toLowerCase()) && !idx.includes("[[" + stem)
+       && !(meta.name && idx.includes("[[" + String(meta.name).toLowerCase())))
+      out.unindexed.push(f.name);
+    if(!meta.name || !meta.description || !meta.type) out.nofront.push(f.name);
+    for(const m of body.replace(/```[\s\S]*?```|`[^`\n]*`/g, "").matchAll(/\[\[([^\]\n|]+?)(?:\|[^\]\n]+)?\]\]/g))
+      if(!names.has(m[1].trim().toLowerCase())) out.unwritten.push({from: f.name, to: m[1].trim()});
+  }
+  return out;
+}
+
 async function showMemory(slug){
   state.active = null; renderTree();
   const my = ++openSeq;
@@ -1906,18 +2486,54 @@ async function showMemory(slug){
   head.innerHTML = `<h2>🧠 Project memory</h2><div class="meta">${m.files.length} file(s)</div>`;
   mountHeader(head);
   const tl = document.createElement("div"); tl.id = "timeline";
-  for(const f of m.files){
+  const parsed = m.files.map(f => ({f, ...memFront(f.content)}));
+  const lint = memLint(parsed), fileRef = n => `<a class="memref" data-mem="${esc(n)}">${esc(n)}</a>`;
+  const issues = [
+    lint.unindexed.length && `<div><b>Not in MEMORY.md</b> (Claude won't see them in the index): ${lint.unindexed.map(fileRef).join(", ")}</div>`,
+    lint.nofront.length && `<div><b>No name / description / type</b> front matter: ${lint.nofront.map(fileRef).join(", ")}</div>`,
+    lint.unwritten.length && `<div class="dim">Links to memories not written yet: ${lint.unwritten.map(u => `${esc(u.to)} <span class="dim">(from ${fileRef(u.from)})</span>`).join(", ")}</div>`,
+  ].filter(Boolean);
+  if(m.files.length > 1){
+    const box = document.createElement("div");
+    box.className = "memlint" + (lint.unindexed.length || lint.nofront.length ? " warn" : "");
+    box.innerHTML = issues.length ? `<div class="mlhead">Memory check</div>${issues.join("")}`
+                                  : `<div class="mlhead">Memory check: every file is indexed and has its front matter ✓</div>`;
+    tl.appendChild(box);
+  }
+  const names = {}, rows = {};
+  for(const {f, meta} of parsed){
+    names[f.name.toLowerCase()] = names[f.name.toLowerCase().replace(/\.md$/, "")] = f.name;
+    if(meta.name) names[meta.name.toLowerCase()] = f.name;
+  }
+  for(const {f, meta, body} of parsed){
     const div = document.createElement("div"); div.className = "entry assistant collapsible" +
       (f.name==="MEMORY.md" ? " openx" : "");
     const h = document.createElement("div"); h.className = "head"; h.style.cursor="pointer";
-    h.innerHTML = `<span class="caret">▸</span><span class="tag">${esc(f.name)}</span>`;
+    h.innerHTML = `<span class="caret">▸</span><span class="tag">${esc(f.name)}</span>` +
+      (meta.type ? `<span class="chip">${esc(meta.type)}</span>` : "") +
+      (meta.description ? `<span class="meta" style="color:var(--dim);font-size:12px">${esc(meta.description)}</span>` : "");
     h.appendChild(copyBtn(f.content));
     ctl(h).setAttribute("aria-expanded", div.classList.contains("openx"));
     h.onclick = () => h.setAttribute("aria-expanded", div.classList.toggle("openx"));
     const b = document.createElement("div"); b.className = "body md";
-    b.innerHTML = md(f.content);
-    div.append(h,b); tl.appendChild(div);
+    // the head already shows type + description; the card keeps any other keys
+    const rest = Object.entries(meta).filter(([k]) => !["type", "description"].includes(k));
+    const card = rest.length ? `<div class="memfm">` +
+      rest.map(([k, v]) => `<span>${esc(k)}: <b>${esc(v)}</b></span>`).join("") + `</div>` : "";
+    b.innerHTML = card + memLinks(md(body), names);
+    div.append(h,b); tl.appendChild(div); rows[f.name] = div;
   }
+  // [[slug]] / file.md links open the target file, scroll to it and flash it
+  tl.onclick = ev => {
+    const a = ev.target.closest("a.memref"), div = a && rows[a.dataset.mem];
+    if(!div) return;
+    ev.preventDefault();
+    div.classList.add("openx");
+    div.querySelector(".head").setAttribute("aria-expanded", "true");
+    div.scrollIntoView({block: "start", behavior: "smooth"});
+    div.style.outline = "2px solid var(--tool)";
+    setTimeout(() => div.style.outline = "", 2000);
+  };
   main.appendChild(tl);
 }
 
@@ -2721,6 +3337,77 @@ function fmtCountdown(secs){
   return `resets in ${h}h${String(m).padStart(2,"0")}`;
 }
 let lastUsage = null;
+/* ---------- usage history: a calendar heatmap of output tokens per day ---------- */
+const ymd = dt => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+// 0 for an idle day, else 1–4 by quartile of the active days (pure; tested)
+function heatLevel(values){
+  const nz = values.filter(v => v > 0).sort((a, b) => a - b);
+  const q = p => nz[Math.max(0, Math.ceil(p * nz.length) - 1)];
+  const cut = nz.length ? [q(.25), q(.5), q(.75)] : [];
+  return v => !v ? 0 : 1 + cut.filter(c => v > c).length;
+}
+function historyHtml(h){
+  const start = new Date(h.since * 1000); start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - (start.getDay() + 6) % 7);            // back to a Monday
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const cells = [];
+  for(const d = new Date(start); d <= today; d.setDate(d.getDate() + 1)){
+    const k = ymd(d), v = h.days[k] || {output: 0, requests: 0};
+    cells.push({k, dow: (d.getDay() + 6) % 7, month: d.getMonth(), date: d.getDate(), ...v,
+                inRange: d.getTime() / 1000 >= h.since - 86400});
+  }
+  const lvl = heatLevel(cells.map(c => c.output));
+  const C = 13, G = 3, L = 26, T = 16, weeks = Math.ceil(cells.length / 7);
+  const W = L + weeks * (C + G), H = T + 7 * (C + G);
+  const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  let svg = ["Mon", "", "Wed", "", "Fri", "", ""].map((d, i) => d ? `<text x="0" y="${T + i * (C + G) + C - 2}">${d}</text>` : "").join("");
+  cells.forEach((c, i) => {
+    const w = Math.floor(i / 7), x = L + w * (C + G), y = T + c.dow * (C + G);
+    if(c.dow === 0 && c.date <= 7) svg += `<text x="${x}" y="10">${MON[c.month]}</text>`;
+    svg += `<rect class="hl${c.inRange ? lvl(c.output) : 0}" x="${x}" y="${y}" width="${C}" height="${C}" rx="2"><title>${c.k}: ${c.output ? fmtTok(c.output) + " output tokens, " + c.requests + " requests" : "no activity"}</title></rect>`;
+  });
+  const active = cells.filter(c => c.output > 0), total = active.reduce((a, c) => a + c.output, 0);
+  const top = active.reduce((a, c) => c.output > (a ? a.output : 0) ? c : a, null);
+  const max = Math.max(1, ...h.projects.map(p => p.output));
+  const projects = h.projects.map(p => `<div class="hbar"><span title="${esc(p.slug)}">${esc(p.slug === "-" ? "/ (top level)" : projName(p.slug) || p.slug)}</span>
+      <span class="hbarbox"><span style="width:${(100 * p.output / max).toFixed(1)}%"></span></span><b>${fmtTok(p.output)}</b></div>`).join("");
+  const models = Object.entries(h.by_model || {}).sort((a, b) => b[1] - a[1])
+    .map(([m, v]) => `<div class="modelrow"><span>${esc(shortModel(m))}</span><span>${fmtTok(v)}</span></div>`).join("");
+  return `<div class="hstats"><div class="stat">output <b>${fmtTok(total)}</b></div>
+      <div class="stat">active days <b>${active.length}</b></div>
+      <div class="stat">per active day <b>${fmtTok(active.length ? total / active.length : 0)}</b></div>
+      ${top ? `<div class="stat">busiest <b>${esc(top.k)}</b> · ${fmtTok(top.output)}</div>` : ""}</div>
+    <div class="hgridwrap"><svg class="hgrid" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img"
+      aria-label="output tokens per day over the last ${h.span} days">${svg}</svg></div>
+    <div class="hlegend">less <i class="hl0"></i><i class="hl1"></i><i class="hl2"></i><i class="hl3"></i><i class="hl4"></i> more · output tokens per day, local time</div>
+    <div class="hcols"><div><div class="uhead">By project</div>${projects || '<div class="vizempty">nothing yet</div>'}</div>
+      <div><div class="uhead">By model</div>${models}</div></div>
+    <p class="hnote">From the transcripts on this machine. Claude Code deletes transcripts older than
+      <code>cleanupPeriodDays</code> (30 by default, in settings.json), so earlier days can be empty.</p>`;
+}
+async function openUsageHistory(days){
+  days = days || 90;
+  let d = $("#histdlg");
+  if(!d){
+    d = document.createElement("dialog"); d.id = "histdlg"; d.className = "histdlg";
+    d.setAttribute("aria-label", "Token use history");
+    document.body.appendChild(d); modal(d);
+    d.onclick = ev => {
+      const b = ev.target.closest("[data-days]");
+      if(b) openUsageHistory(+b.dataset.days);
+      else if(ev.target.closest("[data-close]")) d.close();
+    };
+  }
+  d.innerHTML = `<div class="hhead"><h3>Token use history</h3>
+      <span class="hrange">${[30, 90, 180].map(n => `<button class="copy" data-days="${n}" aria-pressed="${n === days}">${n} days</button>`).join("")}</span>
+      <button class="copy ibtn" data-close title="close">×</button></div>
+    <div class="hbody"><div class="vizempty">reading transcripts…</div></div>`;
+  showDialog(d);
+  const body = d.querySelector(".hbody");
+  try{ body.innerHTML = historyHtml(await api("/api/usage/history?days=" + days)); }
+  catch(e){ body.innerHTML = `<div class="vizempty">Could not read the history: ${esc(e.message)}</div>`; }
+}
+
 async function refreshUsage(){
   try{
     const u = await api("/api/usage");
@@ -2772,11 +3459,13 @@ async function refreshUsage(){
       <div style="margin-top:8px;color:var(--dim);font-size:11px">last 24h (output/hour)</div>
       <svg id="sparkline" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${bars}</svg>
       <div style="margin-top:8px;color:var(--dim);font-size:11px">by model, 7 days</div>${models}
+      <button class="copy" id="uHist" style="margin:8px 0 0;font-size:11.5px" title="output tokens per day, by project and model">📅 history (30–180 days)</button>
       <div style="margin-top:10px;color:var(--dim);font-size:10.5px">Computed from local transcripts (output tokens, deduped by request).${o
         ? " The official limits above come from Claude Code's statusline, " + fmtDur(Math.max(0, nowS - o.at)) + " ago."
         : addonInstalled("live-limits")
           ? " Official 5-hour and 7-day figures show here while a Claude session is running (Live limits add-on)."
           : ` The <a id="uLive" role="button" tabindex="0">Live limits</a> add-on adds the official 5-hour and 7-day figures.`}</div>`;
+    $("#uHist").onclick = () => openUsageHistory(90);
     const ul = $("#uLive");
     if(ul) ul.onclick = () => openAddons("live-limits");
     $("#blockreset").textContent = o && o.five_hour && o.five_hour.resets_at
@@ -3743,6 +4432,8 @@ function openKeys(){
     .concat(cpActions().filter(a => a.keys && a.keys !== "?").map(a => [a.keys, a.label]))
     .concat([["?", "This sheet"], ["Esc", "Close an overlay, then restore a maximized pane"],
              ["↑ ↓ → ← Enter", "Move in the sidebar tree; c starts claude in a project"],
+             ["j / k", "Session timeline: next / previous turn"],
+             ["e  a  s", "Session timeline: next error, agent, skill (with ⇧: previous)"],
              ["Delete", "Close the focused terminal tab"]]);
   $("#keystable").innerHTML = rows.map(([k, l]) => `<tr><td><kbd>${esc(k)}</kbd></td><td>${esc(l)}</td></tr>`).join("");
   showDialog($("#keys"));
@@ -4513,7 +5204,8 @@ async function buildExport(s, opt){
   const tl = document.createElement("div"); tl.id = "timeline";
   for(const e of s.entries){
     if(e.kind === "thinking" && !opt.thinking) continue;
-    if((e.kind === "system" || e.kind === "command" || e.system_reminder) && !opt.system) continue;
+    if((e.kind === "system" || e.kind === "hook" || (e.kind === "command" && !e.cmd)
+        || (e.kind === "meta" && e.sub === "note") || e.system_reminder) && !opt.system) continue;
     const el = renderEntry(e, {}, 0);
     const body = el.querySelector(".body");
     if(e.kind === "tool" && !opt.tools && body) body.remove();

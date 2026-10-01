@@ -35,7 +35,7 @@ import time
 import urllib.parse
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 # POSIX pseudo-terminals power the embedded terminal. macOS/Linux have them;
 # Windows does not (ConPTY needs a third-party package), so there the
@@ -361,6 +361,7 @@ def session_meta(path):
         "user_msgs": 0,
         "assistant_msgs": 0,
         "has_subagents": (path.parent / path.stem / "subagents").is_dir(),
+        "api_error": None,
     }
 
     small = st.st_size <= LIST_HEAD_BYTES + LIST_TAIL_BYTES
@@ -382,14 +383,18 @@ def session_meta(path):
             meta["cwd"] = meta["cwd"] or o.get("cwd")
             meta["version"] = meta["version"] or o.get("version")
             meta["gitBranch"] = meta["gitBranch"] or o.get("gitBranch")
-            if meta["title"] is None:
+            if meta["title"] is None and not o.get("isMeta"):
                 txt = block_text(o.get("message", {}).get("content"))
-                if txt and not txt.startswith(("<local-command", "<command-name")):
+                if txt and not txt.startswith(UNTITLED_PREFIXES):
                     meta["title"] = txt.strip()[:120]
         elif t == "assistant" and not o.get("isSidechain"):
             meta["assistant_msgs"] += 1
             m = o.get("message", {})
-            meta["model"] = m.get("model") or meta["model"]
+            # ended on an API error (rate limit, auth, overload)? a later real
+            # reply clears it. Records arrive in file order, head then tail.
+            meta["api_error"] = (o.get("error") or "error") if o.get("isApiErrorMessage") else None
+            if m.get("model") != "<synthetic>":
+                meta["model"] = m.get("model") or meta["model"]
 
     if small:
         for o in iter_jsonl(path):
@@ -500,20 +505,167 @@ def summarize_tool_result(name, tur, block_content):
     return None
 
 
+COMMAND_PREFIXES = ("<local-command", "<command-name", "<command-message")
+# a title never comes from command output or a built-in (/clear, /model);
+# a skill command (<command-message>…) does: "/improve config audit"
+UNTITLED_PREFIXES = ("<local-command", "<command-name")
+CMD_RE = {k: re.compile(rf"<{k}>(.*?)</{k}>", re.S)
+          for k in ("command-name", "command-args", "local-command-stdout", "local-command-stderr")}
+AGENT_FROM_RE = re.compile(r'<agent-message from="([^"]+)"')
+TASK_ID_RE = re.compile(r"<task-id>([^<]+)</task-id>")
+TASK_SUMMARY_RE = re.compile(r"<summary>(.*?)</summary>", re.S)
+
+
+def est_tok(n_chars):
+    """~4 characters per token: an estimate, always shown with a `~`."""
+    return max(1, n_chars // 4) if n_chars else 0
+
+
+def parse_command(txt):
+    """<command-name>/x</command-name><command-args>…</command-args> → fields;
+    local-command output keeps its text. Values are the tag contents."""
+    out = {}
+    for tag, key in (("command-name", "cmd"), ("command-args", "args"),
+                     ("local-command-stdout", "out"), ("local-command-stderr", "out")):
+        m = CMD_RE[tag].search(txt)
+        if m and m.group(1).strip():
+            out[key] = m.group(1).strip()
+    return out
+
+
+def first_heading_text(txt):
+    for line in txt.splitlines()[:40]:
+        s = line.strip()
+        if s.startswith("#"):
+            return s.lstrip("#").strip()[:80]
+    return None
+
+
+def meta_entry(txt, o, prev):
+    """A message Claude Code injected as 'user' (isMeta): a skill's body, a
+    subagent's report, a compaction summary, an image note. Never a prompt."""
+    origin = o.get("origin") if isinstance(o.get("origin"), dict) else {}
+    if o.get("isCompactSummary"):
+        sub, title = "summary", "Compaction summary"
+    elif origin.get("kind") == "peer" or txt.startswith("Another Claude session"):
+        m = AGENT_FROM_RE.search(txt[:400])
+        sub, title = "agent", "Report from " + (origin.get("name") or (m and m.group(1)) or "agent")
+    elif txt.startswith("Base directory for this skill:"):
+        path = txt.split("\n", 1)[0].split(":", 1)[1].strip().rstrip("/\\")
+        sub, title = "skill", "Skill " + re.split(r"[\\/]", path)[-1]
+    elif prev and prev.get("kind") == "command" and prev.get("cmd"):
+        sub, title = "skill", "Skill " + prev["cmd"]
+    elif txt.startswith("[Image"):
+        sub, title = "note", txt.split("\n", 1)[0][:100]
+    else:
+        sub, title = "note", first_heading_text(txt) or txt.strip().split("\n", 1)[0][:100]
+    return {"kind": "meta", "sub": sub, "title": title}
+
+
+def context_item(a, n_entries):
+    """What an `attachment` record put into the context window, as one or more
+    {entry, cat, label, tok}. Unknown types give nothing: the schema is
+    Claude Code's, undocumented, and changes between versions."""
+    t = a.get("type")
+    size = lambda v: len(v) if isinstance(v, str) else len(json.dumps(v, ensure_ascii=False))
+    item = lambda cat, label, chars, **kw: dict(entry=n_entries, cat=cat, label=label,
+                                                tok=est_tok(chars), **kw)
+    if t == "instructions":
+        return [item("claude-md", f.get("path") or "?", size(f.get("content") or ""),
+                     scope=f.get("type") or "")
+                for f in a.get("files") or [] if isinstance(f, dict)]
+    if t == "prompt_snapshot" and a.get("systemPrompt"):
+        return [item("system", "System prompt", size(a["systemPrompt"]))]
+    if t == "skill_listing":
+        return [item("skills", f"Skill list ({a.get('skillCount') or len(a.get('names') or [])})",
+                     size(a.get("content") or ""))]
+    if t == "agent_listing_delta":
+        return [item("agents", "Agent list", size(a.get("addedLines") or ""))]
+    if t == "mcp_instructions_delta":
+        names = ", ".join(a.get("addedNames") or [])[:80]
+        return [item("mcp", "MCP instructions" + (f": {names}" if names else ""),
+                     size(a.get("addedBlocks") or ""))]
+    if t == "deferred_tools_delta":
+        return [item("mcp", "Deferred tool list", size(a.get("addedLines") or ""))]
+    if t == "hook_additional_context":
+        return [item("hooks", a.get("hookName") or "hook", size(a.get("content") or ""))]
+    if t == "file":
+        c = a.get("content")
+        body = (c.get("file") or {}).get("content") if isinstance(c, dict) else c
+        return [item("mentions", a.get("displayPath") or a.get("filename") or "file",
+                     size(body or ""))]
+    if t == "edited_text_file":
+        return [item("mentions", (a.get("filename") or "file") + " (changed)",
+                     size(a.get("snippet") or ""))]
+    return []
+
+
+AGENT_STATS = {}            # path -> ((mtime_ns, size), stats)
+AGENT_STATS_MAX = 400
+
+
+def agent_stats(f):
+    """Cheap one-pass summary of a subagent transcript, cached per file, so a
+    Task row shows the agent's cost before anyone expands it."""
+    st = f.stat()
+    key = (st.st_mtime_ns, st.st_size)
+    hit = AGENT_STATS.get(f)
+    if hit and hit[0] == key:
+        return hit[1]
+    seen, out, peak, tools, first, last, model = set(), 0, 0, 0, None, None, None
+    for o in iter_jsonl(f):
+        ts = o.get("timestamp")
+        if ts:
+            first = first or ts
+            last = ts
+        if o.get("type") != "assistant":
+            continue
+        msg = o.get("message") or {}
+        if msg.get("model") and msg["model"] != "<synthetic>":
+            model = msg["model"]
+        tools += sum(1 for b in msg.get("content") or []
+                     if isinstance(b, dict) and b.get("type") == "tool_use")
+        rid, u = o.get("requestId"), msg.get("usage")
+        if rid and u and rid not in seen:
+            seen.add(rid)
+            out += u.get("output_tokens", 0)
+            peak = max(peak, u.get("input_tokens", 0) + u.get("cache_read_input_tokens", 0)
+                       + u.get("cache_creation_input_tokens", 0))
+    a, b = _ts_epoch(first), _ts_epoch(last)
+    stats = {"model": model, "tools": tools, "output": out, "peak": peak,
+             "duration": round(b - a, 1) if a and b else None, "mtime": st.st_mtime}
+    try:
+        meta = json.loads(f.with_name(f.stem + ".meta.json").read_text(encoding="utf-8"))
+        stats["type"] = meta.get("agentType")
+    except (OSError, ValueError, AttributeError):
+        pass
+    if len(AGENT_STATS) >= AGENT_STATS_MAX:
+        AGENT_STATS.clear()
+    AGENT_STATS[f] = (key, stats)
+    return stats
+
+
 def parse_session(path, include_sidechain=False):
     """Parse a transcript into UI-ready timeline entries + usage series.
 
     Subagent transcripts mark every record isSidechain=true, so those are
     parsed with include_sidechain=True; main transcripts skip sidechain
     records (they live in their own files in recent Claude Code versions).
+
+    Besides the timeline it returns `context`: what attachment records put into
+    the context window (CLAUDE.md files, skill list, @-files…), each tagged
+    with the timeline index it precedes, so the UI can attribute it to a turn.
     """
     entries = []            # ordered timeline
     tool_index = {}         # tool_use_id -> entry
+    tool_ep = {}            # tool_use_id -> epoch of the call (for durations)
     usage_by_request = {}   # requestId -> usage (dedupe multi-block responses)
     context_series = []     # one point per API request
+    context = []            # attachment-injected context, see docstring
     seen_requests = set()
     title = None
     model = None
+    cache_ttl = None
     sidechain_count = 0
 
     for o in iter_jsonl(path):
@@ -526,10 +678,37 @@ def parse_session(path, include_sidechain=False):
         if t == "summary" and o.get("summary"):
             title = title or o["summary"]
             continue
-        if t in ("queue-operation", "last-prompt", "attachment", "file-history-snapshot"):
-            continue
         if o.get("isSidechain") and not include_sidechain:
             sidechain_count += 1
+            continue
+        if t == "attachment":
+            a = o.get("attachment") if isinstance(o.get("attachment"), dict) else {}
+            at = a.get("type")
+            if at in ("hook_non_blocking_error", "hook_cancelled"):
+                err = (a.get("stderr") or "").strip() or (
+                    "timed out" if a.get("timedOut") else "cancelled")
+                entries.append({"kind": "hook", "ts": ts, "name": a.get("hookName") or "hook",
+                                "exit": a.get("exitCode"), "text": truncate(err, 4000),
+                                "command": a.get("command")})
+            elif at == "queued_command":
+                origin = a.get("origin") if isinstance(a.get("origin"), dict) else {}
+                txt = a.get("prompt") if isinstance(a.get("prompt"), str) else block_text(a.get("prompt"))
+                if not txt:
+                    continue
+                if origin.get("kind") == "task-notification" or txt.startswith("<task-notification>"):
+                    m = TASK_SUMMARY_RE.search(txt)
+                    entries.append({"kind": "meta", "sub": "agent", "ts": ts,
+                                    "title": (m.group(1).strip() if m else "Agent notification")[:120],
+                                    "text": truncate(txt, MAX_TEXT_CHARS), "tok": est_tok(len(txt))})
+                elif origin.get("kind") in (None, "human"):
+                    # typed while Claude was working: a prompt, but not a new turn
+                    entries.append({"kind": "user", "queued": True, "ts": ts,
+                                    "text": truncate(txt, MAX_TEXT_CHARS), "tok": est_tok(len(txt)),
+                                    "system_reminder": False})
+            else:
+                context.extend(context_item(a, len(entries)))
+            continue
+        if t in ("queue-operation", "last-prompt", "file-history-snapshot"):
             continue
 
         if t == "user":
@@ -551,22 +730,48 @@ def parse_session(path, include_sidechain=False):
                     res = summarize_tool_result(entry["name"], tur, b.get("content"))
                     entry["result"] = truncate(res, MAX_RESULT_CHARS)
                     entry["is_error"] = bool(b.get("is_error"))
+                    entry["tok"] = entry.get("tok", 0) + est_tok(len(res or ""))
+                    t0, t1 = tool_ep.get(b.get("tool_use_id")), _ts_epoch(ts)
+                    if t0 is not None and t1 is not None:
+                        entry["dur"] = round(max(0.0, t1 - t0), 2)
                     if isinstance(tur, dict) and tur.get("agentId"):
                         entry["agent_id"] = tur.get("agentId")
                 continue
             txt = block_text(content)
             if not txt:
                 continue
-            kind = "command" if txt.startswith(("<local-command", "<command-name")) else "user"
+            if txt.startswith("<task-notification>"):          # older layouts: a plain user message
+                m = TASK_SUMMARY_RE.search(txt)
+                entries.append({"kind": "meta", "sub": "agent", "ts": ts,
+                                "title": (m.group(1).strip() if m else "Agent notification")[:120],
+                                "text": truncate(txt, MAX_TEXT_CHARS), "tok": est_tok(len(txt))})
+                continue
+            if o.get("isMeta") or o.get("isCompactSummary"):
+                if txt.startswith("<local-command-caveat>"):
+                    continue                # "the next message ran locally": noise
+                e = meta_entry(txt, o, entries[-1] if entries else None)
+                e.update(ts=ts, text=truncate(txt, MAX_TEXT_CHARS), tok=est_tok(len(txt)))
+                entries.append(e)
+                continue
+            kind = "command" if txt.startswith(COMMAND_PREFIXES) else "user"
             sysrem = "<system-reminder>" in txt
-            if title is None and kind == "user" and not sysrem:
+            if title is None and not sysrem and not txt.startswith(UNTITLED_PREFIXES):
                 title = txt.strip()[:120]
-            entries.append({"kind": kind, "ts": ts, "text": truncate(txt, MAX_TEXT_CHARS),
-                            "system_reminder": sysrem, "uuid": o.get("uuid")})
+            e = {"kind": kind, "ts": ts, "text": truncate(txt, MAX_TEXT_CHARS),
+                 "system_reminder": sysrem, "uuid": o.get("uuid"), "tok": est_tok(len(txt))}
+            if kind == "command":
+                e.update(parse_command(txt))
+            entries.append(e)
 
         elif t == "assistant":
             msg = o.get("message", {})
-            model = msg.get("model") or model
+            if o.get("isApiErrorMessage"):
+                entries.append({"kind": "assistant", "ts": ts, "api_error": o.get("error") or "error",
+                                "text": truncate(block_text(msg.get("content")) or "API error",
+                                                 MAX_TEXT_CHARS)})
+                continue
+            if msg.get("model") and msg["model"] != "<synthetic>":
+                model = msg["model"]
             rid = o.get("requestId")
             usage = msg.get("usage")
             if rid and usage and rid not in seen_requests:
@@ -575,22 +780,29 @@ def parse_session(path, include_sidechain=False):
                 ctx = (usage.get("input_tokens", 0)
                        + usage.get("cache_read_input_tokens", 0)
                        + usage.get("cache_creation_input_tokens", 0))
+                cc = usage.get("cache_creation") if isinstance(usage.get("cache_creation"), dict) else {}
+                if cc.get("ephemeral_1h_input_tokens"):
+                    cache_ttl = 3600
+                elif cc.get("ephemeral_5m_input_tokens"):
+                    cache_ttl = 300
                 context_series.append({
                     "ts": ts, "context": ctx,
                     "output": usage.get("output_tokens", 0),
                     "cache_read": usage.get("cache_read_input_tokens", 0),
                     "cache_creation": usage.get("cache_creation_input_tokens", 0),
                     "input": usage.get("input_tokens", 0),
+                    "entry": len(entries),   # first timeline row of this request
+                    "model": msg.get("model"),
                 })
             for b in msg.get("content", []) or []:
                 if not isinstance(b, dict):
                     continue
                 bt = b.get("type")
                 if bt == "text" and b.get("text"):
-                    entries.append({"kind": "assistant", "ts": ts,
+                    entries.append({"kind": "assistant", "ts": ts, "tok": est_tok(len(b["text"])),
                                     "text": truncate(b["text"], MAX_TEXT_CHARS)})
                 elif bt == "thinking" and b.get("thinking"):
-                    entries.append({"kind": "thinking", "ts": ts,
+                    entries.append({"kind": "thinking", "ts": ts, "tok": est_tok(len(b["thinking"])),
                                     "text": truncate(b["thinking"], MAX_TEXT_CHARS)})
                 elif bt == "tool_use":
                     entry = {"kind": "tool", "ts": ts, "name": b.get("name", "?"),
@@ -598,6 +810,7 @@ def parse_session(path, include_sidechain=False):
                              "result": None, "is_error": False}
                     try:  # keep giant inputs (Write content) bounded
                         raw = json.dumps(entry["input"], ensure_ascii=False)
+                        entry["tok"] = est_tok(len(raw))
                         if len(raw) > MAX_RESULT_CHARS:
                             entry["input_truncated"] = True
                             entry["input"] = {
@@ -608,6 +821,7 @@ def parse_session(path, include_sidechain=False):
                     entries.append(entry)
                     if b.get("id"):
                         tool_index[b["id"]] = entry
+                        tool_ep[b["id"]] = _ts_epoch(ts)
 
         elif t == "system":
             txt = o.get("content") or o.get("text") or ""
@@ -633,6 +847,9 @@ def parse_session(path, include_sidechain=False):
         "cache_creation": sum(u.get("cache_creation_input_tokens", 0)
                               for u in usage_by_request.values()),
         "peak_context": max((p["context"] for p in context_series), default=0),
+        # prompt cache: warm until the last request + its TTL (5 min or 1 h)
+        "last_request_ts": context_series[-1]["ts"] if context_series else None,
+        "cache_ttl": cache_ttl,
     }
 
     # tool call histogram
@@ -641,13 +858,17 @@ def parse_session(path, include_sidechain=False):
         if e["kind"] == "tool":
             tool_counts[e["name"]] = tool_counts.get(e["name"], 0) + 1
 
-    # subagent transcripts on disk
+    # subagent transcripts on disk, with their cost (agent-<id>.jsonl)
     subagents = []
     subdir = path.parent / path.stem / "subagents"
     if subdir.is_dir():
         for f in sorted(subdir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime):
+            try:
+                stats = agent_stats(f)
+            except OSError:
+                stats = {}
             subagents.append({"file": f.name, "size": f.stat().st_size,
-                              "mtime": f.stat().st_mtime})
+                              "mtime": f.stat().st_mtime, "stats": stats})
 
     return {
         "id": path.stem,
@@ -655,6 +876,7 @@ def parse_session(path, include_sidechain=False):
         "model": model,
         "entries": entries,
         "context_series": context_series,
+        "context": context,
         "totals": totals,
         "tool_counts": tool_counts,
         "subagents": subagents,
@@ -767,7 +989,7 @@ def session_tail(path, key, since):
     return {"key": now_key, "start": start, "entries": d["entries"][start:],
             "total": len(d["entries"]), "totals": d["totals"],
             "tool_counts": d["tool_counts"], "context_series": d["context_series"],
-            "subagents": d["subagents"], "title": d["title"]}
+            "subagents": d["subagents"], "title": d["title"], "context": d["context"]}
 
 
 SEARCH_CHUNK = 8 * 1024 * 1024
@@ -905,7 +1127,7 @@ def file_usage_records(path):
             continue
         rid = o.get("requestId")
         u = o.get("message", {}).get("usage")
-        if not rid or not u or rid in seen:
+        if not rid or not u or rid in seen or o.get("isApiErrorMessage"):
             continue
         seen.add(rid)
         ep = _ts_epoch(o.get("timestamp"))
@@ -1012,6 +1234,38 @@ def usage_summary(root):
                      "blocks": st.get("baseline_blocks")} if st.get("baseline_max") else None,
         "generated": now,
     }
+
+
+def usage_history(root, days=90):
+    """Output tokens per local day over the last `days` days, with the
+    split by project and by model, for the heatmap. Reuses the per-file
+    record cache (the baseline scan has usually warmed it already)."""
+    days = max(7, min(366, int(days)))
+    now = time.time()
+    cutoff = now - days * 86400
+    pdir = projects_dir(root)
+    per_day, per_proj, per_model = {}, {}, {}
+    for f in pdir.rglob("*.jsonl"):
+        try:
+            if f.stat().st_mtime < cutoff:
+                continue
+            recs = file_usage_records(f)
+        except OSError:
+            continue
+        slug = f.relative_to(pdir).parts[0]      # subagent files count for their project
+        for ep, out, model in recs:
+            if ep < cutoff:
+                continue
+            d = datetime.fromtimestamp(ep).strftime("%Y-%m-%d")      # local day
+            day = per_day.setdefault(d, {"output": 0, "requests": 0})
+            day["output"] += out
+            day["requests"] += 1
+            per_proj[slug] = per_proj.get(slug, 0) + out
+            per_model[model] = per_model.get(model, 0) + out
+    return {"days": per_day, "since": cutoff, "generated": now, "span": days,
+            "projects": sorted(({"slug": k, "output": v} for k, v in per_proj.items()),
+                               key=lambda x: -x["output"])[:15],
+            "by_model": per_model}
 
 
 # ---------------------------------------------------------------- viz inbox
@@ -1884,16 +2138,18 @@ def hooks_cmd(exe=None, here=None, frozen=None, windows=None):
     devtools_hooks.py …`), so no system Python is needed. Quoted for the
     install terminal's shell."""
     exe = exe or sys.executable
-    here = Path(here or HERE)
+    here = str(here or HERE)       # a string: a host Path would flip the separators
     frozen = getattr(sys, "frozen", False) if frozen is None else frozen
     windows = os.name == "nt" if windows is None else windows
-    if "/AppTranslocation/" in here.as_posix():
+    if "/AppTranslocation/" in here.replace("\\", "/"):
         # macOS runs a downloaded app from a random read-only copy until it
         # is moved: hooks pointing there would break on the next launch.
         # `false` stops the && chain without closing the terminal.
         return "echo Move Ember to the Applications folder, reopen it, then retry && false"
     if not frozen:
-        argv = [exe, str(here / "tools" / "devtools_hooks.py")]
+        # the target OS's path flavour, not the host's (tests build both)
+        flavour = PureWindowsPath if windows else PurePosixPath
+        argv = [exe, str(flavour(here, "tools", "devtools_hooks.py"))]
     elif windows:
         # Ember.exe is a windowed program: an interactive cmd would not wait
         # for it, so the && chain would run on (and lose its exit code)
@@ -2038,27 +2294,6 @@ def project_dir_for_cwd(root, cwd):
     return None
 
 
-def newest_transcript(cwd, within=900):
-    """The session file this terminal most likely just wrote."""
-    d = project_dir_for_cwd(CLAUDE_ROOT, cwd)
-    if d is None:
-        return None
-    now = time.time()
-    best = None
-    for f in d.glob("*.jsonl"):
-        try:
-            st = f.stat()
-        except OSError:
-            continue
-        if now - st.st_mtime > within:
-            continue
-        if best is None or st.st_mtime > best[0]:
-            best = (st.st_mtime, st.st_size, f)
-    if best and best[1] >= IMPROVE_MIN_TRANSCRIPT:
-        return best[2]
-    return None
-
-
 def mangle_cwd(cwd):
     """Folder name for OUR improve-reports/ (not Claude Code's rule — see
     project_dir_for_cwd for finding its transcripts)."""
@@ -2083,7 +2318,7 @@ def improve_stamp_write(slug):
         pass
 
 
-def spawn_improve(cwd):
+def spawn_improve(cwd, transcript):
     """Kick off a /improve retrospective for a just-closed session, detached.
 
     Read-only by construction (Read/Grep/Glob only), rate-limited, and skipped
@@ -2099,8 +2334,10 @@ def spawn_improve(cwd):
     claude = find_claude()
     if not claude:
         return None
-    transcript = newest_transcript(cwd)
-    if not transcript:
+    try:
+        if not transcript or transcript.stat().st_size < IMPROVE_MIN_TRANSCRIPT:
+            return None
+    except OSError:
         return None
     slug = mangle_cwd(cwd)
     if not improve_stamp_ok(slug):
@@ -2109,7 +2346,7 @@ def spawn_improve(cwd):
     d.mkdir(parents=True, exist_ok=True)
     out = d / (time.strftime("%Y-%m-%d_%H%M") + ".md")
     prompt = IMPROVE_PROMPT.format(transcript=transcript, cwd=cwd)
-    env = child_environment(extra={"CDL_IMPROVE_RUN": "1"})
+    env = child_environment(extra={"CDL_IMPROVE_RUN": "1", "PATH": login_path()})
     header = (f"# Retrospective — {Path(cwd).name}\n\n"
               f"*{time.strftime('%Y-%m-%d %H:%M')} · session "
               f"`{transcript.stem}` · read-only run started by "
@@ -2391,7 +2628,8 @@ class Term:
         self.label = Path(argv[0]).name + " · " + (Path(cwd).name or "/")
         self.argv, self.cwd = argv, cwd
         self.is_claude = "claude" in Path(argv[0]).name.lower()
-        resume = argv[argv.index("--resume") + 1] if "--resume" in argv[:-1] else None
+        resume = next((argv[i + 1] for i, a in enumerate(argv[:-1])
+                       if a in ("--resume", "--session-id")), None)
         self.snap = session_snapshot(cwd, resume) if self.is_claude else None
         self.buf = bytearray()      # scrollback so re-attaching clients catch up
         self.discarded = 0          # bytes trimmed off the front of buf, ever
@@ -2481,9 +2719,10 @@ class Term:
                 store_summary(self.id, session_summary(self.cwd, self.snap))
             except Exception:
                 LOG.exception("session summary failed")
-        if self.is_claude:              # also on quit: that is the retrospective's point
+        if self.is_claude and self.snap:  # also on quit: that is the retrospective's point
             try:
-                spawn_improve(self.cwd)
+                spawn_improve(self.cwd, session_transcript(
+                    self.cwd, self.snap["started"], self.snap.get("resume")))
             except Exception:
                 pass
 
@@ -2874,7 +3113,7 @@ def start_term(kind, cwd, session_id=None, prompt=None, cols=100, rows=30):
         if kind == "resume" and session_id:
             argv = [claude, "--resume", session_id]
         else:
-            argv = [claude]
+            argv = [claude, "--session-id", str(uuid.uuid4())]
             if prompt:                  # e.g. "/graphify" from the viz pane
                 argv.append(str(prompt)[:2000])
     # complete child environment: scrubbed of the parent session's markers (so
@@ -3071,6 +3310,14 @@ class Handler(BaseHTTPRequestHandler):
 
             if p == "/api/term/stream":
                 self.stream_term(qs)
+                return
+
+            if p == "/api/usage/history":
+                try:
+                    days = int(qs.get("days", ["90"])[0])
+                except ValueError:
+                    days = 90
+                self._json(usage_history(self.root, days))
                 return
 
             if p == "/api/usage":

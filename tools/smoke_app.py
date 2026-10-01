@@ -9,7 +9,8 @@ the server must answer, serve the page and its vendor files, and prove it
 holds the token; the statusline tee must read stdin and write stdout (a
 windowed Windows exe gets no stdio by default: native/window.py rebuilds it).
 `window` opens the real window for a few seconds instead: it must stay up
-without falling back to the browser. Exit code 0 = pass.
+without falling back to the browser, on Windows with every file carrying the
+"downloaded from the internet" mark a user's unzipped copy has. Exit code 0 = pass.
 """
 import json
 import os
@@ -47,8 +48,22 @@ def throwaway_home():
     return home, env
 
 
+def mark_downloaded(folder):
+    """Give every file the "from the internet" mark that Explorer copies onto
+    files extracted from a downloaded zip: the build must open its window
+    anyway (native/window.py clears the mark on its own binaries)."""
+    for f in Path(folder).rglob("*"):
+        if f.is_file():
+            with open(str(f) + ":Zone.Identifier", "w") as z:
+                z.write("[ZoneTransfer]\r\nZoneId=3\r\n")
+
+
 def window(target):
     home, env = throwaway_home()
+    runtime = None
+    if os.name == "nt":
+        mark_downloaded(Path(target).resolve().parent)
+        runtime = next(Path(target).resolve().parent.rglob("Python.Runtime.dll"), None)
     p = subprocess.Popen([str(Path(target).resolve())], env=env,
                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     try:
@@ -67,6 +82,10 @@ def window(target):
             print(f"could not stop the server: {e!r}")
     print(out[-3000:])
     assert alive and "no web view" not in out, "the window did not stay up"
+    if runtime is not None:
+        assert not os.path.exists(str(runtime) + ":Zone.Identifier"), \
+            "the internet mark is still on Python.Runtime.dll"
+        print("internet mark cleared: ok")
     print("window: ok")
     return 0
 

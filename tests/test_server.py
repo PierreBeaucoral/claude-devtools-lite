@@ -7,6 +7,7 @@ auth/CSRF layer against a live server on an ephemeral port.
 """
 import importlib.util
 import json
+import re
 import os
 import sys
 import threading
@@ -149,6 +150,14 @@ def test_compaction_detected_on_context_drop(tmp_path):
     assert not series[0].get("compaction") and series[1].get("compaction")
 
 
+def test_series_points_at_first_entry_of_request(session_file):
+    # the context chart jumps to entries[point["entry"]] on click
+    s = srv.parse_session(session_file)
+    kinds = [(s["entries"][p["entry"]]["kind"]) for p in s["context_series"]]
+    assert kinds == ["thinking", "tool", "tool"]
+    assert s["entries"][s["context_series"][2]["entry"]]["name"] == "Edit"
+
+
 def test_malformed_lines_skipped(session_file):
     # the "{not valid json" line must not break anything (implicitly covered
     # above, asserted explicitly here)
@@ -156,6 +165,127 @@ def test_malformed_lines_skipped(session_file):
 
 
 # ---------------------------------------------------------------- usage blocks
+
+def rec_attach(att, ts="2026-07-28T10:00:00.500Z"):
+    return {"type": "attachment", "isSidechain": False, "timestamp": ts, "attachment": att}
+
+
+def test_injected_messages_are_not_prompts(tmp_path):
+    """Skill bodies, agent reports, commands, hooks, queued prompts and API
+    errors each get their own kind; only real prompts stay `user`."""
+    f = tmp_path / "p" / "s.jsonl"
+    write_session(f, [
+        rec_attach({"type": "hook_non_blocking_error", "hookName": "SessionStart:startup",
+                    "exitCode": 127, "stderr": "node: command not found", "command": "node x.js"}),
+        rec_attach({"type": "instructions", "files": [
+            {"path": "/u/.claude/CLAUDE.md", "type": "User", "content": "x" * 400},
+            {"path": "/p/CLAUDE.md", "type": "Project", "content": "y" * 80}]}),
+        rec_user("<command-message>improve</command-message>\n<command-name>/improve</command-name>\n"
+                 "<command-args>config audit</command-args>"),
+        dict(rec_user("# Retrospective\n\nReview the conversation"), isMeta=True),
+        dict(rec_user("<local-command-caveat>Caveat</local-command-caveat>"), isMeta=True),
+        dict(rec_user('Another Claude session sent a message:\n<agent-message from="a1">report'),
+             isMeta=True, origin={"kind": "peer", "name": "Explore"}),
+        rec_attach({"type": "queued_command", "prompt": "also check X", "origin": {"kind": "human"}}),
+        rec_attach({"type": "queued_command", "origin": {"kind": "task-notification"},
+                    "prompt": "<task-notification><summary>Agent \"x\" finished</summary></task-notification>"}),
+        rec_user("<task-notification><summary>Agent \"y\" finished</summary></task-notification>"),
+        rec_attach({"type": "file", "displayPath": "a.py",
+                    "content": {"type": "text", "file": {"content": "z" * 40}}}),
+        rec_attach({"type": "total_tokens_reminder", "text": "ignored"}),
+        {"type": "assistant", "isApiErrorMessage": True, "error": "rate_limit",
+         "timestamp": "2026-07-28T10:00:06.000Z",
+         "message": {"model": "<synthetic>", "content": [{"type": "text", "text": "Rate limited"}]}},
+    ])
+    d = srv.parse_session(f)
+    E = d["entries"]
+    kinds = [(e["kind"], e.get("sub") or e.get("cmd") or e.get("name")) for e in E]
+    assert kinds == [("hook", "SessionStart:startup"), ("command", "/improve"), ("meta", "skill"),
+                     ("meta", "agent"), ("user", None), ("meta", "agent"), ("meta", "agent"),
+                     ("assistant", None)]
+    assert E[1]["args"] == "config audit"
+    assert E[2]["title"] == "Skill /improve"
+    assert E[3]["title"] == "Report from Explore"
+    assert E[4]["queued"] is True
+    assert E[5]["title"] == 'Agent "x" finished'
+    assert E[6]["title"] == 'Agent "y" finished'
+    assert E[7]["api_error"] == "rate_limit"
+    assert d["model"] is None                     # <synthetic> is not a model
+    ctx = [(c["cat"], c["label"], c["tok"], c["entry"]) for c in d["context"]]
+    assert ctx == [("claude-md", "/u/.claude/CLAUDE.md", 100, 1), ("claude-md", "/p/CLAUDE.md", 20, 1),
+                   ("mentions", "a.py", 10, 7)]
+
+
+def test_tool_duration_and_token_estimates(tmp_path):
+    f = tmp_path / "p" / "s.jsonl"
+    write_session(f, [
+        rec_user("go"),
+        rec_assistant([{"type": "text", "text": "a" * 40},
+                       {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}}],
+                      ts="2026-07-28T10:00:05.000Z",
+                      usage={"input_tokens": 1, "output_tokens": 2, "cache_read_input_tokens": 3,
+                             "cache_creation_input_tokens": 4,
+                             "cache_creation": {"ephemeral_1h_input_tokens": 4}}),
+        rec_tool_result("t1", "x", tur={"stdout": "b" * 400}, ts="2026-07-28T10:00:07.500Z"),
+    ])
+    d = srv.parse_session(f)
+    tool = d["entries"][2]
+    assert tool["dur"] == 2.5
+    assert tool["tok"] == len(json.dumps({"command": "ls"})) // 4 + 100
+    assert d["entries"][1]["tok"] == 10
+    assert d["totals"]["cache_ttl"] == 3600
+    assert d["totals"]["last_request_ts"] == "2026-07-28T10:00:05.000Z"
+    assert d["context_series"][0]["model"] == "claude-fable-5"
+
+
+def test_subagent_stats_before_expanding(tmp_path):
+    f = tmp_path / "p" / "s.jsonl"
+    write_session(f, [rec_user("go")])
+    a = tmp_path / "p" / "s" / "subagents" / "agent-a1.jsonl"
+    write_session(a, [
+        rec_user("task", sidechain=True, ts="2026-07-28T10:00:00.000Z"),
+        rec_assistant([{"type": "tool_use", "id": "x", "name": "Read", "input": {}}], rid="r1",
+                      sidechain=True, ts="2026-07-28T10:00:30.000Z"),
+        rec_assistant([{"type": "text", "text": "done"}], rid="r2", sidechain=True,
+                      ts="2026-07-28T10:01:00.000Z"),
+    ])
+    a.with_name("agent-a1.meta.json").write_text(json.dumps({"agentType": "Explore"}))
+    st = srv.parse_session(f)["subagents"][0]["stats"]
+    assert (st["type"], st["model"], st["tools"], st["output"], st["peak"], st["duration"]) == \
+           ("Explore", "claude-fable-5", 1, 200, 1210, 60.0)
+
+
+def test_session_meta_flags_a_trailing_api_error(tmp_path):
+    f = tmp_path / "p" / "s.jsonl"
+    err = {"type": "assistant", "isApiErrorMessage": True, "error": "authentication_failed",
+           "message": {"model": "<synthetic>", "content": []}}
+    write_session(f, [rec_user("hi"), rec_assistant([{"type": "text", "text": "x"}]), err])
+    assert srv.session_meta(f)["api_error"] == "authentication_failed"
+    assert srv.session_meta(f)["model"] == "claude-fable-5"
+    write_session(f, [rec_user("hi"), err, rec_assistant([{"type": "text", "text": "x"}], rid="r9")])
+    os.utime(f, (time.time() + 5, time.time() + 5))      # bust the meta cache
+    assert srv.session_meta(f)["api_error"] is None
+
+
+def test_usage_history_by_day_project_and_model(tmp_path):
+    from datetime import datetime, timedelta
+    now = datetime.now()
+    iso = lambda d: d.astimezone().isoformat()
+    proj = tmp_path / "projects"
+    write_session(proj / "-a" / "s1.jsonl", [
+        rec_assistant([], rid="r1", ts=iso(now - timedelta(days=1))),
+        rec_assistant([], rid="r2", ts=iso(now - timedelta(days=1))),
+        rec_assistant([], rid="r3", ts=iso(now - timedelta(days=200)))])     # outside the window
+    write_session(proj / "-a" / "s1" / "subagents" / "agent-x.jsonl",
+                  [rec_assistant([], rid="r4", ts=iso(now), sidechain=True)])
+    write_session(proj / "-b" / "s2.jsonl", [rec_assistant([], rid="r5", ts=iso(now))])
+    h = srv.usage_history(tmp_path, days=30)
+    assert sum(d["output"] for d in h["days"].values()) == 400
+    assert h["days"][(now - timedelta(days=1)).strftime("%Y-%m-%d")] == {"output": 200, "requests": 2}
+    assert h["projects"] == [{"slug": "-a", "output": 300}, {"slug": "-b", "output": 100}]
+    assert h["by_model"] == {"claude-fable-5": 400}
+    assert srv.usage_history(tmp_path, days=9999)["span"] == 366
+
 
 def test_blocks_split_on_5h_gap():
     h = 3600
@@ -792,25 +922,48 @@ def test_project_dir_found_whatever_claude_code_named_it(tmp_path, cwd, slug):
 def test_improve_never_runs_inside_its_own_retrospective(monkeypatch, tmp_path):
     monkeypatch.setenv("CDL_IMPROVE_RUN", "1")
     monkeypatch.setattr(srv, "find_claude", lambda: "/bin/false")
-    assert srv.spawn_improve(str(tmp_path)) is None
+    assert srv.spawn_improve(str(tmp_path), None) is None
 
 
 def test_improve_respects_the_kill_switch(monkeypatch, tmp_path):
     monkeypatch.delenv("CDL_IMPROVE_RUN", raising=False)
     monkeypatch.setenv("CDL_IMPROVE", "0")
     assert srv.improve_enabled() is False
-    assert srv.spawn_improve(str(tmp_path)) is None
+    assert srv.spawn_improve(str(tmp_path), None) is None
 
 
-def test_improve_skips_short_sessions(monkeypatch, tmp_path):
-    monkeypatch.setattr(srv, "CLAUDE_ROOT", tmp_path)
-    cwd = "/tmp/tiny"
-    d = tmp_path / "projects" / srv.mangle_cwd(cwd)
-    d.mkdir(parents=True)
-    (d / "s.jsonl").write_text("{}\n")                 # far under the threshold
-    assert srv.newest_transcript(cwd) is None
-    (d / "s.jsonl").write_text("x" * (srv.IMPROVE_MIN_TRANSCRIPT + 1))
-    assert srv.newest_transcript(cwd).name == "s.jsonl"
+def test_improve_skips_short_or_missing_transcripts(monkeypatch, tmp_path):
+    monkeypatch.delenv("CDL_IMPROVE_RUN", raising=False)
+    monkeypatch.delenv("CDL_IMPROVE", raising=False)
+    monkeypatch.setattr(srv, "find_claude", lambda: "/bin/false")
+    monkeypatch.setattr(srv, "addon_installed", lambda a: True)
+    spawned = []
+    monkeypatch.setattr(srv.subprocess, "Popen", lambda *a, **k: spawned.append(a))
+    short = tmp_path / "s.jsonl"
+    short.write_text("{}\n")                              # far under the threshold
+    assert srv.spawn_improve(str(tmp_path), short) is None
+    assert srv.spawn_improve(str(tmp_path), tmp_path / "gone.jsonl") is None
+    assert spawned == []
+
+
+def test_new_claude_terminal_pins_its_session_id(monkeypatch, tmp_path):
+    """The retrospective once analysed a distill hook's transcript instead of
+    the session that closed: "newest file in the project" loses to any hook
+    that runs its own claude at SessionEnd. The id is now chosen up front."""
+    monkeypatch.setattr(srv, "find_claude", lambda: "/usr/bin/claude")
+    seen = {}
+
+    class FakeTerm:
+        def __init__(self, argv, cwd, **kw):
+            seen["argv"] = argv
+            self.id, self.alive = "t", True
+    monkeypatch.setattr(srv, "PosixTerm", FakeTerm)
+    monkeypatch.setattr(srv, "WindowsTerm", FakeTerm)
+    monkeypatch.setattr(srv, "TERMS", {})
+    srv.start_term("claude", str(tmp_path))
+    argv = seen["argv"]
+    sid = argv[argv.index("--session-id") + 1]
+    assert re.fullmatch(r"[0-9a-f-]{36}", sid)
 
 
 # ---------------------------------------------------------------- config pane
@@ -1100,7 +1253,7 @@ def test_improve_is_skipped_when_the_command_is_not_installed(tmp_path, monkeypa
     monkeypatch.delenv("CDL_IMPROVE_RUN", raising=False)
     called = []
     monkeypatch.setattr(srv, "find_claude", lambda: called.append(1) or "/bin/true")
-    assert srv.spawn_improve(str(tmp_path)) is None
+    assert srv.spawn_improve(str(tmp_path), None) is None
     assert called == []                   # bailed out before looking for claude
 
 
@@ -1825,3 +1978,51 @@ def test_usage_survives_a_record_written_after_the_scan_started(tmp_path):
                   [rec_assistant([{"type": "text", "text": "hi"}], ts=future)])
     u = srv.usage_summary(tmp_path)
     assert sum(u["hourly"]) == 100
+
+
+# ---------------------------------------------------------------- native/window.py
+
+def _window_module():
+    spec = importlib.util.spec_from_file_location("ember_window", HERE.parent / "native" / "window.py")
+    w = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(w)
+    return w
+
+
+def test_window_failure_opens_the_browser_and_keeps_the_reason(tmp_path, monkeypatch):
+    """A windowed Ember.exe has no stderr: the reason the window failed must
+    land in window.log (and a message box on Windows), not vanish."""
+    import types
+    import webbrowser
+    w = _window_module()
+    opened = []
+    monkeypatch.setattr(webbrowser, "open", opened.append)
+    if os.name == "nt":
+        import ctypes
+        monkeypatch.setattr(ctypes.windll.user32, "MessageBoxW", lambda *a: 1)
+    w.server = types.SimpleNamespace(APP_DIR=tmp_path)
+    try:
+        raise OSError("Could not load file or assembly 'Python.Runtime' (0x80131515)")
+    except OSError as e:
+        assert w.browser_instead("http://127.0.0.1:1/launch?c=x", e) == 0
+    assert opened == ["http://127.0.0.1:1/launch?c=x"]
+    assert "0x80131515" in (tmp_path / "window.log").read_text(encoding="utf-8")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="NTFS alternate data streams")
+def test_window_clears_the_internet_mark_on_its_binaries(tmp_path, monkeypatch):
+    """Explorer marks files unzipped from a download; .NET then refuses the
+    window's DLLs (0x80131515). The frozen app clears the mark on its own."""
+    w = _window_module()
+    (tmp_path / "_internal").mkdir()
+    dll, txt = tmp_path / "_internal" / "Python.Runtime.dll", tmp_path / "notes.txt"
+    for f in (dll, txt):
+        f.write_bytes(b"x")
+        with open(str(f) + ":Zone.Identifier", "w") as z:
+            z.write("[ZoneTransfer]\nZoneId=3\n")
+    monkeypatch.setattr(w, "FROZEN", True)
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "Ember.exe"))
+    assert w.unblock_bundle() == 1
+    assert not os.path.exists(str(dll) + ":Zone.Identifier")
+    assert os.path.exists(str(txt) + ":Zone.Identifier")       # only binaries
+    assert dll.read_bytes() == b"x"                            # the file itself stays

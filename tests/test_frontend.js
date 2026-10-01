@@ -305,19 +305,83 @@ eq("re-activating the same tab does not reload", app.loaded.length, before);
 
 /* ---------------- live-follow: tail splice ---------------- */
 {
-  const { spliceTail, tailDiff } = (0, eval)(slice("const spliceTail =", "const sessMtime =") + ";({spliceTail, tailDiff})");
+  const { spliceTail } = (0, eval)(slice("const spliceTail =", "const sessMtime =") + ";({spliceTail})");
   const old = [{i: 0}, {i: 1}, {i: 2, result: null}, {i: 3}];
   const r = {start: 2, entries: [{i: 2, result: "done"}, {i: 3}, {i: 4}]};
   const next = spliceTail(old, r);
   eq("tail splice keeps the head and appends", JSON.stringify(next.map(x => x.i)), "[0,1,2,3,4]");
   eq("tail splice replaces the overlap", next[2].result, "done");
   eq("tail splice does not mutate the old array", old.length, 4);
-  const d = tailDiff(old, next, r.start, old.length);
-  eq("only the changed rendered row repaints", JSON.stringify(d.replace), "[2]");
-  eq("nothing dropped when the file grew", d.drop, 0);
-  eq("unrendered rows are never repainted", JSON.stringify(tailDiff(old, next, 2, 2).replace), "[]");
-  const shrunk = spliceTail(old, {start: 1, entries: [{i: 1}]});
-  eq("a shorter tail drops rendered rows", tailDiff(old, shrunk, 1, 4).drop, 2);
+}
+
+/* ---------------- turns, context attribution, cache timer ---------------- */
+{
+  const T = (0, eval)(slice("/* ---------- turns ----", "/* ---------- end of the pure turn helpers") +
+    ";({isPrompt, groupTurns, turnOf, shortModel, turnInfo, contextIn, visibleContext, firstChange})");
+  const E = [
+    {kind: "hook", ts: "2026-10-01T10:00:00Z", text: "x"},                                   // 0 preamble
+    {kind: "user", ts: "2026-10-01T10:00:01Z", text: "do it", tok: 2},                       // 1 prompt
+    {kind: "thinking", ts: "2026-10-01T10:00:02Z", text: "hm", tok: 5},
+    {kind: "tool", ts: "2026-10-01T10:00:03Z", name: "Bash", tok: 40, result: "ok"},
+    {kind: "user", queued: true, ts: "2026-10-01T10:00:04Z", text: "also this", tok: 3},     // typed mid-turn
+    {kind: "user", ts: "2026-10-01T10:00:05Z", text: "<system-reminder>r</system-reminder>"},
+    {kind: "assistant", ts: "2026-10-01T10:00:09Z", text: "done", tok: 1},                   // 6 final
+    {kind: "command", cmd: "/improve", ts: "2026-10-01T10:01:00Z", text: "<command-name>", tok: 9}, // 7 prompt
+    {kind: "meta", sub: "skill", ts: "2026-10-01T10:01:00Z", text: "# Skill", tok: 100},
+    {kind: "tool", ts: "2026-10-01T10:01:02Z", name: "Task", agent_id: "a1", is_error: true, tok: 10},
+    {kind: "assistant", ts: "2026-10-01T10:01:03Z", text: "partial", tok: 1},
+    {kind: "tool", ts: "2026-10-01T10:01:04Z", name: "Read", tok: 30},
+    {kind: "command", ts: "2026-10-01T10:02:00Z", out: "stdout"},                            // output: not a prompt
+  ];
+  const turns = T.groupTurns(E);
+  eq("turns: preamble + one per prompt", JSON.stringify(turns.map(t => [t.start, t.end, t.prompt])),
+     "[[0,1,null],[1,7,1],[7,13,7]]");
+  report("queued messages, reminders and command output never open a turn",
+         !T.isPrompt(E[4]) && !T.isPrompt(E[5]) && !T.isPrompt(E[12]) && T.isPrompt(E[7]));
+  eq("turnOf finds the holding turn", [0, 1, 6, 7, 12].map(i => T.turnOf(turns, i)).join(","), "0,1,1,2,2");
+  eq("short model names", T.shortModel("claude-opus-5-5") + " " + T.shortModel("claude-haiku-4-5-20251001"), "opus-5.5 haiku-4.5");
+  const s = {entries: E, context_series: [
+    {entry: 2, context: 1000, output: 50, model: "claude-opus-5-5"},
+    {entry: 6, context: 1300, output: 20, model: "claude-opus-5-5"},
+    {entry: 8, context: 2000, output: 10, model: "claude-sonnet-5-5"}],
+    context: [{entry: 0, cat: "claude-md", label: "/u/.claude/CLAUDE.md", tok: 500},
+              {entry: 8, cat: "mentions", label: "a.py", tok: 70},
+              {entry: 0, cat: "system", label: "System prompt", tok: 4000},
+              {entry: 7, cat: "system", label: "System prompt", tok: 4100}]};
+  const i1 = T.turnInfo(s, turns[1]), i2 = T.turnInfo(s, turns[2]);
+  eq("turn counts", [i1.thinking, i1.tools, i1.messages, i1.errors].join(","), "1,1,1,0");
+  eq("the last text is the final answer", i1.final, 6);
+  eq("a text followed by tools is not an answer", i2.final, -1);
+  eq("agents and their errors are counted", [i2.agents, i2.errors].join(","), "1,1");
+  eq("turn tokens come from its requests", [i1.out, i1.ctx, i1.models.join()].join(" "), "70 1300 opus-5.5");
+  eq("turn wall time", i1.secs, 8);
+  const c2 = T.contextIn(s, turns[2].start, turns[2].end);
+  eq("context in a turn: attachments one by one", c2.items.map(x => x.label).join(), "a.py,System prompt");
+  eq("context in a turn: entries grouped", c2.groups.map(g => g.cat + ":" + g.tok + "/" + g.n).join(), "user:9/1,skills:100/1,tools:40/2,text:1/1");
+  const vc = T.visibleContext(s, turns);
+  const sys = vc.cats.find(c => c.cat === "system");
+  eq("a re-sent attachment counts once (the latest)", sys.rows.length + ":" + sys.tok, "1:4100");
+  eq("visible total vs the last request", vc.real, 2000);
+  const cut = {...s, entries: [...E.slice(0, 9), {kind: "compact", text: "x"}, ...E.slice(9)]};
+  eq("only what follows the last compaction is visible",
+     T.visibleContext(cut, T.groupTurns(cut.entries)).cats.map(c => c.cat).join(), "tools,text");
+  eq("firstChange: the overlap that differs", T.firstChange([{a: 1}, {a: 2}, {a: 3}], [{a: 1}, {a: 9}, {a: 3}, {a: 4}], 0), 1);
+  eq("firstChange: pure append", T.firstChange([{a: 1}], [{a: 1}, {a: 2}], 0), 1);
+
+  const { cacheState } = (0, eval)(slice("function cacheState(t, now){", "function tickCache(){") + ";({cacheState})");
+  const t0 = Date.parse("2026-10-01T10:00:00Z");
+  eq("cache: warm within the TTL", cacheState({last_request_ts: "2026-10-01T10:00:00Z", cache_ttl: 300}, t0 + 60e3).left, 240);
+  report("cache: cold after it", cacheState({last_request_ts: "2026-10-01T10:00:00Z", cache_ttl: 300}, t0 + 400e3).left < 0);
+  report("cache: unknown without a TTL", cacheState({last_request_ts: "2026-10-01T10:00:00Z"}, t0) === null);
+}
+
+/* ---------------- usage heatmap levels ---------------- */
+{
+  const { heatLevel } = (0, eval)(slice("function heatLevel(values){", "function historyHtml(h){") + ";({heatLevel})");
+  const lv = heatLevel([0, 10, 20, 30, 40, 0]);
+  eq("heat: idle day is level 0", lv(0), 0);
+  eq("heat: quartiles of active days", [10, 20, 30, 40].map(lv).join(), "1,2,3,4");
+  eq("heat: all idle", heatLevel([0, 0])(0), 0);
 }
 
 /* ---------------- hook events: "now doing" per project ---------------- */
@@ -432,6 +496,50 @@ eq("re-activating the same tab does not reload", app.loaded.length, before);
   report("only opted-in notification polls run while hidden",
          /if\(!document\.hidden \|\| NOTIFY\.on\) fn\(\)/.test(js)
          && [...js.matchAll(/\npollAway\((\w+)/g)].map(m => m[1]).sort().join() === "pollEvents,pollGuards");
+}
+
+/* ---------------- memory: front matter + cross-file links ---------------- */
+{
+  const { memFront, memLinks, memLint } = (0, eval)("esc => {" +
+    slice("/* ---------- memory ---------- */", "async function showMemory") + "\nreturn {memFront, memLinks, memLint};}")(esc);
+  {
+    const P = [["MEMORY.md", "- [A](a.md)\n- [[b-slug]]"],
+               ["a.md", "---\nname: a\ndescription: d\nmetadata:\n  type: user\n---\nsee [[c]] and `[[code]]`"],
+               ["b.md", "---\nname: b-slug\ndescription: d\ntype: project\n---\nx"],
+               ["orphan.md", "no front matter, links [[a]]"]]
+      .map(([name, content]) => ({f: {name, content}, ...memFront(content)}));
+    const L = memLint(P);
+    eq("lint: a file outside the index", L.unindexed.join(), "orphan.md");
+    eq("lint: missing front matter", L.nofront.join(), "orphan.md");
+    eq("lint: an unwritten link is listed, code is skipped", JSON.stringify(L.unwritten), '[{"from":"a.md","to":"c"}]');
+  }
+  const f = memFront("---\nname: no-trailer\ndescription: \"omit it\"\nmetadata:\n  type: feedback\n---\n\nbody [[x]]\n");
+  eq("front matter: quoted value", f.meta.description, "omit it");
+  eq("front matter: nested key lifted", f.meta.type, "feedback");
+  eq("front matter: YAML escapes decoded", memFront('---\ndescription: "no \\"X\\" here"\n---\n').meta.description, 'no "X" here');
+  eq("front matter: empty parent key dropped", "metadata" in f.meta, false);
+  eq("front matter: body keeps the rest", f.body.trim(), "body [[x]]");
+  eq("no front matter: body untouched", memFront("# hi\n---\n").body, "# hi\n---\n");
+  const files = { "no-trailer": "no-trailer.md", "no-trailer.md": "no-trailer.md" };
+  const out = memLinks(md("see [[no-trailer]], [the rule](no-trailer.md), [[ghost]] and `[[no-trailer]]`"), files);
+  eq("wikilink resolves", (out.match(/data-mem="no-trailer.md"/g) || []).length, 2);
+  eq("unknown wikilink is marked missing", out.includes('class="memref missing"'), true);
+  eq("code span left alone", out.includes("<code>[[no-trailer]]</code>"), true);
+}
+
+/* ---------------- context chart: stacked + clickable ---------------- */
+{
+  const { renderChart } = (0, eval)(
+    "const document = {createElement: () => ({})}, fmtTok = String;" +
+    slice("function renderChart(series, onJump)", "/* ---------- memory ---------- */") + "\n({renderChart});");
+  const series = [{context: 100, cache_read: 60, cache_creation: 30, input: 10, output: 5, entry: 7},
+                  {context: 50, cache_read: 50, cache_creation: 0, input: 0, output: 1, entry: 9, compaction: true}];
+  let jumped = null;
+  const w = renderChart(series, i => { jumped = i; });
+  eq("one bar group per request", (w.innerHTML.match(/class="cbar/g) || []).length, 2);
+  eq("zero-height segments skipped", (w.innerHTML.match(/<rect class="s-/g) || []).length, 4);
+  w.onclick({ target: { closest: () => ({ dataset: { i: "1" } }) }, preventDefault() {} });
+  eq("click jumps to the request's first timeline row", jumped, 9);
 }
 
 /* ---------------- terminal input ordering ---------------- */
