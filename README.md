@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/PierreBeaucoral/ember/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/PierreBeaucoral/ember/actions/workflows/ci.yml/badge.svg"></a>
-  <img alt="Version 1.2.0" src="https://img.shields.io/badge/version-1.2.0-dd876d">
+  <img alt="Version 1.2.2" src="https://img.shields.io/badge/version-1.2.2-dd876d">
   <img alt="Python 3.9+" src="https://img.shields.io/badge/python-3.9%2B-3776ab?logo=python&logoColor=white">
   <img alt="Zero dependencies" src="https://img.shields.io/badge/dependencies-0-2ea44f">
   <img alt="macOS | Linux | Windows" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey">

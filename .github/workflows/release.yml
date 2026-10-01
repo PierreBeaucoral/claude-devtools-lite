@@ -17,6 +17,13 @@ jobs:
     runs-on: macos-latest          # arm64
     steps:
       - uses: actions/checkout@v4
+      # a tag must match server.py's VERSION (the apps report it and compare it
+      # with the latest release): v1.2.1 once shipped saying 1.2.0. Failing
+      # here stops publish, which needs this job.
+      - if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          v=$(sed -n 's/^VERSION = "\([^"]*\)".*/\1/p' server.py)
+          [ "v$v" = "$GITHUB_REF_NAME" ] || { echo "::error::tag $GITHUB_REF_NAME but server.py has VERSION = $v"; exit 1; }
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
       - run: python3 -m pip install Pillow      # the app icon
